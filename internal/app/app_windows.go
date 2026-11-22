@@ -307,7 +307,7 @@ func (a *App) statusLine() string {
 	case a.lastReady != nil:
 		return "Transcript ready"
 	}
-	return "Waiting for a meeting"
+	return "Idle"
 }
 
 // refresh brings the tray icon and tooltip up to date.

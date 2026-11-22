@@ -66,7 +66,7 @@ func ctx(hover string, scroll map[string]float32) *Ctx {
 func frame(page Node, onNav func(string)) Frame {
 	return Frame{
 		Nav:      []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}, {ID: "settings", Label: "Settings", Glyph: GlyphSettings}},
-		Selected: "home", PageID: "home", OnNav: onNav, Page: page, Status: "Waiting for a meeting",
+		Selected: "home", PageID: "home", OnNav: onNav, Page: page, Status: "Idle",
 	}
 }
 
@@ -97,7 +97,7 @@ func TestFrameNavigates(t *testing.T) {
 		t.Fatalf("unbalanced clips: %d", rec.clips)
 	}
 	joined := strings.Join(rec.texts, "|")
-	for _, want := range []string{"flit", "Home", "Settings", "Waiting for a meeting"} {
+	for _, want := range []string{"flit", "Home", "Settings", "Idle"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("drew %q, missing %q", joined, want)
 		}

@@ -86,7 +86,7 @@ func (a *App) homeStatus() string {
 	case a.working != nil:
 		return "Transcribing the last meeting. You can close this window meanwhile."
 	}
-	return "Waiting for a meeting. flit notices when Teams, Zoom, Webex, Slack or Google Meet start using your microphone and offers to transcribe it; or start a recording yourself."
+	return "Waiting for a meeting. Flit notices when Teams, Zoom, Webex, Slack or Google Meet start using your microphone and offers to transcribe it; or start a recording yourself."
 }
 
 // liveCard shows a recording's levels or a transcription's progress; nil
@@ -174,7 +174,7 @@ func (a *App) recordingsPage() ui.Node {
 
 // searchBar is the Recordings page's search field and what it searches.
 func (a *App) searchBar() ui.Node {
-	field := ui.TextField{ID: "rec:search", Glyph: ui.GlyphSearch, Value: a.search, Placeholder: "Search recordings", MaxLen: 100, H: 34,
+	field := ui.TextField{ID: "rec:search", Glyph: ui.GlyphSearch, Value: a.search, Placeholder: "Search recordings", MaxLen: 100, H: 34, Round: true,
 		OnCommit: a.setSearch, OnChange: a.setSearch, OnClear: func() { a.setSearch("") }}
 	scope := 0
 	if a.searchDeep {
@@ -182,7 +182,7 @@ func (a *App) searchBar() ui.Node {
 	}
 	return ui.HStack{Gap: 8, Items: []ui.Node{
 		ui.Group{field}, // takes the room the choice leaves
-		ui.Segmented{ID: "rec:scope", Options: []string{"By name", "Also in transcripts"}, Selected: scope, OnSelect: func(i int) {
+		ui.Segmented{ID: "rec:scope", Options: []string{"Name", "Fulltext"}, Selected: scope, OnSelect: func(i int) {
 			a.searchDeep = i == 1
 			a.invalidate()
 		}},
