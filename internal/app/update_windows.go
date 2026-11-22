@@ -17,7 +17,8 @@ import (
 
 // Updates (docs/decisions/0010-updates-from-github-releases.md): shortly
 // after start and then twice a day, flit asks GitHub for the latest full
-// release. A newer one adds "Update" to the sidebar, with a dot; its page
+// release. A newer one shows "Update available" on a white pill at the
+// bottom of the sidebar, above the debug lines; its page
 // downloads the exe, checks it against the release's SHA256SUMS.txt and
 // starts it. That copy installs itself like any downloaded flit.exe
 // (install.Ensure): it asks this instance to quit, which finishes a
@@ -221,12 +222,12 @@ func (a *App) cancelUpdate() {
 	}
 }
 
-// updateNav is the sidebar entry, there only while an update waits.
-func (a *App) updateNav() (ui.NavEntry, bool) {
+// updateBadge is the sidebar pill's label, "" while no update waits.
+func (a *App) updateBadge() string {
 	if a.update.latest == nil {
-		return ui.NavEntry{}, false
+		return ""
 	}
-	return ui.NavEntry{ID: pageUpdate, Label: "Update", Glyph: ui.GlyphUpdate, Dot: true}, true
+	return "Update available"
 }
 
 // updatePage offers the newer version.
@@ -292,7 +293,7 @@ func (a *App) updateSettings() []ui.Node {
 	case u.state == updateChecking:
 		line = "Checking…"
 	case u.latest != nil:
-		line = "flit " + u.latest.Version + " is available (Update, in the sidebar)"
+		line = "flit " + u.latest.Version + " is available (Update available, in the sidebar)"
 	case u.err != "":
 		line = u.err
 	case !u.checked.IsZero():

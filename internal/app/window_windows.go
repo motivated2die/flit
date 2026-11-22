@@ -133,9 +133,6 @@ func (a *App) frame() ui.Frame {
 		{ID: pageAudio, Label: "Audio", Glyph: ui.GlyphMic},
 		{ID: pageSettings, Label: "Settings", Glyph: ui.GlyphSettings},
 	}
-	if e, ok := a.updateNav(); ok {
-		nav = append(nav, e)
-	}
 	if !a.cfg.SetupComplete {
 		nav = append([]ui.NavEntry{{ID: pageWelcome, Label: "Welcome", Glyph: ui.GlyphPower}}, nav...)
 	}
@@ -166,7 +163,8 @@ func (a *App) frame() ui.Frame {
 	}
 	f := ui.Frame{Nav: nav, Selected: selected, OnNav: a.go_, Page: page, PageID: a.page,
 		Status: a.sidebarStatus(), Live: a.rec != nil,
-		Debug: a.debugLines(), DebugCores: a.debugCores(), OnDebug: func() { a.go_(pageDebug) }}
+		Debug: a.debugLines(), DebugCores: a.debugCores(), OnDebug: func() { a.go_(pageDebug) },
+		Update: a.updateBadge(), OnUpdate: func() { a.go_(pageUpdate) }}
 	if a.uninstallAsk && a.page == pageSettings {
 		f.Modal = a.uninstallPopover()
 	}

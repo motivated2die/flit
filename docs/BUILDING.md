@@ -111,6 +111,6 @@ $env:FLIT_UPDATE_API = "http://127.0.0.1:8090"
 & "$env:LOCALAPPDATA\Programs\flit\flit.exe"
 ```
 
-About 30 seconds after start, *Update* appears in the sidebar. `FLIT_UPDATE_API` takes https, or http to this PC only, and also turns the automatic check on in a portable build (which never installs an update, though). The server's options: `-slow 20s` spreads the download to watch the progress, `-bad-checksum` publishes a wrong SHA-256 (the update must be refused), `-status 404` (no release yet) or `-status 403` (GitHub's rate limit).
+About 30 seconds after start, *Update available* appears at the bottom of the sidebar. `FLIT_UPDATE_API` takes https, or http to this PC only, and also turns the automatic check on in a portable build (which never installs an update, though). The server's options: `-slow 20s` spreads the download to watch the progress, `-bad-checksum` publishes a wrong SHA-256 (the update must be refused), `-status 404` (no release yet) or `-status 403` (GitHub's rate limit).
 
 Updating replaces the installed copy in `%LOCALAPPDATA%\Programs\flit`, so do this on a test account or VM, or reinstall your own build afterwards.

@@ -12,9 +12,6 @@ type NavEntry struct {
 	ID    string
 	Label string
 	Glyph string
-	// Dot draws a small white dot at the entry's right end: something
-	// waits there (an update).
-	Dot bool
 }
 
 // Frame is the window's layout: a sidebar with the mark, the navigation
@@ -47,6 +44,11 @@ type Frame struct {
 	// before it (recording).
 	Status string
 	Live   bool
+
+	// Update, when set, is a slim white pill above the debug lines ("Update
+	// available"); clicking it calls OnUpdate.
+	Update   string
+	OnUpdate func()
 
 	// Debug lines sit just above the status line (the loaded model and its
 	// memory); clicking them calls OnDebug.
@@ -102,6 +104,7 @@ func (f Frame) Layout(c *Ctx, w, h float32) {
 	f.nav(c, side)
 	f.status(c, side, h)
 	f.debug(c, side, h)
+	f.update(c, h)
 	f.page(c, side, w, h)
 	if f.Modal != nil {
 		f.modal(c, w, h)
@@ -227,11 +230,6 @@ func (f Frame) nav(c *Ctx, side float32) {
 				lf = fontBodySemi
 			}
 			cv.Text(e.Label, label, c.F(lf), text)
-			if e.Dot {
-				d, cy := c.Px(6), (r.T+r.B)/2
-				x := r.R - c.Px(14)
-				cv.RoundRect(RectF{x - d/2, cy - d/2, x + d/2, cy + d/2}, d/2, col(ColText))
-			}
 		})
 		if f.OnNav != nil {
 			c.Click("nav:"+e.ID, r, func() { f.OnNav(e.ID) })
@@ -332,6 +330,49 @@ func (f Frame) debug(c *Ctx, side, h float32) {
 	})
 	if f.OnDebug != nil {
 		c.Click("debug", r, f.OnDebug)
+	}
+}
+
+// The update pill (logical pixels): about half a navigation row tall.
+const (
+	updatePillH   = 20
+	updatePillPad = 10
+	updatePillDot = 6
+)
+
+// update draws the update pill above the debug lines (or the status line
+// when there are none), left-aligned with their text: white, fully
+// rounded, a dark dot and the label in dark ink.
+func (f Frame) update(c *Ctx, h float32) {
+	if f.Update == "" {
+		return
+	}
+	bottom := h - c.Px(statusLineH) - c.Px(6)
+	if len(f.Debug) > 0 {
+		bottom -= c.Px(12 + debugLineH*float32(len(f.Debug)))
+	}
+	font := c.F(fontCaption)
+	pad, dot := c.Px(updatePillPad), c.Px(updatePillDot)
+	tw := c.M.TextWidth(f.Update, font)
+	x, ph := c.Px(22), c.Px(updatePillH)
+	r := RectF{x, bottom - c.Px(6) - ph, x + pad + dot + c.Px(6) + tw + pad, bottom - c.Px(6)}
+	hover, pressed := c.Hover == "update", c.Pressed == "update"
+	c.Draw(func(cv Canvas) {
+		bg := col(ColText)
+		switch {
+		case pressed:
+			bg = RGBA(ColText, 0.78)
+		case hover:
+			bg = RGBA(ColText, 0.9)
+		}
+		cv.RoundRect(r, ph/2, bg)
+		cy := (r.T + r.B) / 2
+		dx := r.L + pad
+		cv.RoundRect(RectF{dx, cy - dot/2, dx + dot, cy + dot/2}, dot/2, col(ColInk))
+		cv.Text(f.Update, RectF{dx + dot + c.Px(6), r.T, r.R, r.B}, font, col(ColInk))
+	})
+	if f.OnUpdate != nil {
+		c.Click("update", r, f.OnUpdate)
 	}
 }
 

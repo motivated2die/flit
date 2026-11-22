@@ -65,7 +65,7 @@ func ctx(hover string, scroll map[string]float32) *Ctx {
 
 func frame(page Node, onNav func(string)) Frame {
 	return Frame{
-		Nav:      []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}, {ID: "settings", Label: "Settings", Glyph: GlyphSettings, Dot: true}},
+		Nav:      []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}, {ID: "settings", Label: "Settings", Glyph: GlyphSettings}},
 		Selected: "home", PageID: "home", OnNav: onNav, Page: page, Status: "Waiting for a meeting",
 	}
 }

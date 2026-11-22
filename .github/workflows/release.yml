@@ -169,7 +169,7 @@ jobs:
             echo
             echo "## Install or update"
             echo
-            echo "Download **flit.exe** and run it. It installs itself for your Windows user (no admin rights needed), starts with Windows, and replaces an older version, keeping your recordings and settings. On first start it asks for the meeting language and downloads its models (about 0.9 GB) from Hugging Face. Installed copies offer later versions under **Update** in the sidebar."
+            echo "Download **flit.exe** and run it. It installs itself for your Windows user (no admin rights needed), starts with Windows, and replaces an older version, keeping your recordings and settings. On first start it asks for the meeting language and downloads its models (about 0.9 GB) from Hugging Face. Installed copies offer later versions with **Update available** at the bottom of the sidebar."
             if [ "$SIGNED" != "true" ]; then
               echo
               echo "This build is **not code-signed** yet, so Windows SmartScreen may say \"Windows protected your PC\". Choose **More info → Run anyway**. You can check the download against the SHA-256 below first."
