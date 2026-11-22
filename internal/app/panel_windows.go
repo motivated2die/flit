@@ -117,7 +117,7 @@ func (a *App) panelStatus() ui.Node {
 		}}
 	}
 	return ui.VStack{Gap: 10, Items: []ui.Node{
-		ui.Label{Text: "Waiting for a meeting", Large: true},
+		ui.Label{Text: "Ready and idle", Large: true},
 		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.act(func() { a.startRecording(nil) })}}},
 	}}
 }
