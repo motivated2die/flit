@@ -66,6 +66,11 @@ type Frame struct {
 	OnClose    func()
 }
 
+// FrameMaxW is the widest a frame's content gets (logical pixels): the
+// sidebar and a page at its widest with its margins. The window is never
+// wider (its client area).
+const FrameMaxW = sidebarW + 2*pagePad + pageMaxW
+
 // Window geometry (logical pixels).
 const (
 	sidebarW     = 208

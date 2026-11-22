@@ -72,11 +72,28 @@ func TestRunningRecordingPage(t *testing.T) {
 	if a.page != pageHome {
 		t.Errorf("back went to %q", a.page)
 	}
-	// Named, it opens in the notes.
-	s.SetTitle("Design review")
-	a.openNotes(s)
+	// Named on its page (the list's copy of the session, not the
+	// recording's own), it opens in the notes, and the name survives the
+	// recording saving its own copy when it ends.
+	a.reloadSessions()
+	page := a.sessionByID(s.Meta.ID)
+	if page == s {
+		t.Fatal("the test needs the page's copy to differ from the recording's")
+	}
+	a.renameSession(page, "Design review")
+	a.openNotes(s) // with the recording's own copy, as the notch does
 	if a.focusNotes != s.Meta.ID || a.focusTitle != "" {
 		t.Errorf("named: title %q, notes %q", a.focusTitle, a.focusNotes)
+	}
+	if err := a.rec.sess.Save(); err != nil {
+		t.Fatal(err)
+	}
+	a.reloadSessions()
+	if got := a.sessionByID(s.Meta.ID).Meta.Title; got != "Design review" {
+		t.Errorf("the name was lost when the recording saved: %q", got)
+	}
+	if stop, _ := c.HitByID("session:stop"); stop.R.H() > 24 {
+		t.Errorf("Transcribe is %v px high, want a chip", stop.R.H())
 	}
 	// Home: Cancel and Notes are icons, the main button reads Transcribe.
 	a.page = pageHome

@@ -273,6 +273,38 @@ func (w *Window) hitTest(lp uintptr) uintptr {
 	return htClient
 }
 
+var (
+	procGetWindowRect     = user32.NewProc("GetWindowRect")
+	procMonitorFromWindow = user32.NewProc("MonitorFromWindow")
+)
+
+const monitorDefaultToNearest = 2
+
+// limitWidth keeps the window no wider than its content (FrameMaxW plus
+// the side frame): resized, and maximised, where it stays full height and
+// is centred on the screen's work area instead of showing empty space.
+func (w *Window) limitWidth(maxTrack, maxSize, maxPos *point) {
+	var wr, cr struct{ L, T, R, B int32 }
+	procGetWindowRect.Call(w.hwnd, uintptr(unsafe.Pointer(&wr)))
+	procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&cr)))
+	border := (wr.R - wr.L) - (cr.R - cr.L) // the side frames
+	if border < 0 || border > int32(64*w.scale) {
+		border = 0
+	}
+	maxW := int32(float32(FrameMaxW)*w.scale) + border
+	maxTrack.X = maxW
+	mon, _, _ := procMonitorFromWindow.Call(w.hwnd, monitorDefaultToNearest)
+	mi := monitorInfo{}
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
+		return
+	}
+	if workW := mi.Work.R - mi.Work.L; maxW < workW {
+		maxSize.X = maxW
+		maxPos.X = (mi.Work.L - mi.Monitor.L) + (workW-maxW)/2 // relative to the monitor
+	}
+}
+
 // place centres the window on the main screen's work area at its default
 // size for the screen's scale.
 func (w *Window) place() {
@@ -333,6 +365,7 @@ func windowProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 			Reserved, MaxSize, MaxPos, MinTrack, MaxTrack point
 		})(cptrUI(lp))
 		mmi.MinTrack = point{int32(720 * w.scale), int32(480 * w.scale)}
+		w.limitWidth(&mmi.MaxTrack, &mmi.MaxSize, &mmi.MaxPos)
 		return 0
 	case wmDpiChanged:
 		w.scale = float32(wp&0xFFFF) / 96

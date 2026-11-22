@@ -112,7 +112,11 @@ func (a *App) openNotes(s *session.Session) {
 	}
 	ns := a.notesFor(s)
 	ns.ed.End(true, false)
-	if a.isRecording(s) && s.Meta.Title == "" {
+	title := s.Meta.Title
+	if cur := a.sessionByID(s.Meta.ID); cur != nil {
+		title = cur.Meta.Title // the list's copy is the one renamed
+	}
+	if a.isRecording(s) && title == "" {
 		a.focusTitle, a.focusNotes = s.Meta.ID, ""
 	} else {
 		a.focusNotes, a.focusTitle = s.Meta.ID, ""

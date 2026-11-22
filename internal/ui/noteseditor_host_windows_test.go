@@ -111,6 +111,33 @@ func TestNotesEditorInAWindow(t *testing.T) {
 	}
 }
 
+// The window is never wider than its content: resized, or maximised
+// (then centred on the screen).
+func TestWindowMaxWidth(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	w, err := NewWindow("flit width test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+	var mmi struct {
+		Reserved, MaxSize, MaxPos, MinTrack, MaxTrack point
+	}
+	mmi.MaxTrack, mmi.MaxSize = point{99999, 99999}, point{99999, 99999}
+	w.limitWidth(&mmi.MaxTrack, &mmi.MaxSize, &mmi.MaxPos)
+	content := int32(float32(FrameMaxW) * w.scale)
+	if mmi.MaxTrack.X < content || mmi.MaxTrack.X > content+int32(40*w.scale) {
+		t.Errorf("max width %d for %d of content", mmi.MaxTrack.X, content)
+	}
+	if mmi.MaxSize.X != 99999 && (mmi.MaxSize.X != mmi.MaxTrack.X || mmi.MaxPos.X <= 0) {
+		t.Errorf("maximised: %d wide at x %d", mmi.MaxSize.X, mmi.MaxPos.X)
+	}
+	if mmi.MaxTrack.Y != 99999 {
+		t.Error("the height was limited too")
+	}
+}
+
 // A title field followed by the notes: Enter or Tab saves the title and
 // gives the notes the keyboard; a field asking for focus starts editing.
 func TestTitleThenNotes(t *testing.T) {

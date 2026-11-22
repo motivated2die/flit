@@ -320,6 +320,7 @@ type Button struct {
 	Primary  bool
 	Disabled bool
 	Large    bool // a page's main action: taller, larger text
+	Small    bool // a chip: as low as the sidebar's update pill
 	Danger   bool // destructive: red text (red fill while hovered)
 	// HoverDanger stays neutral until hovered, then turns red (Quit).
 	HoverDanger bool
@@ -328,8 +329,11 @@ type Button struct {
 
 func (b Button) font() Font {
 	f := fontBodySemi
-	if b.Large {
+	switch {
+	case b.Large:
 		f.Size = 14
+	case b.Small:
+		f.Size = 12
 	}
 	return f
 }
@@ -339,12 +343,18 @@ func (b Button) Width(c *Ctx) float32 {
 		return b.height(c) // round
 	}
 	pad := c.Px(16)
-	if b.Large {
+	switch {
+	case b.Large:
 		pad = c.Px(22)
+	case b.Small:
+		pad = c.Px(11)
 	}
 	w := c.M.TextWidth(b.Label, c.F(b.font())) + 2*pad
 	if b.Glyph != "" {
 		w += c.Px(22)
+		if b.Small {
+			w -= c.Px(4)
+		}
 	}
 	return w
 }
@@ -353,11 +363,18 @@ func (b Button) Width(c *Ctx) float32 {
 func (b Button) iconOnly() bool { return b.Label == "" && b.Glyph != "" }
 
 func (b Button) height(c *Ctx) float32 {
-	if b.Large {
+	switch {
+	case b.Large:
 		return c.Px(40)
+	case b.Small:
+		return c.Px(smallButtonH)
 	}
 	return c.Px(32)
 }
+
+// smallButtonH is a chip's height (logical pixels), a little above the
+// sidebar's update pill.
+const smallButtonH = 22
 
 func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	h := b.height(c)
@@ -389,19 +406,30 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 		gr = r
 	} else if b.Glyph != "" {
 		gx := r.L + c.Px(14)
-		if b.Large {
+		switch {
+		case b.Large:
 			gx = r.L + c.Px(18)
+		case b.Small:
+			gx = r.L + c.Px(9)
 		}
-		gr = RectF{gx, r.T, gx + c.Px(16), r.B}
-		tr.L = gr.R + c.Px(6)
-		tr.R = r.R - c.Px(14)
+		gw := c.Px(16)
+		if b.Small {
+			gw = c.Px(13)
+		}
+		gr = RectF{gx, r.T, gx + gw, r.B}
+		tr.L = gr.R + c.Px(5)
+		tr.R = r.R - c.Px(10)
 	}
 	label := c.F(b.font())
 	label.Center = b.Glyph == ""
 	c.Draw(func(cv Canvas) {
 		cv.RoundRect(r, r.H()/2, fill)
 		if b.Glyph != "" {
-			DrawIcon(cv, b.Glyph, gr, c.Px(16), text)
+			size := c.Px(16)
+			if b.Small {
+				size = c.Px(13)
+			}
+			DrawIcon(cv, b.Glyph, gr, size, text)
 		}
 		if b.Label != "" {
 			cv.Text(b.Label, tr, label, text)

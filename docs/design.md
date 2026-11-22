@@ -86,11 +86,15 @@ A recording's page has a **Speakers** card between its actions and the transcrip
 
 The text field (`internal/ui/textfield.go`) is flit's one-line text input: drawn like the other controls (the control colour, lighter while hovered or edited, a thin white line under it while editing, a blinking caret, the selection as a faint white band); long text scrolls to keep the caret in view.
 
+## Window width
+
+The window is never wider than its content: the sidebar (208 px), a page at its widest (720 px) and the page's margins (2 × 32 px), 992 px of client area plus the side frame (`ui.FrameMaxW`, `Window.limitWidth`). Resizing stops there; maximised, the window keeps that width at full height, centred on the screen's work area.
+
 ## Notes
 
 A recording's page has a **Notes** card under its actions, during and after the recording ([research/notes-editor.md](research/notes-editor.md)). Above the text a row of quiet icon buttons (H2, H3, bullets, numbers, task; bold, italic; @), muted, white and on the control colour while hovered or matching the caret's line. The text is drawn as Markdown usually renders: H2 17 px and H3 14.5 px semibold, body 13 px; bullets "•", "◦", "▪" by level and numbers right-aligned in a 22 px column, 22 px more per level; tasks with Tabler's square and square-check, a done one struck through in the muted colour; **bold** and *italic* with their markers kept in the faint colour; an `@flit` mention as a chip in white at 9% (15% while its instruction is being typed), "@flit" semibold, its time faint. 18 px above an H2, 12 above an H3, 6 after a heading, 10 between paragraphs, 3 between list items. The caret is a steady 1.5 px white line (no blinking, so nothing repaints while nothing changes); the selection a white band at 22% (12% when the editor isn't focused). An empty card shows a faint line listing the shortcuts. "Copy" and "Copy as text" sit right of the caption.
 
-While a meeting records, Home's actions are two round icon buttons (Cancel as a bin, asking "Discard recording" in red on the first click; Notes) and the primary **Transcribe** with the stop icon; a click on the recording card opens the recording too. The notch's recording view has **Notes** beside **Stop**. The running recording's page drops the caption, the folder button and the player, puts a small primary **Transcribe** at the right of the back row (back goes to Home, and Home is highlighted in the sidebar), and gives the notes card at least 360 px.
+While a meeting records, Home's actions are two round icon buttons (Cancel as a bin, asking "Discard recording" in red on the first click; Notes) and the primary **Transcribe** with the stop icon; a click on the recording card opens the recording too. The notch's recording view has **Notes** beside **Stop**. The running recording's page drops the caption, the folder button and the player, puts a small primary **Transcribe** chip (22 px high, like the sidebar's update pill) at the right of the back row (back goes to Home, and Home is highlighted in the sidebar), and gives the notes card at least 360 px.
 
 ## The tray panel
 

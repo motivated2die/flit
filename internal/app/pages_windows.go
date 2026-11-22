@@ -414,7 +414,7 @@ func (a *App) sessionPage(id string) ui.Node {
 		// small button on the right ends it.
 		back = ui.HStack{Items: []ui.Node{
 			ui.VStack{Items: []ui.Node{ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Home", OnClick: func() { a.go_(pageHome) }}}}}},
-			ui.Button{ID: "session:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.stopRecording},
+			ui.Button{ID: "session:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, Small: true, OnClick: a.stopRecording},
 		}}
 	}
 	ready := s.Meta.State == session.Ready
@@ -540,6 +540,11 @@ func (a *App) deleteRecording(s *session.Session) {
 func (a *App) renameSession(s *session.Session, title string) {
 	if err := s.SetTitle(title); err != nil {
 		logx.Printf("renaming %s: %v", s.Meta.ID, err)
+	}
+	// The running recording keeps its own copy of the session, saved again
+	// when it ends: it must carry the new name, or the name would be lost.
+	if a.rec != nil && a.rec.sess != s && a.rec.sess.Dir == s.Dir {
+		a.rec.sess.Meta.Title, a.rec.sess.Meta.TitleByUser = s.Meta.Title, s.Meta.TitleByUser
 	}
 	a.forget(s)
 	a.invalidate()
