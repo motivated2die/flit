@@ -77,6 +77,27 @@ Fix: the capture sessions detection already enumerates tell **which device each 
 
 Lesson: with virtual audio routers (Sonar, Voicemeeter, VB-Cable) common, "the default device" is a guess; the device the meeting app really uses is a fact.
 
+## A device refusing its own format (2026-11-22)
+
+**Seen** in the author's log (`%LOCALAPPDATA%\flit\debug.log`), on 0.1.0-preview.2 shortly after an install: starting a recording failed with `meeting audio: Initialize: HRESULT 0x88890008` (`AUDCLNT_E_UNSUPPORTED_FORMAT`). The device was the configured output, "Lautsprecher (BlackShark V3 Pro XBOX - Game)" (`{af0cdf85-…}`), a wireless headset whose audio path includes THX Spatial Audio. The same endpoint:
+
+| Time | What |
+|---|---|
+| 14:05 to 15:11 | endpoint loopback opened six times without error |
+| 15:19:49 | the Audio page's level meter on it: the same `0x88890008` |
+| 15:20:00 | the recording: `0x88890008`, recording not started |
+| 15:20:06 | the next attempt: opened, recorded |
+
+So for at least 11 s the endpoint refused the format that `GetMixFormat` had just returned (shared mode, the mix format passed back unchanged, `internal/capture/stream_windows.go`), then accepted it again. **Cause: unverified.** Expected: the endpoint's format was changing (a spatial-audio layer switching, the headset's dongle reconnecting), so the mix format read was stale for a moment. Unrelated and permanent on the same PC: `0x8889000A` (`AUDCLNT_E_DEVICE_IN_USE`) for the meter on "CABLE Input", which another app holds in exclusive mode.
+
+**What flit does since** (`internal/capture/stream_windows.go`, `recorder_windows.go`):
+
+- **Format fallback:** when `Initialize` refuses the mix format, a fresh client asks for 48 kHz float stereo with `AUTOCONVERTPCM | SRC_DEFAULT_QUALITY`, as process loopback always has; Windows converts from whatever the engine runs at. This applies to the mic, endpoint loopback and the level meters. The log says when it happened.
+- **The meeting side waits instead of failing:** `capture.StartWaiting`. If endpoint loopback can't open at the start for a reason that passes (`transient`: unsupported format, device in use, device invalidated, endpoint creation failed), the recording starts anyway. The mic records, and the meeting track gets silence until the device opens; it is retried every 0.5 s like a device lost mid-recording, and a repeated identical error is logged once. Errors that don't pass (no output device at all, the audio service stopped) still fail the start. The microphone stays strict: a recording without it would be useless.
+- Core Audio's errors are logged by name (`AUDCLNT_E_UNSUPPORTED_FORMAT`, …) instead of the bare number.
+
+Not verified on the failing device: the condition couldn't be reproduced on demand. `TestLiveLoopbackHearsTone` doesn't hear its tone on this PC before or after the change: it plays on the default *communications* output ("Chat") and records the default *console* output ("Game"), which are different endpoints of this headset. Both versions opened the real endpoint with its mix format without error.
+
 ## To verify
 
 - Per-process loopback with new Teams (does its audio come from `ms-teams.exe` or a WebView2 child?), Zoom, browsers.

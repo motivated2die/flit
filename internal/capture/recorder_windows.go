@@ -43,13 +43,20 @@ func Record(dir, meFile, themFile string, mic, them Source, onEvent func(Event))
 		return nil, fmt.Errorf("microphone: %w", err)
 	}
 	r.ThemSource = them
-	r.them, err = StartOn(them, themT, r.themAl, onEvent)
+	// The meeting's side waits for a device that fails for a moment (its
+	// format changing, a headset waking up) instead of failing the
+	// recording; an app's own audio falls back to all audio instead.
+	if them.Kind == Process {
+		r.them, err = StartOn(them, themT, r.themAl, onEvent)
+	} else {
+		r.them, err = StartWaiting(them, themT, r.themAl, onEvent)
+	}
 	if err != nil && them.Kind == Process {
 		if onEvent != nil {
 			onEvent(Event{Source: them, Err: fmt.Errorf("recording the app alone failed, recording all audio instead: %w", err)})
 		}
 		r.ThemSource = Source{Kind: Loopback}
-		r.them, err = StartOn(r.ThemSource, themT, r.themAl, onEvent)
+		r.them, err = StartWaiting(r.ThemSource, themT, r.themAl, onEvent)
 	}
 	if err != nil {
 		r.me.Stop()
