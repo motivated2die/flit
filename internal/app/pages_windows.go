@@ -442,6 +442,8 @@ func (a *App) sessionPage(id string) ui.Node {
 	items = append(items, ui.Space(8))
 	items = append(items, a.notesSection(s, true)...)
 	if ready {
+		items = append(items, ui.Space(8))
+		items = append(items, a.summarySection(s)...)
 		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Speakers", Right: a.analyzeLink(s)}, a.speakersCard(s))
 		items = append(items, ui.Space(8), ui.Caption("Transcript"), a.transcriptBlocks(s))
 	}

@@ -154,7 +154,7 @@ func (a *App) startLive(s *session.Session) {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &liveJob{sess: s, cancel: cancel, done: make(chan struct{}), sup: sup, asr: asr, vad: vad, threads: capThreads(percent)}
 	a.live = job
-	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: a.cfg.Vocabulary}
+	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: a.vocabulary()}
 	logx.Printf("live transcription: at most %d%% of the processor, %d thread(s)", percent, capThreads(percent))
 	go func() {
 		defer close(job.done)

@@ -1,6 +1,6 @@
 # Notes and summaries (proposal)
 
-Status: **notes built** (2026-11-22, branch `feat/notes-and-summaries`), summaries proposed, not built. Research: [research/notes-editor.md](../research/notes-editor.md) (the editor), [research/summary-pipeline.md](../research/summary-pipeline.md) (context, prompts, steps, evaluation), [research/local-summaries.md](../research/local-summaries.md) (runtime, models, accelerators, cost). Decisions: [ADR 0011](../decisions/0011-meeting-notes-with-llama-server.md) (proposed), [ADR 0013](../decisions/0013-own-markdown-notes-editor.md) (accepted, built). References: [Yogurt](../references/yogurt.md), [AutoDoc](../references/autodoc.md), [anarlog](../references/anarlog.md).
+Status: **notes built** (2026-11-22, branch `feat/notes-and-summaries`); **summaries built as a first version** the same day (pipeline, server, page, settings; measured on the desktop's CPU, not yet on the laptop): [research/summary-experiments.md](../research/summary-experiments.md). Research: [research/notes-editor.md](../research/notes-editor.md) (the editor), [research/summary-pipeline.md](../research/summary-pipeline.md) (context, prompts, steps, evaluation), [research/local-summaries.md](../research/local-summaries.md) (runtime, models, accelerators, cost). Decisions: [ADR 0011](../decisions/0011-meeting-notes-with-llama-server.md) (proposed), [ADR 0013](../decisions/0013-own-markdown-notes-editor.md) (accepted, built). References: [Yogurt](../references/yogurt.md), [AutoDoc](../references/autodoc.md), [anarlog](../references/anarlog.md).
 
 Two features, the first useful without the second:
 
@@ -29,14 +29,34 @@ The tray process never holds a model (as with transcription). The LLM process st
 |---|---|
 | `internal/notes` | **Built.** The notes document: blocks (paragraph, H2, H3, bullet, numbered, task; indent; done; inline Markdown text; when typed), `Parse`, `Markdown`, `Plain`, `HTML`, `Mentions` (the `@flit` instructions with their times), `Times` (`notes.json`); the `Editor` with every editing rule and undo ([notes-editor.md](../research/notes-editor.md#built-2026-11-22-a-deliberately-small)). Shared by the editor, the summary's input and its output. |
 | `internal/ui` | The editor widget on Direct2D/DirectWrite ([notes-editor.md](../research/notes-editor.md)): rendering, caret and selection across lines, keys and Markdown shortcuts, undo, clipboard (Unicode text + HTML). |
-| `internal/llm` | **Hardware**: RAM, cores, graphics adapters (DXGI: integrated or dedicated, memory), power source. **Choice**: a candidate list and the memory cap; the lighter model by default. **Supervisor**: the pinned llama.cpp build (CPU + Vulkan, downloaded on first use, SHA-256-checked), started on `127.0.0.1` with a random port and `--api-key`, `--no-webui`, context and threads; health, idle exit, cancel, job object. **Client**: `/v1/chat/completions` with streaming, `max_tokens`, JSON schema, token probabilities (`n_probs`), `timings`; `/tokenize`. **Speed check** per model and adapter. **GPU policy**: Vulkan where it measured faster, CPU fallback on hangs or device loss, remembered per adapter. An "other local server" URL (localhost only) uses the same client. |
-| `internal/summary` | The pipeline ([summary-pipeline.md](../research/summary-pipeline.md)): compact transcript (respelled with vocabulary and names), sections of ~3k tokens at pauses, **attention cues** (note anchors by typing time and word overlap, mentions of the user's name, commitment and decision cues in German and English), section prompts → JSON items with quotes, checks (quotes found, owners known), merge, the user's tasks matched, one writer call → a `notes.Doc`; progress per step; everything testable with a fake client. |
+| `internal/llm` | **Built** (first version): `Start`/`StartFallback` (llama-server on loopback, random port and key, `--no-webui`, `--reasoning off`, one slot, warnings-only log, the speech worker's job object and priority; a GPU that fails to load falls back to the CPU), `Client` (chat completions with JSON schema, `/tokenize`, `/health`, timings), `MeasureSpeed`, `TotalMemory`, the pinned runtime and `ExtractRuntime`. |
+| `internal/llm` (planned) | **Hardware**: RAM, cores, graphics adapters (DXGI: integrated or dedicated, memory), power source. **Choice**: a candidate list and the memory cap; the lighter model by default. **Supervisor**: the pinned llama.cpp build (CPU + Vulkan, downloaded on first use, SHA-256-checked), started on `127.0.0.1` with a random port and `--api-key`, `--no-webui`, context and threads; health, idle exit, cancel, job object. **Client**: `/v1/chat/completions` with streaming, `max_tokens`, JSON schema, token probabilities (`n_probs`), `timings`; `/tokenize`. **Speed check** per model and adapter. **GPU policy**: Vulkan where it measured faster, CPU fallback on hangs or device loss, remembered per adapter. An "other local server" URL (localhost only) uses the same client. |
+| `internal/summary` | **Built** (first version): compact transcript, language by common words, cues (question windows, note anchors by typing time and word overlap, mentions of the user's name), one focused call per `@flit` question, approach A (`Single`) and C (`Extract`: sections → JSON with quotes → checks → writer), `Tidy` and `Assemble` (empty sections out, answers in). |
+| `internal/summary` (planned) | The pipeline ([summary-pipeline.md](../research/summary-pipeline.md)): compact transcript (respelled with vocabulary and names), sections of ~3k tokens at pauses, **attention cues** (note anchors by typing time and word overlap, mentions of the user's name, commitment and decision cues in German and English), section prompts → JSON items with quotes, checks (quotes found, owners known), merge, the user's tasks matched, one writer call → a `notes.Doc`; progress per step; everything testable with a fake client. |
 | `internal/models` | The LLM candidates (pinned URLs, SHA-256, size, parameters, context, license) and the llama.cpp build. |
 | `internal/session` | `notes.md`/`notes.json` and `summary.md`/`summary.json` in the session folder; the summary's state in `meta.json` (`none / queued / running / ready / failed / stale`). |
 | `internal/config` | Your name (first, last, nickname), the notes model choice, "use graphics" (Auto/Off), the model folder. |
 | `internal/app` | The recording page's Notes and Summary sections, the "Write summary" flow, Settings → Summaries. |
 
-## A summary's run
+## As built (2026-11-22)
+
+```
+ "Write summary" on a finished recording (extra instruction optional)
+   ├─ first time: runtime (39 MB) and model download into the data folder
+   ├─ the speech worker is released (one model in memory)
+   ├─ llama-server: GPU, else the CPU; under the after-meeting CPU limit
+   ├─ each @flit question: its excerpt (3 min before to 30 s after) → 1–2 sentences
+   ├─ Single (meetings up to ~12k tokens): transcript + notes → Markdown
+   │  Extract (longer): sections of ~3k tokens → JSON → quotes checked → writer
+   └─ Tidy + Assemble → summary.md, summary.json (model, device, tokens, time)
+```
+
+- The page shows "Write summary" with a field for an extra instruction; while it runs, the step ("Answering your questions (2 of 3)", "Reading the transcript (part 2 of 4)", "Writing the summary") and Cancel; when done, the summary in the notes editor (edits saved to `summary.md`), Copy, and Write again.
+- Settings → Summaries: **Your name** (also added to the speech vocabulary), the model chosen for the PC, "Use the graphics processor".
+- The model: Qwen3.5 4B on PCs with 15 GB of memory or more, Qwen3.5 2B below ([why](../research/summary-experiments.md#choice)).
+- The log gets counts and times, never text: `summary of …: qwen3.5-4b, single on cpu, 4484 tokens read in 25 s, …`.
+
+## A summary's run (as planned)
 
 ```
  user: "Write summary" on a recording (not while it records)

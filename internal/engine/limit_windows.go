@@ -7,13 +7,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// limitProcess caps a worker's CPU use: a Windows job object with a hard
+// LimitProcess caps a worker's CPU use: a Windows job object with a hard
 // CPU rate (percent of all processors; the OS enforces it, so the load
 // never rises above it, however busy the engine is) and below-normal
 // priority (the meeting app and everything in front of the user come
 // first). The returned function releases the job; call it once the
 // process has ended.
-func limitProcess(pid, percent int, background bool) (func(), error) {
+func LimitProcess(pid, percent int, background bool) (func(), error) {
 	access := uint32(windows.PROCESS_SET_QUOTA | windows.PROCESS_TERMINATE | windows.PROCESS_SET_INFORMATION | windows.PROCESS_QUERY_LIMITED_INFORMATION)
 	h, err := windows.OpenProcess(access, false, uint32(pid))
 	if err != nil {

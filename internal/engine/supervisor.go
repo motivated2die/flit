@@ -186,7 +186,7 @@ func (s *Supervisor) ensure() error {
 	}
 	w := &worker{cmd: cmd, in: in, out: bufio.NewReaderSize(out, 1<<20), done: make(chan struct{}), release: func() {}}
 	if s.CPULimit > 0 || s.Background {
-		rel, err := limitProcess(cmd.Process.Pid, s.CPULimit, s.Background)
+		rel, err := LimitProcess(cmd.Process.Pid, s.CPULimit, s.Background)
 		if err != nil {
 			s.logf("engine worker: limiting its CPU: %v", err)
 		}
@@ -289,7 +289,7 @@ func WorkerCommand(exe string) func() *exec.Cmd {
 	return func() *exec.Cmd {
 		cmd := exec.Command(exe, WorkerFlag)
 		cmd.Env = append(os.Environ(), "VK_LOADER_LAYERS_DISABLE=~implicit~")
-		hideWindow(cmd)
+		HideWindow(cmd)
 		return cmd
 	}
 }

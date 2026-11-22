@@ -60,6 +60,11 @@ type Config struct {
 	// NoUpdateCheck stops the twice-daily question to GitHub whether a
 	// newer release exists (internal/update); "Check now" still works.
 	NoUpdateCheck bool `json:"noUpdateCheck,omitempty"`
+	// YourName is the user's first and last name: added to the speech
+	// model's vocabulary, and how the user appears in summaries.
+	YourName string `json:"yourName,omitempty"`
+	// SummaryCPU keeps summaries off the graphics processor.
+	SummaryCPU bool `json:"summaryCpu,omitempty"`
 
 	SetupComplete bool `json:"setupComplete,omitempty"`
 }

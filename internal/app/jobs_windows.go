@@ -149,7 +149,7 @@ func (j *jobs) transcribe(s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: j.a.cfg.Vocabulary, Speakers: diar.ID != ""}
+	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: j.a.vocabulary(), Speakers: diar.ID != ""}
 	start := time.Now()
 	last := time.Time{}
 	err = s.Transcribe(j.ctx, sup, opt, "", func(p float64) {

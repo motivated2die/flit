@@ -35,13 +35,15 @@ Status: **partly built** (2026-11-21). The engine path is real and measured end 
 | `internal/detect` | snapshots (processes, mic users, window titles), provider table, process-tree targets, start/end hysteresis | built; real Teams/Zoom/Meet still to verify |
 | `internal/session` | session folders and state, crash recovery, the transcription job (both tracks, echo, merge, .txt/.md/.json), the notes (`notes.md`, `notes.json`) | built |
 | `internal/notes` | a recording's notes: blocks ↔ Markdown, plain text, HTML, `@flit` mentions, typing times, the editing rules and undo ([research/notes-editor.md](../research/notes-editor.md)) | built |
+| `internal/llm` | llama-server on demand (loopback, random port and key, CPU limit, GPU with CPU fallback), its OpenAI-compatible client, speed check, the pinned llama.cpp build ([summaries.md](summaries.md)) | first version |
+| `internal/summary` | summaries from the transcript and the notes: cues, one call per @flit question, single pass or sections with checked quotes, tidying ([research/summary-experiments.md](../research/summary-experiments.md)) | first version |
 | `internal/instance` | single-instance mutex, finding and signalling the running copy (registered window messages) | built |
 | `internal/install` | dropper install to `%LOCALAPPDATA%\Programs\flit`, Installed-apps entry, Start Menu shortcut, autostart, uninstall; HKCU only | built (registry/shortcut untested by design) |
 | `internal/config`, `internal/logx` | `config.json` (atomic save, broken file kept), scrubbed log with an in-memory tail of the last 200 lines for the Debug page | built |
 | `internal/sysinfo` | memory (`K32GetProcessMemoryInfo`) and CPU (`GetProcessTimes`) of flit and its engine worker, for the Debug page | built |
 | `internal/download` | resumable, size- and SHA-256-checked downloads | built |
 | `internal/update` | the latest full release on GitHub, version comparison, the exe's download checked against `SHA256SUMS.txt`, hosts held to GitHub; the app side (`internal/app/update_windows.go`) checks twice a day and offers it as an *Update available* pill at the bottom of the sidebar ([ADR 0010](../decisions/0010-updates-from-github-releases.md)) | built; releases from `.github/workflows/release.yml` ([RELEASING.md](../RELEASING.md)) |
-| `internal/models` | pinned model catalog (Parakeet Ultra/v3, Silero, Sortformer, test models) | built |
+| `internal/models` | pinned model catalog (Parakeet Ultra/v3, Silero, Sortformer, the summary candidates Qwen3.5 2B/4B, Gemma 4 E2B/E4B, Granite 4.0 H Micro, test models) | built |
 | `internal/engine/native` | engine DLLs embedded in the exe, unpacked to `%LOCALAPPDATA%\flit\engine\<version>` with an ABI contract check | built |
 | `internal/engine/tcpp` | transcribe.dll binding without cgo: ASR runs with word times, VAD, Sortformer diarization, vocabulary, abort, logging; struct sizes checked against the DLL | built, tested on the real DLL |
 | `internal/engine` | worker protocol (framed JSON + PCM over pipes), worker loop, supervisor (start on demand, crash retry, idle exit, cancel, an optional hard CPU cap and low priority through a job object); diarization requests (model loaded on first use) | built |

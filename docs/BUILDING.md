@@ -53,6 +53,18 @@ go run ./cmd/flitdev callnames-sim -meeting testdata/meetings/ami-IS1009a -segme
 
 `--save` writes the meeting track's segments with words and speakers. `callnames-sim` makes call-app evidence (active-speaker marks, captions, roster) from the meeting's reference turns under several conditions and scores per-line naming against `internal/callnames`' per-voice matching; `-v N` prints the votes per voice for condition N. The probe reads a process's windows through UI Automation and prints counts, timings and the signals that matter; `-Names` shows the texts (participants' names: keep the output on the PC). Results: [research/call-app-names.md](research/call-app-names.md).
 
+## Summaries
+
+```powershell
+go run ./cmd/flitdev llm                     # llama.cpp b12633 (Vulkan + CPU) → .cache\llama-b12633, candidate models → models\
+go run ./cmd/flitdev llm gemma-4-e4b         # a further candidate by ID (internal/models)
+go run ./cmd/flitdev summary -session testdata\private\<recording> -model qwen3.5-2b,qwen3.5-4b -device cpu -approach single,extract -me Moritz
+go run ./cmd/flitdev summary -meeting testdata\meetings\ami-IS1009a -notes testdata\notes\ami-IS1009a.md -model qwen3.5-4b -device cpu
+go run ./cmd/flitdev summary -session … -model qwen3.5-4b -device gpu,cpu -threads 4 -speed   # reading and writing speed only
+```
+
+`-session` reads a flit recording's folder (copy one from `%LOCALAPPDATA%\flit\sessions` into `testdata\private\`, which git ignores); `-meeting` a test meeting's reference transcript, with `-notes` as its notes (times from the `.json` beside it). Each model × device × approach starts its own server and prints tokens and speeds per call, the total and the peak memory; the summary, every prompt and the figures go to `.cache\summaries\` (`-out`). `-device gpu` falls back to the CPU when Vulkan fails. `-limit 10m` uses only the start of a meeting, `-instruction "…"` adds the user's instruction, `-nocues` leaves out the note and name marks, `-cpulimit 50` runs under the job object the app uses. Results: [research/summary-experiments.md](research/summary-experiments.md).
+
 ## Recording by hand
 
 ```powershell

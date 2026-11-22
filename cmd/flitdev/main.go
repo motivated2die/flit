@@ -45,6 +45,10 @@ func main() {
 		err = makeIcon(root)
 	case "release-server":
 		err = releaseServer(ctx, args)
+	case "llm":
+		err = fetchLLM(ctx, root, args)
+	case "summary":
+		err = summaryCmd(ctx, root, args)
 	case "callnames-sim":
 		err = callnamesSim(args)
 	default:

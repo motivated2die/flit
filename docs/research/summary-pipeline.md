@@ -11,6 +11,9 @@ Product rules from the author: heavy processing only **after** the meeting, and 
 - **Attention cues, kept simple**: the user's first and last name go into the speech model's vocabulary, and lines that mention them are marked for the model as a hint. No further intent matching ("For you" sections, commitment cue lists, phonetic matching) unless a measurement shows it raises quality. The commitment and decision cues below are therefore experiments, not defaults.
 - **@flit mentions** in the notes are the user's explicit pointers ([notes-editor.md](notes-editor.md#model-and-storage-internalnotesdocgo)): an instruction with the time it was written, `[@flit 12:40: was the budget decided or only proposed?]`. They become the strongest cue: the part of the transcript around that time goes into the prompt with the instruction, and the writer is asked to answer it explicitly.
 - **Typing times** of every note line are recorded during the recording (`notes.json`) and used to anchor notes to the transcript, as described under cues below.
+- **Optional, after the fact** (2026-11-22): a summary is written only when the user asks for it on a finished recording, never by default. The user can add a **short instruction** in a field beside the button ("focus on the budget", "in English"); it completes the system's prompt and takes precedence over the default structure (built: `summary.Input.Instruction`, the last line of the writer's prompt; kept in `summary.json`).
+
+Built and measured first: [summary-experiments.md](summary-experiments.md). What changed against the plan below: the `@flit` questions are answered **one call each** on their excerpt, not inside the section prompt (round 1 showed small models mixing them up), and the single pass (A) is the default up to ~50 minutes, extract-then-write (C) beyond.
 
 ## What the references do
 

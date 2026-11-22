@@ -128,6 +128,10 @@ type App struct {
 	// focusNotes asks the next layout to give that recording's editor the
 	// keyboard.
 	notes      map[string]*notesState
+	summaries  map[string]*notesState // nil entry: none written
+	sumRun     *summaryRun            // the summary being written
+	sumErr     map[string]string      // why a recording's last summary failed
+	sumInstr   map[string]string      // the extra instruction typed, per recording
 	focusNotes string
 	focusTitle string // the same for a recording's title field
 	// speakerCache holds each session's speakers (read from its transcript)
@@ -374,6 +378,7 @@ func (a *App) save() {
 func (a *App) quit() {
 	logx.Printf("quit")
 	a.saveAllNotes()
+	a.cancelSummary() // the server is in a job that also ends with flit
 	a.shutdown()
 	a.tray.Quit()
 }

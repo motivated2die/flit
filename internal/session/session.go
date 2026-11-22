@@ -28,15 +28,17 @@ const (
 
 // Files in a session folder.
 const (
-	MetaFile       = "meta.json"
-	MeFile         = "me.wav"
-	ThemFile       = "them.wav"
-	TranscriptJSON = "transcript.json"
-	TranscriptText = "transcript.txt"
-	TranscriptMD   = "transcript.md"
-	SpeakersFile   = "speakers.json" // the names the user gave the speakers
-	NotesFile      = "notes.md"      // the user's notes (Markdown)
-	NotesTimesFile = "notes.json"    // when each line of the notes was typed
+	MetaFile        = "meta.json"
+	MeFile          = "me.wav"
+	ThemFile        = "them.wav"
+	TranscriptJSON  = "transcript.json"
+	TranscriptText  = "transcript.txt"
+	TranscriptMD    = "transcript.md"
+	SpeakersFile    = "speakers.json" // the names the user gave the speakers
+	NotesFile       = "notes.md"      // the user's notes (Markdown)
+	NotesTimesFile  = "notes.json"    // when each line of the notes was typed
+	SummaryFile     = "summary.md"    // the summary written on request
+	SummaryInfoFile = "summary.json"  // how it was written
 )
 
 // MaxRetries is how often a failed transcription is retried on start.

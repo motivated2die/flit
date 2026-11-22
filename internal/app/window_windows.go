@@ -401,6 +401,8 @@ func (a *App) settingsPage() ui.Node {
 				OnChange: func(on bool) { a.cfg.KeepAudio = on; a.save(); a.invalidate() }},
 			ui.HStack{Items: []ui.Node{ui.Link{ID: "set:recfolder", Glyph: ui.GlyphFolder, Label: "Open recordings folder", OnClick: func() { openFolder(session.Root(a.dataDir)) }}}},
 		}},
+		ui.Caption("Summaries"),
+		ui.Card{Gap: 2, Items: a.summarySettings()},
 		ui.Caption("App"),
 		ui.Card{Gap: 4, Items: []ui.Node{
 			ui.Toggle{ID: "set:autostart", Label: "Start with Windows", Detail: "flit needs to run to notice meetings", On: install.AutoStartEnabled(), OnChange: func(on bool) {
