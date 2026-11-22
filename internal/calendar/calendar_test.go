@@ -151,7 +151,13 @@ func TestGoogleStyle(t *testing.T) {
 	got := feed.Meetings(at(2026, 11, 23, 0, 0), at(2026, 11, 28, 0, 0))
 	var lines []string
 	for _, m := range got {
-		lines = append(lines, m.Start.In(berlin).Format("Mon 15:04")+" "+m.Title)
+		// An all-day date floats: midnight wherever this PC is (CI runs in
+		// UTC), so it is shown in local time; the rest in the feed's zone.
+		start := m.Start.In(berlin)
+		if m.AllDay {
+			start = m.Start.Local()
+		}
+		lines = append(lines, start.Format("Mon 15:04")+" "+m.Title)
 	}
 	want := []string{
 		"Mon 09:30 Standup", "Tue 11:00 Standup (moved)", "Thu 00:00 Holiday", "Thu 09:30 Standup",
