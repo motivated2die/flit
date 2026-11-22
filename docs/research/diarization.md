@@ -64,7 +64,7 @@ The three operating points (DEFAULT, VERY_HIGH, HIGH latency) scored within 1 po
 What goes wrong:
 
 - **One person split into two labels.** de-synth: speaker 12275's first and last turns are "Speaker 1", the three in the middle "Speaker 4" (all from the same audiobook recording, so not a channel change). This costs the 11% there. The user repairs it by naming both the same.
-- **Two people merged into one label.** ami-5min: two of the three remote people share one label for most of the excerpt. Not repairable by naming; the words would need re-splitting.
+- **Two people merged into one label.** ami-5min: two of the three remote people share one label for most of the excerpt. Not repairable by naming; the words would need re-splitting. (2026-11-22: with line-level evidence from the call app, `callnames.Refine` re-splits such a voice line by line; simulated on this excerpt, 93% of words named right instead of 82% at best by naming whole voices, [call-app-names.md](call-app-names.md#matching-name-voices-correct-lines).)
 - Tried and rejected: asking Sortformer itself whether two labels are one voice (a short clip alternating 3 pieces of each, diarized again). On de-synth it kept 12275's two labels apart, the same mistake as in the long run; on AMI the pieces themselves broke into several labels. Not a usable verifier.
 
 Not measured yet: German real meetings (no open data), more than 4 people, hour-long meetings. The author's own recordings are the next data.
@@ -89,7 +89,7 @@ Limits to handle:
 | pyannote.audio (AutoDoc's disabled experiment) | Python + torch; far too heavy |
 | MOSS-Transcribe-Diarize (transcribe.cpp) | ASR with speaker markers, but English and Chinese only |
 | multitalker-parakeet-streaming-0.6b-v1 | Speaker-attributed ASR for overlapping speech, English only |
-| Meeting-app speaker info (active-speaker events) | No public API for Teams/Zoom desktop clients |
+| Meeting-app speaker info (active-speaker events) | No public API for Teams/Zoom desktop clients. **Update 2026-11-22**: their windows' UI Automation trees carry the roster and, for Zoom (and sometimes Teams and Meet), who is talking; Yogurt uses this. Now proposed as a name source on top of Sortformer: [call-app-names.md](call-app-names.md) |
 
 ## Experiment plan
 

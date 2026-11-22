@@ -46,6 +46,20 @@ That footprint is the opposite of ours, but the meeting logic is mature and wort
 
 **Diarization is disabled.** `PRODUCT.md` "Audio Source Labels": mic segments are **Me**, system segments are **Them**, "including all remote participants on that track". An experimental pyannote.audio 4 pipeline (`resources/diarize.py`, `diarization-requirements.txt`: torch, torchaudio) exists but is switched off. Users can rename labels; calendar attendees are offered as names.
 
+## Notes (studied 2026-11-22, same commit)
+
+Ideas only (AGPL). The notes path has grown into ~60 files in `src/main/services/` (`notes-*.ts`, `llm.ts` 4.3k lines, `ollama-*.ts`, `windows-notes-*.ts`).
+
+- **Runtime**: its own Ollama, downloaded from Ollama's GitHub releases and run as a child on port 11435 with its own model directory (`PRODUCT.md` "Ollama Management"). Model `qwen3:4b-instruct`, or `llama3.2:3b` on 8 GB or low-spec profiles (`src/shared/constants.ts`).
+- **Context by platform** (`llm.ts`): 32,768 tokens standard, **8,192 on Windows**, 4,096 on low-memory profiles and Macs. On Windows the Ollama runner is recycled above ~3.5 GiB resident on 16 GB PCs and ~2.5 GiB on 8 GB ones ("16 GB boxes share RAM with GPU drivers", `ollama-manager.ts`).
+- **Small chunks, extraction before writing** (`notes-evidence-validate.ts`): the transcript is cut into chunks of ≤ 6,000 characters; each returns a JSON array of decisions, commitments and quantities, **each with a verbatim quote**; items whose quote isn't found in the chunk (`quoteIsInChunk`, after normalising) are dropped. A topic pass groups the rest into sections (`notes-scan-pipeline.ts`, `notes-topic-grouper.ts`).
+- **A structured document** (`notes-schema.ts`, `PRODUCT.md` "Persisted V2 document"): overview, key takeaways, topic sections with key points and details, decisions, next steps with owner and deadline; **every item carries source time ranges** that seek the recording, and a provenance (generated, user-created, user-edited).
+- **Checking with the same small model was tried and mostly removed** (`notes-claim-verification.ts`, its header comment): "A per-note transcript check was evaluated on 30 saved meetings (run 6) and removed: the same small model that writes the notes judged faithful notes unsupported more often than it caught real inventions, and it added the most processing time." What remains checks only the overview's sentences against the notes (4k context, 24 tokens out, a two-value enum, fail-open).
+- Temperature 0 and a fixed seed on extraction and checks; JSON constrained by Ollama's `format` schema.
+- Windows-only hardening (`docs/windows-notes-model-readiness-verification.md`, 2026-09-16): the model is checked before each job, downloads and clean-up never run under a job, a missing model fails the job once instead of retrying every chunk.
+
+What it shows: on Windows laptops a 3–4 B model at 8k context is what a mature competitor ships; verbatim-quote grounding is checkable in plain code; asking the same small model to judge its own claims cost more than it caught.
+
 ## What we take
 
 - The **detection model**: "a known meeting app holds an active capture session" plus window titles for browsers, polled every few seconds, with hysteresis for the end. We can do it in-process in Go without a helper exe (go-wca has `IAudioSessionManager2`).
@@ -56,4 +70,4 @@ That footprint is the opposite of ours, but the meeting logic is mature and wort
 
 ## What we leave
 
-Electron, Python runtimes, ffmpeg, Ollama and notes, screen recording, calendars, encryption at rest (worth revisiting; DPAPI would be the light way), and the 10 GB footprint. AutoDoc's own gaps point at our differentiators: whole-system audio instead of the meeting app's, and no speaker separation within "Them".
+Electron, Python runtimes, ffmpeg, Ollama (a heavy runtime of its own; see [research/local-summaries.md](../research/local-summaries.md) for the notes ideas we keep), screen recording, calendars, encryption at rest (worth revisiting; DPAPI would be the light way), and the 10 GB footprint. AutoDoc's own gaps point at our differentiators: whole-system audio instead of the meeting app's, and no speaker separation within "Them".

@@ -47,12 +47,15 @@ Status: **partly built** (2026-11-21). The engine path is real and measured end 
 | `internal/chunk` | pause-aligned chunk planning, live and final | built |
 | `internal/pipeline` | track → VAD → chunks → ASR → segments in track time, split at pauses; `Progressive`: the same chunk by chunk from a growing file, equal to the batch result ([live-transcription.md](../research/live-transcription.md)) | built |
 | `internal/transcript` | segments, merge, word-level echo suppression, speakers for words (`AssignSpeakers`), speaker summaries, names, plain/Markdown formatting | built |
+| `internal/callnames` | naming the meeting track's voices from the call app's evidence (active-speaker marks, live captions matched by text, the roster): votes per voice, lines corrected where the evidence is clear ([speaker-names.md](speaker-names.md)) | prototype, tested, simulated (`flitdev callnames-sim`); not wired into the app |
 | `internal/audio/wav`, `internal/audio/dsp` | WAV read/write (crash-safe header), reading frames in place for playback (`wav.File`), resampling to 16 kHz, downmix | built |
 | `internal/calendar` | calendar subscription feeds (ICS): parsing, zones, recurrence, meeting links, matching recordings to meetings, a refresh service with cache ([calendar.md](calendar.md)) | built |
 | `internal/playback` | playing a recording through waveOut: both tracks mixed or one alone, from any point or a list of stretches, pause/resume, the position on the timeline | built, live-tested |
 | `internal/eval` | test meetings (`meeting.json`, RTTM), WER, DER, word attribution | built |
 
 Not built yet: text input in the window (vocabulary, microphone choice), a settings panel, following a changed default device without it disappearing.
+
+Proposed, not built: meeting notes by a local LLM in an on-demand `llama-server` process ([summaries.md](summaries.md)), speaker names from the call app's window ([speaker-names.md](speaker-names.md)).
 
 ## A session's life
 

@@ -43,7 +43,7 @@ Ways to run one from Go without cgo:
 3. **ONNX Runtime via purego** (`shota3506/onnxruntime-purego`, `amikos-tech/pure-onnx`): no cgo, but the same second runtime, and the bindings call themselves unstable. No advantage over 2.
 4. **Our own ECAPA or CAM++ in pure Go**: no new runtime, but a network to implement, optimise and validate ourselves (ADR 0006 option 3). Speed is fine for a few clips per speaker. The ongoing cost is owning numerical parity. Only if 1 is blocked.
 
-Not considered further: pyannote/Python (too heavy); Picovoice Eagle (proprietary SDK with a license key); cloud speaker-recognition APIs (audio leaves the machine; Microsoft's was retired, from memory); meeting-app participant lists (no public API for the desktop clients, [diarization.md](diarization.md#alternatives-recorded-not-planned)).
+Not considered further: pyannote/Python (too heavy); Picovoice Eagle (proprietary SDK with a license key); cloud speaker-recognition APIs (audio leaves the machine; Microsoft's was retired, from memory); meeting-app participant lists (no public API for the desktop clients, [diarization.md](diarization.md#alternatives-recorded-not-planned); but their UI Automation trees carry them, see [call-app-names.md](call-app-names.md), 2026-11-22).
 
 Signals that need no model:
 

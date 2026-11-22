@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -47,6 +48,7 @@ func runTranscribe(args []string) int {
 	realtime := fs.Bool("realtime", false, "with --live-step: feed both tracks at the meeting's own pace, logging how far behind and the engine's CPU")
 	liveStep := fs.Int("live-step", 0, "simulate transcribing during the meeting: feed each track in slices of this many seconds")
 	cpuLimit := fs.Int("cpu-limit", 0, "cap the engine worker at this percent of all processors, at low priority (as during a meeting)")
+	save := fs.String("save", "", "write the meeting track's segments (with words and speakers) as JSON to this file, for experiments")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -223,6 +225,16 @@ func runTranscribe(args []string) int {
 			n[s.Speaker] = true
 		}
 		fmt.Fprintf(os.Stderr, "speakers: %d turns, %d speakers after cleanup, %.0f s in %.1f s (%.1f× real time)\n", len(raw), len(n), secs, time.Since(start).Seconds(), secs/time.Since(start).Seconds())
+	}
+	if *save != "" {
+		b, err := json.MarshalIndent(themSegs, "", " ")
+		if err == nil {
+			err = os.WriteFile(*save, b, 0o644)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "save:", err)
+			return 1
+		}
 	}
 	if len(meSegs) > 0 && len(themSegs) > 0 {
 		before := countWords(meSegs)

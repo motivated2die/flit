@@ -33,10 +33,15 @@ This app is for one person's workflow: be in a meeting, get an accurate, well-fo
 - Progressive transcription during the meeting, so the transcript is ready moments after it ends.
 - Echo handling when the user has no headset (the mic picks up the remote side).
 - A searchable list of past sessions to copy again.
+- **Names of the meeting's speakers from the call app** (Teams, Zoom, Meet show who is in the call and often who talks), voted onto the voices flit already tells apart; never a name on a guess. Proposed: [research/call-app-names.md](research/call-app-names.md), [ADR 0012](decisions/0012-speaker-names-from-the-call-app.md).
+
+### Exploring (opt-in, off by default)
+
+- **Meeting notes**: a short summary, decisions, action items with owners, open questions, written after the transcript by a small local LLM, only when the user turns it on and only if this PC can do it in reasonable time. Proposed: [research/local-summaries.md](research/local-summaries.md), [ADR 0011](decisions/0011-meeting-notes-with-llama-server.md). Without a model: copy the transcript with a ready notes prompt for the user's own assistant.
 
 ### Explicitly not (for now)
 
-- Summaries, action items, notes generation, any LLM pass.
+- Summaries or any LLM pass **by default**, or during a meeting (see Exploring above for the opt-in).
 - Live captions.
 - Calendar integration, accounts, cloud anything.
 - Screen recording.

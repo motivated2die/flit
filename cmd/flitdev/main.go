@@ -45,6 +45,8 @@ func main() {
 		err = makeIcon(root)
 	case "release-server":
 		err = releaseServer(ctx, args)
+	case "callnames-sim":
+		err = callnamesSim(args)
 	default:
 		usage()
 	}
@@ -54,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flitdev engine | models [ids…] | testdata | icon | release-server -exe <flit.exe> -version <x.y.z>")
+	fmt.Fprintln(os.Stderr, "usage: flitdev engine | models [ids…] | testdata | icon | release-server -exe <flit.exe> -version <x.y.z> | callnames-sim -meeting <dir> -segments <file>")
 	os.Exit(2)
 }
 

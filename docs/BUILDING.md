@@ -42,6 +42,17 @@ A build is **portable** (doesn't install itself) when a `go.mod` is next to it o
 
 `--meeting` transcribes a test meeting's Me and Them tracks in a real engine worker and prints the WER of each against the reference (on stderr; the transcript goes to stdout). Other flags: `--lang`, `--vocab a,b,c`, `--markdown`, `--threads`. `FLIT_ENGINE_LOG=1` shows the engine's log. A missing model is downloaded into the models folder.
 
+## Speaker names from the call app (experiments)
+
+```powershell
+.\flit-debug.exe transcribe --models models --model parakeet-ultra --speakers --meeting testdata\meetings\ami-IS1009a --save $env:TEMP\them.json
+go run ./cmd/flitdev callnames-sim -meeting testdata/meetings/ami-IS1009a -segments $env:TEMP\them.json
+.\scripts\uia-probe.ps1 -Process ms-teams            # during a real call: what the window exposes (texts redacted)
+.\scripts\uia-probe.ps1 -Process Zoom -Every 1 -Seconds 30 -Tree -Out probe.txt
+```
+
+`--save` writes the meeting track's segments with words and speakers. `callnames-sim` makes call-app evidence (active-speaker marks, captions, roster) from the meeting's reference turns under several conditions and scores per-line naming against `internal/callnames`' per-voice matching; `-v N` prints the votes per voice for condition N. The probe reads a process's windows through UI Automation and prints counts, timings and the signals that matter; `-Names` shows the texts (participants' names: keep the output on the PC). Results: [research/call-app-names.md](research/call-app-names.md).
+
 ## Recording by hand
 
 ```powershell
