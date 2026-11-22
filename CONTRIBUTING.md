@@ -1,0 +1,14 @@
+# Contributing to flit
+
+Thanks for your interest in flit!
+
+**I don't accept pull requests from outside contributors at the moment.** Pull requests will be closed without review.
+
+Suggestions are very welcome, though, as issues:
+
+- **[Report a bug](https://github.com/motivated2die/flit/issues/new?template=bug_report.yml)**: the form asks for your version and the log, and explains where to find it.
+- **[Suggest a feature](https://github.com/motivated2die/flit/issues/new?template=feature_request.yml)**: describe what you'd like to do; a 👍 on an existing issue counts too.
+
+Security problems go through [SECURITY.md](SECURITY.md), not public issues.
+
+To build flit yourself, see [docs/BUILDING.md](docs/BUILDING.md); how it is made and why: [docs/README.md](docs/README.md). flit is licensed under the [MIT License](LICENSE).

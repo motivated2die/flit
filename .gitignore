@@ -1,0 +1,23 @@
+# Cloned reference projects (read-only study material, see docs/references/README.md)
+/references/
+
+# Downloads and intermediate files of cmd/flitdev
+/.cache/
+
+# Build output
+/*.exe
+/bin/
+/dist/
+*.exe~
+
+# go-winres generated resources
+/cmd/*/rsrc_windows_*.syso
+
+# Engine DLLs, fetched by `go run ./cmd/flitdev engine` (embedded at build time)
+/internal/engine/native/files/*
+!/internal/engine/native/files/README.md
+
+# Models and test data, fetched by `go run ./cmd/flitdev models|testdata`
+/models/
+/testdata/meetings/
+/testdata/private/

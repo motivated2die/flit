@@ -1,0 +1,65 @@
+# Checks every push to main and every pull request: formatting, vet, tests
+# (including the real engine with the small test models), known
+# vulnerabilities and a build. Releases are built by release.yml when a
+# version tag is pushed (docs/RELEASING.md).
+#
+# Actions are pinned by commit; Dependabot (.github/dependabot.yml) proposes
+# updates.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod # the toolchain line pins the exact Go release
+
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $files = gofmt -l .
+          if ($files) { $files; throw "These files need gofmt -w" }
+
+      - name: go vet
+        run: go vet ./...
+
+      # The engine bundle and the test models are pinned by hash; cache them
+      # by the files that pin them. Release runs (tags) reuse this cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache
+            models
+          key: engine-models-${{ hashFiles('internal/engine/native/native.go', 'internal/models/catalog.go') }}
+
+      - name: engine and test models
+        run: |
+          go run ./cmd/flitdev engine
+          go run ./cmd/flitdev models
+
+      - name: go test
+        run: go test ./...
+
+      # Fails when code we call has a known vulnerability, in a module or in
+      # the Go standard library (fixed by bumping the toolchain line in go.mod).
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      - name: go build
+        run: go build -o flit-ci.exe ./cmd/flit

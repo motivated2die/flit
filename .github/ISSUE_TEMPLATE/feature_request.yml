@@ -1,0 +1,33 @@
+name: Feature request
+description: An idea for something new in flit, or a change to how it works.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please search the [existing issues](https://github.com/motivated2die/flit/issues?q=is%3Aissue) first; if your idea is there already, a 👍 on it helps more than a new issue. flit is deliberately narrow (transcripts, no summaries or AI chat; see the README), so some ideas won't fit, however good they are.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The situation and what's missing or in the way today. Describing the problem helps more than a finished solution.
+      placeholder: After a meeting, I'd like to …
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could flit help?
+      description: Your idea of how it could work. Sketches and screenshots are welcome.
+    validations:
+      required: false
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Workarounds you use now, other apps that do it well.
+    validations:
+      required: false

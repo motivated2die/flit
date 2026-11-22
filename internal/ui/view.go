@@ -1,0 +1,324 @@
+package ui
+
+import (
+	"math"
+	"time"
+)
+
+// flit's window is drawn, not built from Windows controls. Pages are trees
+// of Nodes, built fresh from the app's state whenever something changes
+// (as Resound rebuilds its panel's rows): no widget state to keep in sync.
+// A layout pass (Ctx) records what to draw and where clicks go; painting
+// and hit-testing then use the same record, so they always agree.
+//
+// Everything here is portable and tested with a recording Canvas; the
+// window that drives it is window_windows.go.
+
+// PointF is a point in pixels (D2D1_POINT_2F's layout).
+type PointF struct{ X, Y float32 }
+
+// Canvas is what nodes draw on.
+type Canvas interface {
+	RoundRect(r RectF, radius float32, c ColorF)
+	Circle(cx, cy, r float32, c ColorF)
+	Arc(cx, cy, inner, outer, a0, a1 float32, c ColorF)
+	Text(s string, r RectF, f Font, c ColorF)      // one line, vertically centred, clipped
+	Paragraph(s string, r RectF, f Font, c ColorF) // wrapped, from the top
+	// MarkedParagraph is Paragraph with parts in other colours (search
+	// results); marks change no metrics, so it wraps as Paragraph does.
+	MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []TextMark)
+	Polygons(polys [][]PointF, c ColorF)
+	PushClip(r RectF)
+	PopClip()
+	// Bitmap draws a w×h premultiplied BGRA picture with its top left at
+	// (x, y), at an opacity. pixels makes it the first time key is drawn;
+	// the canvas keeps it under key (soft light that is costly to compute).
+	Bitmap(key string, x, y float32, w, h int, opacity float32, pixels func() []byte)
+}
+
+// TextMark colours bytes [From, To) of a paragraph's text, optionally
+// underlined (the current search result).
+type TextMark struct {
+	From, To  int
+	Color     ColorF
+	Underline bool
+}
+
+// Metrics measures text in pixels.
+type Metrics interface {
+	TextWidth(s string, f Font) float32
+	ParagraphHeight(s string, f Font, width float32) float32
+}
+
+// Node is a part of a page. Layout places it at (x, y) with width w,
+// records its drawing and clicks in c, and returns its height.
+type Node interface {
+	Layout(c *Ctx, x, y, w float32) float32
+}
+
+// Sized nodes have a natural width (buttons in a row).
+type Sized interface {
+	Width(c *Ctx) float32
+}
+
+// Hit is a clickable area.
+type Hit struct {
+	ID        string
+	R         RectF
+	OnClick   func()
+	OnClickAt func(x, y float32) // instead of OnClick: where the click was
+	// OnDrag instead of OnClick: called where the button went down, as the
+	// pointer moves while it is held (anywhere, even outside the window),
+	// and with done where it is released (a seek bar's scrubbing).
+	OnDrag func(x, y float32, done bool)
+	// text marks selectable text (Ctx.Selectable): the window selects
+	// with the pointer there, under an I-beam.
+	text bool
+}
+
+// clickable reports whether the hit does something on a click (a hover
+// area doesn't).
+func (h Hit) clickable() bool { return h.OnClick != nil || h.OnClickAt != nil || h.OnDrag != nil }
+
+// ScrollArea is a region the wheel scrolls.
+type ScrollArea struct {
+	ID  string
+	R   RectF
+	Max float32
+	// View is the part where content is seen (under a caption bar, above
+	// a docked bar): selecting text near its edges scrolls. Zero: R.
+	View RectF
+}
+
+// Ctx is one layout pass.
+type Ctx struct {
+	Scale float32
+	M     Metrics
+	Now   time.Time
+	// Interaction state, kept by the window between passes.
+	Hover, Pressed string
+	Scroll         map[string]float32
+
+	ops     []func(Canvas)
+	hits    []Hit
+	scrolls []ScrollArea
+	clips   []RectF
+	// Animating is set by nodes that change over time (a live dot, a
+	// clock), asking the window to draw again soon.
+	Animating bool
+	// live are the regions that change faster than that (DrawLive).
+	live []liveArea
+	// intoView is a node's wish to be scrolled into view (its top, in
+	// window pixels); the Frame turns it into WantScroll for its page.
+	intoView *float32
+	// WantScroll, when set after a pass, is where the window should
+	// scroll a scroll area to (smoothly).
+	WantScroll *ScrollTarget
+	// Sel is the window's text selection (nil: none), for Selectable;
+	// texts are the pass's selectable text areas, in order.
+	Sel   *Selection
+	texts []textArea
+
+	// Text editing, kept by the window: the field being edited, and how a
+	// click on a field starts editing it (nil where nothing can be typed).
+	Edit      *Editing
+	StartEdit func(id, value string, maxLen int)
+	inputs    []input
+}
+
+// NewCtx starts a pass.
+func NewCtx(scale float32, m Metrics, now time.Time, hover, pressed string, scroll map[string]float32) *Ctx {
+	if scroll == nil {
+		scroll = map[string]float32{}
+	}
+	return &Ctx{Scale: scale, M: m, Now: now, Hover: hover, Pressed: pressed, Scroll: scroll}
+}
+
+// Px scales logical pixels to device pixels, rounded.
+func (c *Ctx) Px(v float32) float32 { return float32(math.Round(float64(v * c.Scale))) }
+
+// F scales a font.
+func (c *Ctx) F(f Font) Font { f.Size *= c.Scale; return f }
+
+// Draw records a drawing step.
+func (c *Ctx) Draw(f func(Canvas)) { c.ops = append(c.ops, f) }
+
+// liveArea is a region the window repaints on its own, often.
+type liveArea struct {
+	r    RectF
+	draw func(cv Canvas, now time.Time)
+}
+
+// DrawLive records a region that moves faster than the window repaints
+// (the voice meter's bars): draw must paint all of r, opaque, from live
+// data as of now. It is drawn with the rest, and besides that the window
+// repaints just r about 60 times a second, without a layout pass, while
+// it is on screen. r is snapped outwards to whole pixels.
+func (c *Ctx) DrawLive(r RectF, draw func(cv Canvas, now time.Time)) {
+	r = RectF{float32(math.Floor(float64(r.L))), float32(math.Floor(float64(r.T))), float32(math.Ceil(float64(r.R))), float32(math.Ceil(float64(r.B)))}
+	if len(c.clips) > 0 {
+		k := c.clips[len(c.clips)-1]
+		if r.T < k.T || r.B > k.B || r.L < k.L || r.R > k.R {
+			// Partly scrolled away: drawn with the rest, not on its own.
+			c.Draw(func(cv Canvas) { draw(cv, c.Now) })
+			return
+		}
+	}
+	c.Draw(func(cv Canvas) {
+		cv.PushClip(r)
+		draw(cv, c.Now)
+		cv.PopClip()
+	})
+	c.live = append(c.live, liveArea{r, draw})
+}
+
+// ScrollTarget is a scroll area and the offset to move it to.
+type ScrollTarget struct {
+	ID string
+	To float32
+}
+
+// ScrollIntoView asks for the page to scroll so that top (window pixels,
+// where a node starts) sits in the upper part of the view: a search result
+// being shown. The last call of a pass wins.
+func (c *Ctx) ScrollIntoView(top float32) { c.intoView = &top }
+
+// ClipRect is the current clip: the visible part of the page while it is
+// laid out (everything, outside any clip).
+func (c *Ctx) ClipRect() RectF {
+	if len(c.clips) == 0 {
+		return RectF{-1e6, -1e6, 1e6, 1e6}
+	}
+	return c.clips[len(c.clips)-1]
+}
+
+// Click makes r clickable as id (inside the current clip only).
+func (c *Ctx) Click(id string, r RectF, fn func()) {
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+		if r.W() <= 0 || r.H() <= 0 {
+			return
+		}
+	}
+	c.hits = append(c.hits, Hit{ID: id, R: r, OnClick: fn})
+}
+
+// ClickAt is Click for targets that need the click's position (a seek
+// bar).
+func (c *Ctx) ClickAt(id string, r RectF, fn func(x, y float32)) {
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+		if r.W() <= 0 || r.H() <= 0 {
+			return
+		}
+	}
+	c.hits = append(c.hits, Hit{ID: id, R: r, OnClickAt: fn})
+}
+
+// Drag makes r a target that follows the pointer while the button is held
+// on it (see Hit.OnDrag).
+func (c *Ctx) Drag(id string, r RectF, fn func(x, y float32, done bool)) {
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+		if r.W() <= 0 || r.H() <= 0 {
+			return
+		}
+	}
+	c.hits = append(c.hits, Hit{ID: id, R: r, OnDrag: fn})
+}
+
+// HoverArea makes r report hover as id without being clickable (no hand
+// cursor): a row that shows its actions while the pointer is on it.
+// Register it before the row's buttons, so they stay on top.
+func (c *Ctx) HoverArea(id string, r RectF) {
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+		if r.W() <= 0 || r.H() <= 0 {
+			return
+		}
+	}
+	c.hits = append(c.hits, Hit{ID: id, R: r})
+}
+
+// Visible reports whether r is at least partly inside the current clip
+// (everything is, without one), so long pages can skip what's scrolled
+// away.
+func (c *Ctx) Visible(r RectF) bool {
+	if len(c.clips) == 0 {
+		return true
+	}
+	k := c.clips[len(c.clips)-1]
+	return r.B > k.T && r.T < k.B && r.R > k.L && r.L < k.R
+}
+
+// PushClip limits drawing and clicks to r.
+func (c *Ctx) PushClip(r RectF) {
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+	}
+	c.clips = append(c.clips, r)
+	c.Draw(func(cv Canvas) { cv.PushClip(r) })
+}
+
+// PopClip ends the last PushClip.
+func (c *Ctx) PopClip() {
+	c.clips = c.clips[:len(c.clips)-1]
+	c.Draw(func(cv Canvas) { cv.PopClip() })
+}
+
+// AddScroll registers a scrollable region.
+func (c *Ctx) AddScroll(a ScrollArea) { c.scrolls = append(c.scrolls, a) }
+
+// Paint replays the recorded drawing.
+func (c *Ctx) Paint(cv Canvas) {
+	for _, op := range c.ops {
+		op(cv)
+	}
+}
+
+// HitAt returns the topmost click target at (x, y).
+func (c *Ctx) HitAt(x, y float32) (Hit, bool) {
+	for i := len(c.hits) - 1; i >= 0; i-- {
+		if c.hits[i].R.Contains(x, y) {
+			return c.hits[i], true
+		}
+	}
+	return Hit{}, false
+}
+
+// HitByID returns the click target id of this pass (a drag goes on with
+// the latest layout's target).
+func (c *Ctx) HitByID(id string) (Hit, bool) {
+	for i := len(c.hits) - 1; i >= 0; i-- {
+		if c.hits[i].ID == id {
+			return c.hits[i], true
+		}
+	}
+	return Hit{}, false
+}
+
+// ScrollArea returns the scroll area id of this pass.
+func (c *Ctx) ScrollArea(id string) (ScrollArea, bool) {
+	for _, a := range c.scrolls {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return ScrollArea{}, false
+}
+
+// ScrollAt returns the innermost scroll area at (x, y).
+func (c *Ctx) ScrollAt(x, y float32) (ScrollArea, bool) {
+	for i := len(c.scrolls) - 1; i >= 0; i-- {
+		if c.scrolls[i].R.Contains(x, y) {
+			return c.scrolls[i], true
+		}
+	}
+	return ScrollArea{}, false
+}
+
+// Hits returns the click targets (for tests).
+func (c *Ctx) Hits() []Hit { return c.hits }
+
+// Lay out a whole tree: Root lays out n over a w×h area.
+func Root(c *Ctx, n Node, w, h float32) { n.Layout(c, 0, 0, w) }

@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.ico binary
+*.png binary
+*.wav binary
+*.gguf binary
+# Calendar feeds keep their CRLF line endings (as servers send them).
+*.ics -text

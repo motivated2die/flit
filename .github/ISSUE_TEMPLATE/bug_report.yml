@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in flit doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! One problem per issue, please. Security problems go through [SECURITY.md](https://github.com/motivated2die/flit/security/policy) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: flit version
+      description: Settings → App (the line "flit 0.x.y"). Please check that the problem still happens with the [latest release](https://github.com/motivated2die/flit/releases/latest).
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Press Win + R, type `winver`, press Enter.
+      placeholder: e.g. Windows 11 24H2
+    validations:
+      required: true
+
+  - type: input
+    id: meeting-app
+    attributes:
+      label: Meeting app
+      description: If it matters, the app and how you use it (desktop app or browser, headset or speakers).
+      placeholder: e.g. Teams (new) desktop app, USB headset
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, step by step, what you expected and what happened instead.
+      placeholder: |
+        1. Joined a Zoom call
+        2. Expected: flit offers to record
+        3. Instead: nothing happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        In flit: Settings → **Log** opens `%LOCALAPPDATA%\flit\debug.log`; drag the file into this box. If flit crashed or restarted, `debug.old.log` next to it helps too.
+
+        **Before you upload, read the log through.** It is posted publicly. flit never writes transcript text, meeting titles or your calendar link to it, and leaves out your Windows user name, your PC's name and e-mail addresses. It does contain audio device names, meeting app names and the times of recordings. Replace anything you'd rather not share with `***`.
+      placeholder: Drop debug.log here
+    validations:
+      required: false
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Screenshots (check them for meeting content first), whether it happens every time.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I have checked the log and screenshots for personal information and meeting content.
+          required: true
