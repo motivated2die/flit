@@ -59,7 +59,7 @@ jobs:
       # Fails when code we call has a known vulnerability, in a module or in
       # the Go standard library (fixed by bumping the toolchain line in go.mod).
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 
       - name: go build
         run: go build -o flit-ci.exe ./cmd/flit

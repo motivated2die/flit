@@ -33,19 +33,19 @@
     "#1": {
       "0000": {
         "fixed": {
-          "file_version": "0.1.0.0",
-          "product_version": "0.1.0.0"
+          "file_version": "0.1.1.0",
+          "product_version": "0.1.1.0"
         },
         "info": {
           "0409": {
             "CompanyName": "flit",
             "FileDescription": "flit",
-            "FileVersion": "0.1.0",
+            "FileVersion": "0.1.1",
             "InternalName": "flit",
             "LegalCopyright": "MIT License",
             "OriginalFilename": "flit.exe",
             "ProductName": "flit",
-            "ProductVersion": "0.1.0"
+            "ProductVersion": "0.1.1"
           }
         }
       }

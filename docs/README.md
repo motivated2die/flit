@@ -32,6 +32,7 @@ flit is past research and being built (see the package table in [architecture/ov
    - [research/window-rendering.md](research/window-rendering.md): what a frame of the window costs, and whether smooth scrolling fits
    - [research/voice-meter-bands.md](research/voice-meter-bands.md): where the voice meter's bands sit, measured on speech and noise
    - [research/engine-cores.md](research/engine-cores.md): how many cores the engine uses, and what limiting it costs
+   - [research/dependencies.md](research/dependencies.md): every library, tool and engine flit relies on, their versions and known vulnerabilities
 5. The reference analyses: [Resound](references/resound.md), [Handy](references/handy.md), [AutoDoc](references/autodoc.md), [transcribe.cpp](references/transcribe-cpp.md)
 
 ## Conventions
