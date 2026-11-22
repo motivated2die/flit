@@ -14,5 +14,6 @@ Architecture decision records: one choice per file, numbered in order. A record 
 | [0008](0008-tabler-icons.md) | Tabler icons everywhere, outlined into Direct2D polygons by flit's own code | accepted |
 | [0009](0009-quiet-transcription-by-default.md) | Transcribe during meetings and limit the run after, by default (Balanced) | accepted |
 | [0010](0010-updates-from-github-releases.md) | Draft releases on GitHub from version tags; updates offered in the sidebar, installed by the new exe, never during a recording | accepted |
-| [0011](0011-meeting-notes-with-llama-server.md) | Meeting notes with a small local LLM (Gemma 4 E2B/E4B) through llama-server, off by default | proposed |
-| [0012](0012-speaker-names-from-the-call-app.md) | Speaker names from the call app's window (UI Automation), voted onto Sortformer's speakers | proposed |
+| [0011](0011-meeting-notes-with-llama-server.md) | Summaries on request, by a small local LLM through llama-server (CPU + Vulkan), the lighter fitting model by default, extract-then-write | proposed |
+| [0012](0012-speaker-names-from-the-call-app.md) | Speaker names from the call app's window (UI Automation), voted onto Sortformer's speakers | proposed (parked) |
+| [0013](0013-own-markdown-notes-editor.md) | An own, line-based Markdown notes editor (headings, nested and numbered lists, tasks, bold, italics, @flit mentions) on flit's Direct2D framework | accepted |

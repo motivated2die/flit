@@ -6,7 +6,7 @@ Grouped by who or what can answer them. Remove a question once answered, and not
 
 1. **Code signing**: apply for SignPath Foundation signing now that releases are public? The release workflow's `sign` job is ready and waits for the repository variables ([RELEASING.md](RELEASING.md#code-signing-later)). Until then, SmartScreen warns on the first download.
 2. **Outside contributions**: CONTRIBUTING.md says pull requests aren't accepted (as Resound's). Keep that?
-3. **Meeting notes** ([ADR 0011](decisions/0011-meeting-notes-with-llama-server.md), proposed): is a 3–5 GB model plus a runtime download acceptable as an opt-in? Where is the limit for "too slow" (the proposal guesses 20 min per hour of meeting)? Notes in the meeting's language, or always one language?
+3. **Summaries** ([ADR 0011](decisions/0011-meeting-notes-with-llama-server.md), proposed). Answered 2026-11-22: about 15 min per hour of meeting on a weaker laptop is the target; summaries in the transcript's main language; a "For you" section and intent matching only if measurements show a gain ([research/summary-pipeline.md](research/summary-pipeline.md#decisions-by-the-author-2026-11-22)). Open: the model and runtime choice after the measurements.
 4. **Names from the call app** ([ADR 0012](decisions/0012-speaker-names-from-the-call-app.md), proposed): on or off by default? flit would read the Teams/Zoom/Meet window during recordings (only the call's window, every 1–2 s). And would you turn on live captions in calls, if that gives the best names?
 
 ## For measurement (needs code and recordings)
@@ -17,7 +17,9 @@ Grouped by who or what can answer them. Remove a question once answered, and not
 - Recognising people across recordings: how well speaker embeddings match the same person across meetings (AMI IS1009a→b–d, then own recurring meetings), and at what threshold. Plan and options: [research/speaker-identity.md](research/speaker-identity.md#experiment-plan-before-any-ui).
 - Text-level echo suppression with and without a headset.
 - Speaker names from call evidence on real calls: `callnames.Assign` + `Refine` against hand-labelled speakers; thresholds and reading interval (so far simulated only).
-- Local LLM on the author's laptop (CPU-only and Vulkan on the AMD iGPU): prompt reading and writing speed, memory with Teams running, German note quality of Gemma 4 E4B / E2B vs Qwen3 4B ([research/local-summaries.md](research/local-summaries.md#experiment-plan)).
+- Local LLM on the author's laptop (CPU-only, Vulkan with `-ngl 0` and with full offload on the AMD iGPU): prompt reading and writing speed, memory with Teams running, for Qwen3.5 2B/4B, Gemma 4 E2B/E4B, Granite 4.0 H Micro ([research/local-summaries.md](research/local-summaries.md#experiment-plan)).
+- Summary quality per approach (one pass vs extract-then-write vs classify-first) on AMI IS1009a–d against AMI's human summaries, with and without the attention cues; German on FAME or own meetings ([research/summary-pipeline.md](research/summary-pipeline.md#experiment-plan)).
+- Whether boosting the user's name in the speech model's vocabulary fixes its recognition in German meetings.
 - Worker memory and real-time factor on the author's PC, CPU vs. Vulkan.
 
 ## For verification on a real PC

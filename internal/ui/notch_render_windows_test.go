@@ -15,8 +15,8 @@ func notchViews(now time.Time) map[string]NotchView {
 	return map[string]NotchView{
 		"prompt": {Mode: NotchPrompt, Title: "Teams meeting", Detail: "Weekly sync",
 			Buttons: []NotchButton{{ID: "record", Label: "Transcribe", Primary: true}, {ID: "dismiss", Label: "Not now"}}},
-		"recording":       {Mode: NotchRecording, Title: "Recording", Since: now.Add(-754 * time.Second), Buttons: []NotchButton{{ID: "stop", Label: "Stop"}}},
-		"recording-hover": {Mode: NotchRecording, Title: "Recording", Since: now.Add(-754 * time.Second), Buttons: []NotchButton{{ID: "stop", Label: "Stop"}}},
+		"recording":       {Mode: NotchRecording, Title: "Recording", Since: now.Add(-754 * time.Second), Buttons: []NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}}},
+		"recording-hover": {Mode: NotchRecording, Title: "Recording", Since: now.Add(-754 * time.Second), Buttons: []NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}}},
 		"working":         {Mode: NotchWorking, Title: "Transcribing", Progress: 0.62},
 		"countdown": {Mode: NotchPrompt, Title: "Teams meeting detected", Detail: "recording starts automatically", CountFrom: now.Add(-3 * time.Second), CountFor: 5 * time.Second,
 			Buttons: []NotchButton{{ID: "record", Label: "Record now", Primary: true}, {ID: "dismiss", Label: "Cancel"}}},

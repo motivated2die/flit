@@ -7,6 +7,7 @@
 | [AutoDoc](autodoc.md) | How a meeting-notes app detects meetings, records tracks and merges them | [DuetDisplay/AutoDoc](https://github.com/DuetDisplay/AutoDoc), **AGPL-3.0** | `5082757` (v1.3.4, 2026-11-17) |
 | [transcribe.cpp](transcribe-cpp.md) | The inference engine Handy uses; our planned engine | [handy-computer/transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), MIT | `cfa237c` (after v0.4.2, 2026-11-21) |
 | [Yogurt](yogurt.md) | Local LLM notes picked by hardware (llama.cpp), names from the call app's window | [FrigadeHQ/yogurt](https://github.com/FrigadeHQ/yogurt), MIT | `71b095a` (app 0.3.64, 2026-11-22) |
+| [anarlog](anarlog.md) | How the user's notes steer a summary (Hyprnote/Char's "enhance"); a native notes editor | [fastrepl/anarlog](https://github.com/fastrepl/anarlog), MIT (`enterprise/` separately licensed) | `7c2a321` (2026-11-21) |
 
 Not cloned, surveyed from public pages: [how other apps tell speakers apart](speaker-apps.md) (MacWhisper, Argmax SpeakerKit, FluidAudio, Char; NVIDIA's Nemotron 3 Diarization).
 
@@ -20,6 +21,7 @@ git clone --depth 1 https://github.com/cjpais/Handy.git handy
 git clone --depth 1 https://github.com/DuetDisplay/AutoDoc.git autodoc
 git clone --depth 1 https://github.com/handy-computer/transcribe.cpp.git transcribe-cpp
 git clone --depth 1 https://github.com/FrigadeHQ/yogurt.git yogurt
+git clone --depth 1 https://github.com/fastrepl/anarlog.git anarlog
 ```
 
 To look at the exact commits analysed, fetch them (`git fetch --depth 1 origin <hash>; git checkout <hash>`).

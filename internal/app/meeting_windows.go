@@ -160,6 +160,7 @@ func (a *App) finishRecording(transcribe bool) {
 		return
 	}
 	a.rec = nil
+	a.saveAllNotes() // what was typed during the meeting
 	err := rec.r.Stop()
 	a.checkLevels(rec)
 	s := rec.sess

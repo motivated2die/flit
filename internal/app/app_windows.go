@@ -124,6 +124,11 @@ type App struct {
 	autoToken int
 	confirmAt time.Time
 	paraCache map[string][]transcript.Paragraph
+	// notes are the recordings' notes being edited (notes_windows.go);
+	// focusNotes asks the next layout to give that recording's editor the
+	// keyboard.
+	notes      map[string]*notesState
+	focusNotes string
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
@@ -367,6 +372,7 @@ func (a *App) save() {
 
 func (a *App) quit() {
 	logx.Printf("quit")
+	a.saveAllNotes()
 	a.shutdown()
 	a.tray.Quit()
 }

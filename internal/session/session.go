@@ -35,6 +35,8 @@ const (
 	TranscriptText = "transcript.txt"
 	TranscriptMD   = "transcript.md"
 	SpeakersFile   = "speakers.json" // the names the user gave the speakers
+	NotesFile      = "notes.md"      // the user's notes (Markdown)
+	NotesTimesFile = "notes.json"    // when each line of the notes was typed
 )
 
 // MaxRetries is how often a failed transcription is retried on start.

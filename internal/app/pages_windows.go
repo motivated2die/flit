@@ -56,8 +56,10 @@ func (a *App) homePage() ui.Node {
 func (a *App) homeActions() []ui.Node {
 	switch {
 	case a.rec != nil:
+		rec := a.rec.sess
 		return []ui.Node{
 			a.confirmButton("home:cancel", "Cancel", true, a.cancelRecording),
+			ui.Button{ID: "home:notes", Label: "Notes", Glyph: ui.GlyphNotes, Large: true, OnClick: func() { a.openNotes(rec) }},
 			ui.Button{ID: "home:stop", Label: "Stop and transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
 		}
 	case a.detected != nil:
@@ -110,7 +112,9 @@ func (a *App) liveCard() ui.Node {
 		}
 		// The voice meter stacked on the right; in a narrow window, wide
 		// under the text.
-		return ui.Card{Items: []ui.Node{ui.Aside{
+		// A click on the card opens the recording, its notes ready to type in.
+		rec := a.rec.sess
+		return ui.Card{ID: "home:live", OnClick: func() { a.openNotes(rec) }, Items: []ui.Node{ui.Aside{
 			Main: ui.VStack{Gap: 10, Items: []ui.Node{
 				ui.LiveTitle{Text: title, Detail: ui.Clock(time.Since(a.rec.started))},
 				ui.Para{Text: source, Muted: true, Small: true},
@@ -396,6 +400,8 @@ func (a *App) sessionPage(id string) ui.Node {
 		items = append(items, ui.Card{Items: []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}})
 	}
 	items = append(items, a.sessionActions(s)) // the player is docked below the page (frame)
+	items = append(items, ui.Space(8))
+	items = append(items, a.notesSection(s)...)
 	if ready {
 		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Speakers", Right: a.analyzeLink(s)}, a.speakersCard(s))
 		items = append(items, ui.Space(8), ui.Caption("Transcript"), a.transcriptBlocks(s))

@@ -52,6 +52,9 @@ func (r *recorder) MarkedParagraph(s string, _ RectF, _ Font, _ ColorF, m []Text
 	r.texts = append(r.texts, s)
 	r.marks = append(r.marks, m...)
 }
+func (r *recorder) StyledParagraph(s string, _ RectF, _ Font, _ ColorF, _ []TextStyle) {
+	r.texts = append(r.texts, s)
+}
 func (r *recorder) Polygons([][]PointF, ColorF) {}
 func (r *recorder) PushClip(RectF)              { r.clips++ }
 func (r *recorder) PopClip()                    { r.clips-- }

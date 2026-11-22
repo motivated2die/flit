@@ -84,11 +84,12 @@ func (p *pixelCanvas) blend(x, y int, c ColorF, cov float32) {
 	q[3] = uint8(255*a + float32(q[3])*k + 0.5)
 }
 
-func (p *pixelCanvas) Arc(cx, cy, inner, outer, a0, a1 float32, c ColorF)      {}
-func (p *pixelCanvas) Text(string, RectF, Font, ColorF)                        {}
-func (p *pixelCanvas) Paragraph(string, RectF, Font, ColorF)                   {}
-func (p *pixelCanvas) MarkedParagraph(string, RectF, Font, ColorF, []TextMark) {}
-func (p *pixelCanvas) Polygons([][]PointF, ColorF)                             {}
+func (p *pixelCanvas) Arc(cx, cy, inner, outer, a0, a1 float32, c ColorF)       {}
+func (p *pixelCanvas) Text(string, RectF, Font, ColorF)                         {}
+func (p *pixelCanvas) Paragraph(string, RectF, Font, ColorF)                    {}
+func (p *pixelCanvas) MarkedParagraph(string, RectF, Font, ColorF, []TextMark)  {}
+func (p *pixelCanvas) StyledParagraph(string, RectF, Font, ColorF, []TextStyle) {}
+func (p *pixelCanvas) Polygons([][]PointF, ColorF)                              {}
 func (p *pixelCanvas) Bitmap(string, float32, float32, int, int, float32, func() []byte) {
 }
 

@@ -1,47 +1,48 @@
-# 0011: Meeting notes with a small local LLM through llama-server, off by default
+# 0011: Summaries on request, by a small local LLM through llama-server, on the GPU where it helps
 
 - **Status:** proposed
-- **Date:** 2026-11-22
+- **Date:** 2026-11-22 (revised the same day: on request only, accelerators, lighter models, the extract-then-write baseline)
 
 ## Context
 
-The vision so far ruled out "summaries, action items, notes generation, any LLM pass" ([vision.md](../vision.md)). The author now wants to explore them, with the worry that local summaries take long, need much processing power and large instruction-following models, especially on a laptop without a dedicated GPU (integrated AMD graphics). Research: [research/local-summaries.md](../research/local-summaries.md); references: [Yogurt](../references/yogurt.md) (node-llama-cpp, Gemma 4 / gpt-oss / Qwen3 picked by hardware), [AutoDoc](../references/autodoc.md#notes-studied-2026-11-22-same-commit) (managed Ollama, Qwen3 4B or Llama 3.2 3B, 8k context on Windows).
+The vision ruled out "summaries, action items, notes generation, any LLM pass" ([vision.md](../vision.md)). The author now wants them, with conditions: heavy processing only after the meeting and only when the user asks for it on a recording; as much use of local accelerators (integrated or dedicated GPUs) as possible; a model chosen for the PC, erring towards lighter ones; German and English; the user's own notes taken into account. Research: [research/local-summaries.md](../research/local-summaries.md) (runtime, models, accelerators, cost), [research/summary-pipeline.md](../research/summary-pipeline.md) (how). References: [Yogurt](../references/yogurt.md), [AutoDoc](../references/autodoc.md), [anarlog](../references/anarlog.md).
 
-Constraints: Go without cgo ([0001](0001-stay-with-go.md)); nothing heavy in the tray process; everything local; flit's CPU limits ([0009](0009-quiet-transcription-by-default.md)); German and English.
+Constraints: Go without cgo ([0001](0001-stay-with-go.md)); nothing heavy in the tray process; local only; flit's CPU limits ([0009](0009-quiet-transcription-by-default.md)).
 
 ## Options
 
-### A. llama.cpp's `llama-server` as an on-demand child process
+### Runtime
 
-Pinned release (CPU + Vulkan), downloaded when the feature is turned on; started by a supervisor on loopback with a random port and key, in the same kind of job object as the engine worker; exits when idle. OpenAI-compatible API: chat templates, prompt caching, JSON-schema output, Vulkan for integrated GPUs, no ABI to mirror. Costs: a second ggml copy on disk, a local port, release flags to keep pinned.
+1. **llama.cpp's `llama-server`** as an on-demand child process: one pinned build with the CPU and **Vulkan** backends (37 MB zipped for x64 Vulkan, `b12633`), which covers AMD, Intel and NVIDIA GPUs, integrated or dedicated, without vendor runtimes; OpenAI-compatible API, chat templates, prompt cache, JSON schema, token probabilities.
+2. `llama.dll` through `syscall`: one engine style, but structs by value, a large API, no Jinja templates.
+3. Ollama (AutoDoc): a large runtime and model store for one feature.
+4. **Windows ML / Foundry Local** (ONNX Runtime with vendor execution providers, including NPUs): broad hardware reach, but ONNX models, a second format and runtime, vendor-dependent paths.
+5. Only another local server or the clipboard.
 
-### B. `llama.dll` through `syscall` in flit's own worker
+### When it runs
 
-One engine style, no port. But llama.cpp's C API passes and returns structs by value, changes often, and has no Jinja chat templates; we would also own KV reuse and sampling. That is ADR 0001's "revisit when" case for little gain over A.
+a. After every meeting, automatically (Yogurt, AutoDoc). b. **Only when the user asks, after the meeting.**
 
-### C. Ollama, managed (AutoDoc's way)
+### How it works
 
-Mature, but a large runtime with its own model store, for one feature.
-
-### D. Only an external endpoint or the clipboard
-
-No download; the user's own assistant or local server does the work. Not "notes in flit" for most users.
+A. One pass over the whole transcript. B. Map-reduce with prose part notes. **C. Extract per section (JSON with quotes), check in code, then one writer call.** D. Classify turns by token probabilities first, extract only from flagged ones.
 
 ## Decision (proposed)
 
-**A**, behind an `internal/llm` client that also accepts another local OpenAI-compatible server (D comes almost free), plus "Copy transcript with notes prompt" (no model) as the first step. **Off by default.** When turned on: the runtime downloads, a one-minute speed check measures prompt reading and writing on this PC (CPU and Vulkan), and flit picks **Gemma 4 E4B** or **E2B** (QAT Q4_0, 5.15 / 3.35 GB) and says how long notes for an hour take here. Notes run after transcription and speakers, never during a recording, under the transcription limit, one model in memory at a time, answer as checked JSON with verbatim quotes. Design: [architecture/summaries.md](../architecture/summaries.md).
+Runtime **1**, with the same client reaching a user's other local server (5, which also covers Foundry Local and Lemonade); **b**; pipeline **C** as the baseline, A as its one-section case for comparison, D to try later. Hardware is read first (RAM, adapters through DXGI); the model must fit a memory cap (about a quarter of RAM without dedicated graphics); the **lighter** fitting candidate is the default, the next one offered as "better, slower"; a one-time speed check per model and adapter picks CPU, Vulkan with layers in system memory (`-ngl 0`) or full offload, and predicts the minutes per hour of meeting. First candidates to measure: Qwen3.5 2B/4B, Gemma 4 E2B/E4B, Granite 4.0 H Micro. Design: [architecture/summaries.md](../architecture/summaries.md).
 
-To accept after the experiment in the research note: speeds on the author's laptop, German quality of E4B vs E2B vs Qwen3 4B, memory with Teams running.
+To accept: the speed and memory numbers on the author's laptop (CPU and its integrated AMD GPU), and notes quality on AMI IS1009a–d (actions and decisions found, invented, owners) and German meetings, for two or three candidates.
 
 ## Consequences
 
-- flit stays small when the feature is off: no runtime, no model, no code path that loads anything.
-- Turned on, it adds a 3–5 GB model and a runtime download, and several minutes of background work per hour of meeting on a CPU-only laptop (estimate; 1.5–3.5 min with the iGPU).
-- A second inference engine to pin, test and update (llama.cpp releases daily; we update deliberately).
-- The vision's "explicitly not" changes to "opt-in".
+- With summaries never used, nothing downloads and nothing runs.
+- Asked for, a ~37 MB runtime and a ~1.5–3 GB model download once; a summary takes minutes in the background (estimate for one hour of meeting: a few minutes with the iGPU, longer on CPU only), at the transcription limit.
+- A second inference engine to pin, test and update; llama.cpp releases daily, flit updates deliberately.
+- GPU drivers can hang or lose the device; watchdogs and a CPU fallback are part of the supervisor.
+- The vision's "explicitly not" becomes "on request".
 
 ## Revisit when
 
-- The experiment shows notes for an hour taking over ~20 min at Balanced on the author's laptop, or German notes from 4 B models are not useful: then only D and the clipboard.
-- llama-server's flags or API churn costs more than mirroring `llama.h` would (then B).
-- transcribe.cpp or Windows itself offers a light text-generation role.
+- Measurements show over ~15 minutes per hour of meeting on the author's laptop with the lightest acceptable model, or German output from small models isn't useful: then only the clipboard and another server.
+- An NPU path (Windows ML) becomes broad enough on the laptops flit targets to be worth a second format.
+- llama-server's interface churns more than a direct binding would cost.

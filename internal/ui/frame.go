@@ -419,6 +419,21 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 		c.Scroll[id] = maxScroll
 	}
 	c.AddScroll(ScrollArea{ID: id, R: area, Max: maxScroll, View: RectF{area.L, view.T, area.R, h - reserve}})
+	if k := c.keepView; k != nil && c.intoView == nil {
+		// As little as it takes, with a margin.
+		margin, viewB := c.Px(24), h-reserve
+		want := float32(0)
+		switch {
+		case k[0] < view.T+margin:
+			want = k[0] - (view.T + margin)
+		case k[1] > viewB-margin:
+			want = k[1] - (viewB - margin)
+		}
+		if want != 0 {
+			c.WantScroll = &ScrollTarget{ID: id, To: max(0, min(maxScroll, off+want))}
+		}
+		c.keepView = nil
+	}
 	if c.intoView != nil {
 		// Bring it to a third of the way down the view.
 		want := *c.intoView - (view.T + (view.B-reserve-view.T)/3)

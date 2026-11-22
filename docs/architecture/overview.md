@@ -29,11 +29,12 @@ Status: **partly built** (2026-11-21). The engine path is real and measured end 
 | `cmd/flit` | entry point → `app.Run`, roles by first argument: tray app, `--engine-worker`, `--uninstall`, and the console tools `transcribe`, `record`, `notch-demo` | built |
 | `cmd/flitdev` | dev setup: engine DLLs, models, test meetings, app icon; `release-server`, a stand-in for GitHub's release API to test updates | built |
 | `internal/app` | wiring; the tray app's state on the UI thread: detection → prompt → recording → transcription queue → ready/copy; model download in the background; the main window's pages (welcome, home, recordings, a session, audio, settings) and the tray panel; console tools | built (no text input yet: vocabulary and microphone are edited in `config.json`) |
-| `internal/ui` | tray icon (feather with state badges) and native menu, notifications, clipboard; Direct2D/DirectWrite without cgo; **the notch**; **the main window** (`window_windows.go`) and its portable view framework and widgets (`view.go`, `widgets.go`, `frame.go`); the vector rasterizer and the feather mark; palette (`theme.go`, see [design.md](../design.md)) | built |
+| `internal/ui` | tray icon (feather with state badges) and native menu, notifications, clipboard; Direct2D/DirectWrite without cgo; **the notch**; **the main window** (`window_windows.go`) and its portable view framework and widgets (`view.go`, `widgets.go`, `frame.go`); the vector rasterizer and the feather mark; palette (`theme.go`, see [design.md](../design.md)); **the notes editor** (`noteseditor.go`: styled DirectWrite paragraphs, keyboard focus for editors) | built |
 | `internal/coreaudio` | Core Audio: COM threads, endpoints, a correct `Activate`, active session PIDs, **process loopback** (`ActivateAudioInterfaceAsync` with a Go COM handler) | built, live-tested |
 | `internal/capture` | device streams on MMCSS threads (mic, endpoint loopback, process loopback; a device refusing its mix format is retried with Windows converting, and the meeting side waits for a device that fails for a moment instead of failing the recording, [research](../research/audio-capture.md#a-device-refusing-its-own-format-2026-11-22)), QPC alignment onto the session time line, reopen after device loss, 16 kHz track writer, two-track recorder; each track's voice bands for the live meter (a 512-point FFT on the writer goroutine) | built, live-tested |
 | `internal/detect` | snapshots (processes, mic users, window titles), provider table, process-tree targets, start/end hysteresis | built; real Teams/Zoom/Meet still to verify |
-| `internal/session` | session folders and state, crash recovery, the transcription job (both tracks, echo, merge, .txt/.md/.json) | built |
+| `internal/session` | session folders and state, crash recovery, the transcription job (both tracks, echo, merge, .txt/.md/.json), the notes (`notes.md`, `notes.json`) | built |
+| `internal/notes` | a recording's notes: blocks ↔ Markdown, plain text, HTML, `@flit` mentions, typing times, the editing rules and undo ([research/notes-editor.md](../research/notes-editor.md)) | built |
 | `internal/instance` | single-instance mutex, finding and signalling the running copy (registered window messages) | built |
 | `internal/install` | dropper install to `%LOCALAPPDATA%\Programs\flit`, Installed-apps entry, Start Menu shortcut, autostart, uninstall; HKCU only | built (registry/shortcut untested by design) |
 | `internal/config`, `internal/logx` | `config.json` (atomic save, broken file kept), scrubbed log with an in-memory tail of the last 200 lines for the Debug page | built |
@@ -55,7 +56,7 @@ Status: **partly built** (2026-11-21). The engine path is real and measured end 
 
 Not built yet: text input in the window (vocabulary, microphone choice), a settings panel, following a changed default device without it disappearing.
 
-Proposed, not built: meeting notes by a local LLM in an on-demand `llama-server` process ([summaries.md](summaries.md)), speaker names from the call app's window ([speaker-names.md](speaker-names.md)).
+Proposed, not built: a notes editor on each recording and summaries on request by a local LLM in an on-demand `llama-server` process ([summaries.md](summaries.md)), speaker names from the call app's window ([speaker-names.md](speaker-names.md)).
 
 ## A session's life
 

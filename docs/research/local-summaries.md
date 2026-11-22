@@ -43,7 +43,7 @@ Generation on a CPU can be estimated from memory bandwidth, as Yogurt's picker d
 | same, CPU only | Gemma 4 E2B Q4_0 | ~half | ~0.6× | **2–5 min** |
 | AMD iGPU through Vulkan | Gemma 4 E4B | 20–50 s | 1–2.5 min | **1.5–3.5 min** |
 
-This is slow next to transcription (an hour of meeting is ~5 min at Balanced, [engine-cores.md](engine-cores.md)), but it runs once, after the transcript, in the background. For flit's "a transcript a minute after the meeting is fine" principle, a summary ten minutes later is acceptable; one that blocks the PC is not.
+This is slow next to transcription (an hour of meeting is ~5 min at Balanced, [engine-cores.md](engine-cores.md)), but it runs only when the user asks for notes on a recording, after the meeting, in the background ([summary-pipeline.md](summary-pipeline.md)). For flit's "a transcript a minute after the meeting is fine" principle, a summary ten minutes later is acceptable; one that blocks the PC is not.
 
 ## The levers, most gain first
 
@@ -76,7 +76,48 @@ What the references ship for this job, and what fits a 16 GB laptop (sizes from 
 | Llama 3.2 3B | ~2 GB at Q4 | 128k | Llama 3.2 Community | AutoDoc's low-spec | weak outside English (AutoDoc notes it returning the blank example for non-English, `llm.ts`) |
 | gpt-oss-20b, MXFP4 | 12.1 GB | 128k | Apache-2.0 | Yogurt on 32 GB | MoE, 3.6 B active: fast decode for its quality, too big for 16 GB |
 
-Qwen 3.5 small models exist (one comparison cites 262k context at all sizes); not checked further. The choice between Gemma 4 E4B and Qwen3/3.5 4B for German meetings is the first thing to measure. Both families come as GGUF, so the engine choice doesn't constrain it.
+More recent small models, found 2026-11-22 (not in any reference's catalogue; sizes and claims from secondary sources unless linked to a card; all **unmeasured** by us, German quality unknown):
+
+| Model | Size | Why interesting | Caveats |
+|---|---|---|---|
+| **Qwen3.5 0.8B / 2B / 4B / 9B** (March 2026, per one guide) | 2B and 0.8B under 2 GB, 9B ~5–6 GB at 4-bit ([Artificial Analysis](https://artificialanalysis.ai/articles/qwen3-5-small-models)) | **Hybrid attention**: Gated DeltaNet linear attention and full attention 3:1, 262k context at all sizes: much smaller KV cache and cheaper long prompts than a plain transformer | sources disagree on details (dense vs MoE); a vendor benchmark shows the 4B degrading on hour-long input ([AssemblyAI](https://www.assemblyai.com/blog/summarize-meetings-llms-python)); prompt reuse for hybrid models in llama.cpp was still maturing in March 2026 (slot save/restore issues) |
+| **IBM Granite 4.0 H Micro** (3B) / **H Tiny** (7B, 1B active) | | **Mamba-2 and attention 9:1**: IBM claims 70–80% less memory than transformers at long context, e.g. a 3B at 128k tokens in 8-bit in 4 GB ([IBM](https://www.ibm.com/new/announcements/ibm-granite-4-0-hyper-efficient-high-performance-hybrid-models)) | vendor figures; German not stated |
+| **Ministral 3 3B** (December 2025) | ~2 GB at Q4 (guess) | supports German among dozens of languages; Multilingual MMLU 0.652 for the base model ([card](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512)) | MMLU isn't summarisation |
+| **LFM2 / LFM2.5** (Liquid AI) | ~1–3 B | built for on-device; hybrid (convolution + attention) | multilingual numbers are translated benchmarks, mostly vision ([LFM2 report](https://arxiv.org/pdf/2511.23404)) |
+| anarlog's "hypr-llm-sm" | 1.1 GB Q4_K_M | a small model fine-tuned for exactly this job ([anarlog.md](../references/anarlog.md#local-models-crateslocal-model-crateslocal-llm-core)) | Apple Silicon only in anarlog, base and license of the weights not checked |
+
+**For the first comparison**: Qwen3.5 4B and 2B, Gemma 4 E2B and E4B, Granite 4.0 H Micro. Two transformer families with strong multilingual cards, two hybrid families whose long-prompt cost should be lower on a CPU or iGPU. The hybrid models matter most for flit because long prompts on weak hardware are its bottleneck. All come as GGUF for llama.cpp; check each architecture is supported by the pinned llama.cpp.
+
+## Accelerators on Windows (researched 2026-11-22)
+
+What a Windows laptop or PC can use, and how llama.cpp reaches it:
+
+| Hardware | Path | Package (llama.cpp `b12633`, zipped) | Notes |
+|---|---|---:|---|
+| Any x64 CPU | CPU backend (picks AVX2/AVX-512 variants at start) | `win-cpu-x64` 23.8 MB | always the fallback |
+| **AMD, Intel and NVIDIA GPUs, integrated or dedicated** | **Vulkan** | `win-vulkan-x64` **37 MB** | one build for all vendors; the only route that covers AMD integrated graphics without a vendor runtime; drivers vary (a FreeBSD report of a 780M locking up, [drm-kmod #387](https://github.com/freebsd/drm-kmod/issues/387)) |
+| Intel iGPU/NPU (Core Ultra) | OpenVINO | `win-openvino-…-x64` 100 MB | Intel only |
+| Intel GPUs | SYCL | 165 MB | Intel only, large |
+| AMD dedicated GPUs | ROCm/HIP | 271 MB | large; for integrated Radeons Vulkan is the practical one |
+| NVIDIA | CUDA 12.4 / 13.5 | 215–341 MB + runtime 266–407 MB | large; Vulkan works on NVIDIA too, somewhat slower (to measure) |
+| AMD NPU (Ryzen AI 300/400, XDNA 2) | not in llama.cpp; Lemonade (FastFlowLM) or Windows ML (Vitis AI EP) | — | only the newest AMD chips; Ryzen 7040/8040 NPUs have no LLM runtime (third-party summary) |
+| Intel/AMD/Qualcomm NPUs, any GPU | **Windows ML / Foundry Local** (ONNX Runtime with vendor execution providers: OpenVINO, Vitis AI, QNN, CUDA, WebGPU; OpenAI-compatible API in Foundry Local) ([Microsoft](https://learn.microsoft.com/windows/ai/windows-ai-comparison)) | — | ONNX models, not GGUF; a second model format and runtime; Foundry Local is reachable through the same OpenAI-compatible client (option D in [Engines](#engines-go-no-cgo)) |
+
+How to use an **integrated** GPU with llama.cpp: it shares system memory, so putting layers "on the GPU" doesn't save RAM. Two settings to measure on the author's laptop: all layers offloaded (`-ngl 99`), and **`-ngl 0`**, where weights stay in system memory and Vulkan still takes the large matrix products of prompt processing; a maintainer in llama.cpp's Vulkan thread calls this "often a good setting for integrated GPUs" ([discussion #10879](https://github.com/ggml-org/llama.cpp/discussions/10879)). Numbers found for a Radeon 780M (Ryzen 7 PRO 7840U, Vulkan): Gemma 4 26B (MoE, 4B active) at ~37–118 tok/s prompt and ~23 tok/s generation ([discussion #24222](https://github.com/ggml-org/llama.cpp/discussions/24222)); no CPU baseline given. AMD reports +31% on average for Llama 3.2 1B with Vulkan offload over CPU only in LM Studio, and notes a competitor's iGPU getting *slower* ([AMD](https://www.amd.com/en/blogs/2024/accelerating-llama-cpp-performance-in-consumer-llm.html)). So the GPU must be measured, not assumed: a slower Vulkan path is real.
+
+llama.cpp reached **v1.0.0 on 2026-11-13** (deprecated API removed, external PLE shards, Windows unbuffered loading, server hardening), and still releases builds several times a day (`b12633` on 2026-11-22). flit pins one build and updates deliberately, as with transcribe.cpp.
+
+## Picking a model for this PC, cautiously
+
+The author's rule: rather a slightly lighter model than one that bogs the PC down. Yogurt estimates speed from a bandwidth table and ignores prompt reading ([yogurt.md](../references/yogurt.md#the-notes-model-picked-for-the-computer-packagespicker)); flit measures instead, and caps by memory first.
+
+1. **Read the PC** (no model needed): total and available RAM (`GlobalMemoryStatusEx`), logical cores, and the graphics adapters through DXGI (`IDXGIFactory1::EnumAdapters1`: name, vendor, dedicated video memory, shared system memory; an adapter with little or no dedicated memory is integrated). Battery or mains (`GetSystemPowerStatus`).
+2. **Memory cap** (guesses to tune): the model file plus its working memory must stay under **a quarter of total RAM** on PCs without dedicated graphics (a meeting app, a browser and flit itself keep running), or fit into dedicated VRAM with a margin. That gives roughly: 8 GB → ≤ 1.5 GB models (Qwen3.5 2B-class); 16 GB → ≤ 3 GB (Gemma 4 E2B, Qwen3.5 4B); 32 GB or a GPU with ≥ 8 GB → the 4–5 GB class (Gemma 4 E4B, Qwen3.5 9B on a GPU).
+3. **Default to the smaller candidate** within the cap; offer the next one as "better, slower" with its measured time.
+4. **Speed check once** per model and adapter: read ~1,000 tokens, write 64, CPU-only and Vulkan (`-ngl 0` and full offload on an iGPU); keep the fastest path. Predict "about N minutes for a one-hour meeting" from the pipeline's token budget ([summary-pipeline.md](summary-pipeline.md#approaches-to-compare)).
+5. **Too slow** (guess: over 15 minutes per hour of meeting at the chosen load): step down a model; if the smallest is still too slow, say so and offer "Copy transcript with prompt" instead.
+6. **Watch in use**: a run that takes much longer than predicted, a GPU device loss or an out-of-memory error steps down (GPU → CPU, then a smaller model) and remembers it per adapter (Yogurt's fallbacks).
+7. On battery, ask before starting a long run.
 
 ## Engines (Go, no cgo)
 

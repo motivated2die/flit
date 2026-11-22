@@ -356,6 +356,30 @@ func RenderFrame(f Frame, w, h int32, scale float32, hover string, scroll map[st
 	return SurfaceImage(s), nil
 }
 
+// RenderFrameFocused is RenderFrame with an editor having the keyboard
+// (its caret drawn).
+func RenderFrameFocused(f Frame, w, h int32, scale float32, focus string, scroll map[string]float32) (*image.RGBA, error) {
+	s, err := render(func(c *Ctx, cw, ch float32) { c.Focus = focus; f.Layout(c, cw, ch) }, w, h, scale, col(ColBase), "", scroll)
+	if err != nil {
+		return nil, err
+	}
+	defer s.Free()
+	return SurfaceImage(s), nil
+}
+
+// LayoutFrame lays a frame out without drawing it, an editor having the
+// keyboard (tests: the pass's click targets and editors).
+func LayoutFrame(f Frame, w, h int32, scale float32, focus string) (*Ctx, error) {
+	m, err := D2DMetrics()
+	if err != nil {
+		return nil, err
+	}
+	c := NewCtx(scale, m, time.Now(), "", "", nil)
+	c.Focus = focus
+	f.Layout(c, float32(w), float32(h))
+	return c, nil
+}
+
 // SurfaceImage copies an opaque surface into an image.
 func SurfaceImage(s *Surface) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, int(s.W), int(s.H)))

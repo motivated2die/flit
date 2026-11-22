@@ -46,6 +46,7 @@ func (a *App) initWindow() {
 	w.Build = a.frame
 	w.OnEscape = a.closePopover
 	w.OnHide = func() {
+		a.saveAllNotes()
 		a.syncMeters()
 		if !w.Visible() {
 			a.closePlayer() // closed (not minimised): nothing plays on
@@ -84,6 +85,7 @@ func (a *App) go_(page string) {
 	}
 	a.confirm = ""
 	a.uninstallAsk = false
+	a.saveAllNotes()
 	if page != a.page {
 		a.tsQuery, a.tsIndex, a.tsJump = "", 0, false // a search belongs to its page
 	}

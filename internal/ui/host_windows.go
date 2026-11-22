@@ -47,6 +47,11 @@ type host struct {
 	edit         *Editing // the text field being typed in
 	hand         bool     // the hovered hit is clickable
 	surrogate    uint16   // the first half of a character outside the BMP
+	// focus is the multi-line editor with the keyboard ("" none); edDrag:
+	// the button is down in it, selecting; goalX: where Up/Down aim.
+	focus  string
+	edDrag bool
+	goalX  float32
 
 	// layout lays out the client area (w×h device pixels) into c.
 	layout func(c *Ctx, w, h float32)
@@ -81,6 +86,8 @@ const (
 	scrollEase    = 50 * time.Millisecond
 	vkEscape      = 0x1B
 	vkControl     = 0x11
+	vkShift       = 0x10
+	vkMenu        = 0x12 // Alt
 	smCxDoubleClk = 36
 	smCyDoubleClk = 37
 	idcIBeam      = 32513
@@ -158,7 +165,20 @@ func (h *host) paint() {
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
 	c.Edit, c.StartEdit = h.edit, h.startEdit
 	c.Sel = h.sel
+	c.Focus = h.focus
 	h.layout(c, float32(cw), float32(ch))
+	if h.focus != "" {
+		if _, ok := c.editorByID(h.focus); !ok {
+			h.focus, h.edDrag = "", false // the editor went away (another page)
+		}
+	}
+	for _, t := range c.editors {
+		if t.WantFocus && h.focus != t.ID {
+			h.CommitEdit()
+			h.focus, h.goalX = t.ID, -1
+			defer h.Invalidate() // drawn again with the caret
+		}
+	}
 	if h.sel != nil && (h.sel.AnchorArea >= len(c.texts) || h.sel.FocusArea >= len(c.texts)) {
 		h.sel, h.selecting = nil, false // the text went away (another page)
 	}
@@ -295,9 +315,16 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 			h.selectTo(lp)
 			return 0, true
 		}
+		if h.edDrag {
+			if t, ok := h.focused(); ok && t.Drag != nil {
+				t.Drag(float32(int16(lp&0xFFFF)), float32(int16(lp>>16&0xFFFF)))
+				h.Invalidate()
+			}
+			return 0, true
+		}
 		id, hand, ibeam := "", false, false
 		if hit, ok := h.hitAt(lp); ok {
-			id, hand, ibeam = hit.ID, hit.clickable(), hit.text
+			id, hand, ibeam = hit.ID, hit.clickable(), hit.text || hit.editor
 		}
 		h.hand, h.ibeam = hand, ibeam
 		if id != h.hover {
@@ -319,6 +346,15 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, true
 	case wmLButtonDown:
+		if hit, ok := h.hitAt(lp); ok && hit.editor {
+			h.pressEditor(hit, float32(int16(lp&0xFFFF)), float32(int16(lp>>16&0xFFFF)))
+			return 0, true
+		} else if ok && h.last != nil && h.editorPart(hit.ID) != "" {
+			h.focus = h.editorPart(hit.ID) // its toolbar or checkboxes: it keeps (or gets) the keyboard
+		} else if h.focus != "" {
+			h.focus = "" // a click elsewhere lets go of the keyboard
+			h.Invalidate()
+		}
 		if h.edit != nil {
 			if hit, ok := h.hitAt(lp); !ok || hit.ID != h.edit.ID {
 				h.CommitEdit() // clicking elsewhere saves
@@ -344,6 +380,11 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, true
 	case wmLButtonUp:
+		if h.edDrag {
+			h.edDrag = false
+			procReleaseCapture.Call()
+			return 0, true
+		}
 		if h.selecting {
 			h.selectTo(lp)
 			h.selecting = false
@@ -374,7 +415,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, true
 	case wmCaptureChange:
-		h.selecting = false
+		h.selecting, h.edDrag = false, false
 		if h.drag != "" {
 			h.endDrag() // capture taken away: the drag ends where it was
 		}
@@ -399,12 +440,26 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, true
 	case wmChar:
+		if h.focus != "" {
+			h.editorChar(uint16(wp))
+			return 0, true
+		}
 		if h.edit == nil {
 			return 0, false
 		}
 		h.typed(uint16(wp))
 		return 0, true
 	case wmKeyDown:
+		if h.focus != "" {
+			if t, ok := h.focused(); ok && t.Key != nil {
+				m := Mods{Ctrl: keyDown(vkControl), Shift: keyDown(vkShift), Alt: keyDown(vkMenu)}
+				if t.Key(wp, m, h.editorEnv()) {
+					h.Invalidate()
+					return 0, true
+				}
+			}
+			return 0, false
+		}
 		if h.edit == nil {
 			return h.selectionKey(wp)
 		}
@@ -573,6 +628,98 @@ func keyDown(vk uintptr) bool {
 	return int16(r) < 0
 }
 
+// editorPart is the editor a hit belongs to (its ID and ":" start the
+// hit's), or "".
+func (h *host) editorPart(id string) string {
+	for _, t := range h.last.editors {
+		if strings.HasPrefix(id, t.ID+":") {
+			return t.ID
+		}
+	}
+	return ""
+}
+
+// focused is the editor with the keyboard, in the last layout.
+func (h *host) focused() (EditorTarget, bool) {
+	if h.focus == "" || h.last == nil {
+		return EditorTarget{}, false
+	}
+	return h.last.editorByID(h.focus)
+}
+
+// pressEditor focuses the editor clicked and hands it the click (counted
+// for double and triple clicks); the button held selects with the pointer.
+func (h *host) pressEditor(hit Hit, x, y float32) {
+	h.CommitEdit()
+	if h.sel != nil {
+		h.sel = nil
+	}
+	if h.focus != hit.ID {
+		h.focus = hit.ID
+	}
+	h.goalX = -1
+	dt, _, _ := procGetDoubleClickTime.Call()
+	cx, _, _ := procGetSystemMetrics.Call(smCxDoubleClk)
+	cy, _, _ := procGetSystemMetrics.Call(smCyDoubleClk)
+	n := 1
+	if time.Since(h.clickAt) <= time.Duration(dt)*time.Millisecond && abs32(x-h.clickX) <= float32(cx) && abs32(y-h.clickY) <= float32(cy) {
+		n = h.clicks%3 + 1
+	}
+	h.clicks, h.clickAt, h.clickX, h.clickY = n, time.Now(), x, y
+	if t, ok := h.last.editorByID(hit.ID); ok && t.Press != nil {
+		t.Press(x, y, keyDown(vkShift), n)
+	}
+	h.edDrag = true
+	procSetCapture.Call(h.hwnd)
+	h.Invalidate()
+}
+
+// editorChar hands a typed character (WM_CHAR, a UTF-16 unit) to the
+// focused editor. Control characters (Enter, Tab, Backspace, Ctrl+letter)
+// are its keys, handled at WM_KEYDOWN.
+func (h *host) editorChar(u uint16) {
+	t, ok := h.focused()
+	if !ok || t.Char == nil {
+		return
+	}
+	var r rune
+	switch {
+	case u >= 0xD800 && u < 0xDC00:
+		h.surrogate = u
+		return
+	case u >= 0xDC00 && u < 0xE000:
+		if h.surrogate == 0 {
+			return
+		}
+		r = utf16.DecodeRune(rune(h.surrogate), rune(u))
+		h.surrogate = 0
+	case u < 0x20 || u == 0x7F:
+		return
+	default:
+		r = rune(u)
+	}
+	t.Char(r, h.editorEnv())
+	h.Invalidate()
+}
+
+// editorEnv is what the focused editor's keys may use.
+func (h *host) editorEnv() *EditorEnv {
+	return &EditorEnv{
+		SetClipboard: func(text, html string) { _ = SetClipboardRich(h.hwnd, text, html) },
+		Clipboard:    func() string { return ClipboardText(h.hwnd) },
+		Blur:         func() { h.focus, h.edDrag = "", false },
+		GoalX:        &h.goalX,
+	}
+}
+
+// Blur takes the keyboard from the focused editor.
+func (h *host) Blur() {
+	if h.focus != "" {
+		h.focus = ""
+		h.Invalidate()
+	}
+}
+
 // startEdit begins typing in field id (saving another field first).
 func (h *host) startEdit(id, value string, maxLen int) {
 	if h.edit != nil {
@@ -581,6 +728,7 @@ func (h *host) startEdit(id, value string, maxLen int) {
 		}
 		h.CommitEdit()
 	}
+	h.focus = "" // a field takes the keyboard from an editor
 	text := []rune(value)
 	h.edit = &Editing{ID: id, Text: text, Caret: len(text), All: len(text) > 0, Since: time.Now(), Max: maxLen, Orig: value}
 	h.Invalidate()

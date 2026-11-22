@@ -118,6 +118,7 @@ type d2d struct {
 	paraHeights                map[paraKey]float32 // ParagraphHeight results (UI thread only)
 	bitmaps                    map[string]*comObj  // Canvas.Bitmap's pictures (UI thread only)
 	paraLines                  map[paraKey]*TextLines
+	styledLines                map[string]*TextLines // StyledLines results
 }
 
 var (
@@ -277,6 +278,12 @@ func (g *d2d) paragraphLines(s string, f Font, width float32) *TextLines {
 		return &TextLines{}
 	}
 	defer tl.release()
+	return layoutLines(tl, s, len(u)-1)
+}
+
+// layoutLines reads a text layout's lines and caret stops (s is its text,
+// n its length in UTF-16 units).
+func layoutLines(tl *comObj, s string, units int) *TextLines {
 	type lineMetrics struct {
 		Length, TrailingWS, NewlineLen uint32
 		Height, Baseline               float32
@@ -294,7 +301,7 @@ func (g *d2d) paragraphLines(s string, f Font, width float32) *TextLines {
 		tl.call(tlGetLineMetrics, uintptr(unsafe.Pointer(&lines[0])), uintptr(len(lines)), uintptr(unsafe.Pointer(&n)))
 	}
 	lines = lines[:min(int(n), len(lines))]
-	clusters := make([]clusterMetrics, len(u))
+	clusters := make([]clusterMetrics, max(1, units))
 	var m uint32
 	tl.call(tlGetClusterMetrics, uintptr(unsafe.Pointer(&clusters[0])), uintptr(len(clusters)), uintptr(unsafe.Pointer(&m)))
 	clusters = clusters[:min(int(m), len(clusters))]

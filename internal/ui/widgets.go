@@ -55,6 +55,16 @@ const (
 	glyphPauseLine = "player-pause"
 	GlyphDown      = "chevron-down"
 	GlyphUpdate    = "download"
+	GlyphNotes     = "notes"
+	GlyphTask      = "square"
+	GlyphTaskDone  = "square-check"
+	GlyphBold      = "bold"
+	GlyphItalic    = "italic"
+	GlyphList      = "list"
+	GlyphNumbered  = "list-numbers"
+	GlyphH2        = "h-2"
+	GlyphH3        = "h-3"
+	GlyphAt        = "at"
 	glyphMinimize  = "minus"
 	glyphClose     = "x"
 )
@@ -255,6 +265,10 @@ func (p Para) Layout(c *Ctx, x, y, w float32) float32 {
 type Card struct {
 	Items []Node
 	Gap   float32
+	// ID and OnClick, when set, make the whole card clickable (under its
+	// own buttons), lighter while hovered: Home's recording card.
+	ID      string
+	OnClick func()
 }
 
 func (k Card) Layout(c *Ctx, x, y, w float32) float32 {
@@ -262,10 +276,25 @@ func (k Card) Layout(c *Ctx, x, y, w float32) float32 {
 	// Draw the background first, sized after laying out the content.
 	idx := len(c.ops)
 	c.Draw(nil)
+	hits := len(c.hits)
 	h := VStack{Gap: k.Gap, Items: k.Items}.Layout(c, x+pad, y+pad, w-2*pad) + 2*pad
 	r := RectF{x, y, x + w, y + h}
 	radius := c.Px(10)
-	c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, col(ColCard)) }
+	bg := col(ColCard)
+	if k.OnClick != nil {
+		if c.Hover == k.ID {
+			bg = col(ColCardHover)
+		}
+		hr := r
+		if len(c.clips) > 0 {
+			hr = r.Intersect(c.clips[len(c.clips)-1])
+		}
+		if hr.W() > 0 && hr.H() > 0 {
+			// Under the content's own targets, which stay on top.
+			c.hits = append(c.hits[:hits], append([]Hit{{ID: k.ID, R: hr, OnClick: k.OnClick}}, c.hits[hits:]...)...)
+		}
+	}
+	c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, bg) }
 	return h
 }
 
