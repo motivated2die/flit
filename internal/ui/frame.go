@@ -58,6 +58,10 @@ type Frame struct {
 	// busy (0..1 each, busiest first, at most 8): small squares beside
 	// the debug lines, filled from the top by their use.
 	DebugCores []float32
+	// DebugGPU, when DebugGPUShown, is how busy the graphics processor is
+	// for the work (0..1): one square two squares tall right of the cores.
+	DebugGPU      float32
+	DebugGPUShown bool
 
 	// Caption draws minimise and close at the top right, for a window
 	// without a native title bar (the Window sets these).
@@ -292,14 +296,23 @@ func (f Frame) debug(c *Ctx, side, h float32) {
 	if len(cores) > 8 {
 		cores = cores[:8]
 	}
-	var grid RectF
-	if len(cores) > 0 {
+	// The cores' grid, and the GPU's tall square at its right.
+	var grid, gpu RectF
+	if len(cores) > 0 || f.DebugGPUShown {
 		cols := (len(cores) + 1) / 2
-		gw := float32(cols)*c.Px(coreSquare) + float32(cols-1)*c.Px(coreGap)
+		gw := float32(cols)*c.Px(coreSquare) + float32(max(0, cols-1))*c.Px(coreGap)
 		gh := 2*c.Px(coreSquare) + c.Px(coreGap)
 		mid := (r.T + r.B) / 2
-		grid = RectF{r.R - c.Px(10) - gw, mid - gh/2, r.R - c.Px(10), mid + gh/2}
-		textR = grid.L - c.Px(6)
+		right := r.R - c.Px(10)
+		if f.DebugGPUShown {
+			gpu = RectF{right - c.Px(coreSquare), mid - gh/2, right, mid + gh/2}
+			right = gpu.L
+			if cols > 0 {
+				right -= c.Px(coreGap)
+			}
+		}
+		grid = RectF{right - gw, mid - gh/2, right, mid + gh/2}
+		textR = grid.L - c.Px(6) // with no cores: the GPU square's left
 	}
 	c.Draw(func(cv Canvas) {
 		if hover {
@@ -324,17 +337,25 @@ func (f Frame) debug(c *Ctx, side, h float32) {
 			if !hover { // a 2×2 in full; the columns beyond fade out leftwards
 				a = []float32{1, 1, 0.45, 0.18}[col]
 			}
-			box := RectF{x, yy, x + sq, yy + sq}
-			cv.RoundRect(box, rad, RGBA(ColText, 0.16*a))
-			if fill := max(0, min(1, use)) * sq; fill > 0 {
-				cv.PushClip(RectF{box.L, box.T, box.R, box.T + fill}) // from the top down
-				cv.RoundRect(box, rad, RGBA(ColText, 0.43*a))
-				cv.PopClip()
-			}
+			meterBox(cv, RectF{x, yy, x + sq, yy + sq}, use, rad, a)
+		}
+		if f.DebugGPUShown {
+			meterBox(cv, gpu, f.DebugGPU, rad, 1)
 		}
 	})
 	if f.OnDebug != nil {
 		c.Click("debug", r, f.OnDebug)
+	}
+}
+
+// meterBox is one of the debug squares: a faint box filled from the top
+// down by use (0..1), at opacity a.
+func meterBox(cv Canvas, box RectF, use, rad, a float32) {
+	cv.RoundRect(box, rad, RGBA(ColText, 0.16*a))
+	if fill := max(0, min(1, use)) * box.H(); fill > 0 {
+		cv.PushClip(RectF{box.L, box.T, box.R, box.T + fill})
+		cv.RoundRect(box, rad, RGBA(ColText, 0.43*a))
+		cv.PopClip()
 	}
 }
 

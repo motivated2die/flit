@@ -101,6 +101,8 @@ func (a *App) homeStatus() string {
 		return providerName(a.detected.Provider) + " is using your microphone. flit can record the meeting and transcribe both sides when it ends."
 	case a.working != nil:
 		return "Transcribing the last meeting. You can close this window meanwhile."
+	case a.sumRun != nil:
+		return "Writing a summary on this PC. You can close this window meanwhile."
 	}
 	return "Waiting for a meeting. Flit notices when Teams, Zoom, Webex, Slack or Google Meet start using your microphone and offers to transcribe it; or start a recording yourself."
 }
@@ -146,6 +148,8 @@ func (a *App) liveCard() ui.Node {
 		}
 		return ui.ProgressCard{ID: "home:working", Title: "Transcribing " + sessionTitle(a.working), Detail: detail,
 			Trailing: fmt.Sprintf("%d%%", int(a.progress*100)), Value: a.progress}
+	case a.sumRun != nil:
+		return a.summaryCard(a.sumRun, "home:summary", "Summarising "+a.sumRun.title)
 	}
 	return nil
 }

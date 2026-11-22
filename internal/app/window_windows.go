@@ -166,9 +166,10 @@ func (a *App) frame() ui.Frame {
 	default:
 		page = a.homePage()
 	}
+	gpu, gpuShown := a.debugGPU()
 	f := ui.Frame{Nav: nav, Selected: selected, OnNav: a.go_, Page: page, PageID: a.page,
 		Status: a.sidebarStatus(), Live: a.rec != nil,
-		Debug: a.debugLines(), DebugCores: a.debugCores(), OnDebug: func() { a.go_(pageDebug) },
+		Debug: a.debugLines(), DebugCores: a.debugCores(), DebugGPU: gpu, DebugGPUShown: gpuShown, OnDebug: func() { a.go_(pageDebug) },
 		Update: a.updateBadge(), OnUpdate: func() { a.go_(pageUpdate) }}
 	if a.uninstallAsk && a.page == pageSettings {
 		f.Modal = a.uninstallPopover()
@@ -195,6 +196,9 @@ func (a *App) sessionByID(id string) *session.Session {
 func (a *App) sidebarStatus() string {
 	if a.rec != nil {
 		return "Recording " + ui.Clock(time.Since(a.rec.started))
+	}
+	if r := a.sumRun; r != nil && a.working == nil {
+		return fmt.Sprintf("Summarising %d%%", int(r.value()*100))
 	}
 	return a.statusLine()
 }

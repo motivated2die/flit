@@ -47,15 +47,25 @@ func TestSummaryEndToEnd(t *testing.T) {
 	}
 	a.cfg.YourName = "Moritz Haisch"
 	var steps []string
-	md, info, err := a.runSummary(context.Background(), s, m, "Bitte sehr kurz.", 0, func(step string, _, _ int) {
-		if len(steps) == 0 || steps[len(steps)-1] != step {
-			steps = append(steps, step)
+	run := &summaryRun{model: m}
+	last := -1.0
+	md, info, err := a.runSummary(context.Background(), s, m, "Bitte sehr kurz.", 0, func(update func(*summaryRun), _ bool) {
+		update(run)
+		if len(steps) == 0 || steps[len(steps)-1] != run.step {
+			steps = append(steps, run.step)
 		}
+		if run.fraction < last {
+			t.Errorf("progress went back: %.3f after %.3f", run.fraction, last)
+		}
+		last = run.fraction
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("%s on %s, %.0f s, read %d, wrote %d, steps %v\n%s", info.Model, info.Device, info.Seconds, info.Read, info.Wrote, steps, md)
+	if run.pid == 0 || last != 1 {
+		t.Errorf("the run's server %d, its progress ended at %.3f", run.pid, last)
+	}
 	if info.Language != "de" || info.Instruction != "Bitte sehr kurz." || !strings.Contains(md, "## ") {
 		t.Errorf("info %+v", info)
 	}

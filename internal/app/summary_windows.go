@@ -26,34 +26,69 @@ import (
 // recording. One at a time; the runtime and the model download the first
 // time. The summary opens in the notes editor and is saved as summary.md.
 
-// summaryRun is the summary being written.
+// summaryRun is the summary being written. Its fields change on the UI
+// thread only (the worker posts its updates).
 type summaryRun struct {
 	id          string
+	title       string // the recording's, for Home's card
 	step        string // "download", "load", "ask", "read", "write"
-	done, total int
+	done, total int    // download: bytes; ask, read: which of how many
+	fraction    float64
 	cancel      context.CancelFunc
 	started     time.Time
+	model       models.Model
+	// The server, once it runs: for the core and GPU squares and the
+	// Debug page.
+	pid     int
+	device  llm.Device
+	threads int
 }
 
-// summaryStep is what a step shows while it runs.
+// text says what a step is doing.
 func (r *summaryRun) text() string {
 	switch r.step {
 	case "download":
 		if r.total > 0 {
-			return fmt.Sprintf("Downloading the summary model (once): %d%% of %s", r.done*100/max(1, r.total), mbText(int64(r.total)))
+			return fmt.Sprintf("Downloading %s, once: %s of %s", r.model.Name, mbText(int64(r.done)), mbText(int64(r.total)))
 		}
-		return "Downloading the summary model (once)…"
+		return "Downloading " + r.model.Name + ", once"
 	case "load":
-		return "Loading the model…"
+		return "Loading " + r.model.Name
 	case "ask":
-		return fmt.Sprintf("Answering your questions (%d of %d)…", r.done+1, r.total)
+		if r.total > 1 {
+			return fmt.Sprintf("Answering your questions: %d of %d", r.done+1, r.total)
+		}
+		return "Answering your question"
 	case "read":
-		return fmt.Sprintf("Reading the transcript (part %d of %d)…", r.done+1, r.total)
+		return fmt.Sprintf("Reading the transcript: part %d of %d", r.done+1, r.total)
 	case "write":
-		return "Writing the summary…"
+		return "Writing the summary"
 	}
-	return "Starting…"
+	return "Starting"
 }
+
+// value is the run's share done for its card: the download's while the
+// model comes down, then the summary's.
+func (r *summaryRun) value() float64 {
+	if r.step == "download" {
+		return float64(r.done) / float64(max(1, r.total))
+	}
+	return r.fraction
+}
+
+// where says where the model runs, for the card.
+func (r *summaryRun) where() string {
+	switch {
+	case r.pid == 0:
+		return r.model.Name
+	case r.device == llm.CPU:
+		return r.model.Name + " on the processor"
+	}
+	return r.model.Name + " on the graphics processor"
+}
+
+// summarizing reports whether a summary's server is running.
+func (a *App) summarizing() bool { return a.sumRun != nil && a.sumRun.pid != 0 }
 
 func mbText(n int64) string {
 	if n >= 1e9 {
@@ -117,16 +152,23 @@ func (a *App) writeSummary(s *session.Session) {
 	}
 	id := s.Meta.ID
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &summaryRun{id: id, cancel: cancel, started: time.Now()}
+	m := summaryModel()
+	run := &summaryRun{id: id, title: sessionTitle(s), cancel: cancel, started: time.Now(), model: m}
 	a.sumRun = run
 	delete(a.sumErr, id)
 	instruction := strings.TrimSpace(a.sumInstr[id])
 	limit := a.finalLimit()
-	m := summaryModel()
-	post := func(step string, done, total int) {
+	// The worker's updates, applied on the UI thread while the run is
+	// still the current one; the window repaints at most every 100 ms.
+	var last time.Time
+	post := func(update func(r *summaryRun), now bool) {
+		if !now && time.Since(last) < 100*time.Millisecond {
+			return
+		}
+		last = time.Now()
 		a.tray.Post(func() {
 			if a.sumRun == run {
-				run.step, run.done, run.total = step, done, total
+				update(run)
 				a.invalidate()
 			}
 		})
@@ -156,10 +198,11 @@ func (a *App) summaryWait() string {
 }
 
 // runSummary does the work, off the UI thread.
-func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model, instruction string, limit int, post func(string, int, int)) (string, session.SummaryInfo, error) {
+func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model, instruction string, limit int, post func(func(*summaryRun), bool)) (string, session.SummaryInfo, error) {
 	var info session.SummaryInfo
-	post("download", 0, 0)
-	exe, model, err := a.ensureLLM(ctx, m, func(done, total int64) { post("download", int(done), int(total)) })
+	exe, model, err := a.ensureLLM(ctx, m, func(done, total int64) {
+		post(func(r *summaryRun) { r.step, r.done, r.total = "download", int(done), int(total) }, false)
+	})
 	if err != nil {
 		return "", info, err
 	}
@@ -171,7 +214,7 @@ func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model
 	if err != nil {
 		return "", info, err
 	}
-	post("load", 0, 0)
+	post(func(r *summaryRun) { r.step = "load" }, true)
 	o := llm.Options{Exe: exe, Model: model, Context: 8192, Device: llm.GPU, CPULimit: limit, Background: limit > 0, Logf: logx.Printf}
 	if limit > 0 {
 		o.Threads = capThreads(limit)
@@ -198,8 +241,15 @@ func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model
 		return "", info, err
 	}
 	defer srv.Close()
+	pid, device, threads := srv.PID(), srv.Options.Device, o.Threads
+	post(func(r *summaryRun) { r.pid, r.device, r.threads = pid, device, threads }, true)
 	start := time.Now()
-	r, err := summary.Run(ctx, &srv.Client, in, summary.Options{Approach: approach, Progress: post})
+	step := ""
+	r, err := summary.Run(ctx, &srv.Client, in, summary.Options{Approach: approach, Progress: func(p summary.Progress) {
+		changed := p.Step != step
+		step = p.Step
+		post(func(r *summaryRun) { r.step, r.done, r.total, r.fraction = p.Step, p.Done, p.Total, p.Fraction }, changed || p.Fraction >= 1)
+	}})
 	t := r.Total()
 	logx.Printf("summary of %s: %s, %s on %s, %d tokens read in %.0f s, %d written in %.0f s, %d sections, %d questions, %d dropped: %v",
 		s.Meta.ID, m.ID, approach, srv.Options.Device, t.PromptN, t.PromptMS/1000, t.PredictedN, t.PredictedMS/1000, len(r.Sections), len(r.Answers), r.Dropped, err)
@@ -244,6 +294,22 @@ func (a *App) cancelSummary() {
 		a.sumRun = nil
 		a.invalidate()
 	}
+}
+
+// yieldSummary stops a summary being written when a recording starts: the
+// PC belongs to the call (nothing heavy during a recording), and the
+// summary's page says to write it again afterwards.
+func (a *App) yieldSummary() {
+	run := a.sumRun
+	if run == nil {
+		return
+	}
+	a.cancelSummary()
+	if a.sumErr == nil {
+		a.sumErr = map[string]string{}
+	}
+	a.sumErr[run.id] = "stopped for the recording that started. Write it again when the meeting is over."
+	logx.Printf("summary of %s stopped for a recording", run.id)
 }
 
 // summaryFor is the editor of s's summary (nil when there is none).
@@ -313,13 +379,12 @@ func (a *App) summarySection(s *session.Session) []ui.Node {
 			ui.Link{ID: "summary:md:" + id, Glyph: ui.GlyphCopy, Label: label, OnClick: func() { a.copySummary(id) }},
 		}}
 	}
+	if busy {
+		right = ui.HStack{Right: true, Items: []ui.Node{ui.Link{ID: "summary:cancel", Label: "Cancel", OnClick: a.cancelSummary}}}
+	}
 	out := []ui.Node{ui.CaptionRow{Text: "Summary", Right: right}}
 	if busy {
-		out = append(out, ui.Card{Items: []ui.Node{ui.HStack{Gap: 12, Items: []ui.Node{
-			ui.VStack{Items: []ui.Node{ui.Para{Text: run.text(), Muted: true}}},
-			ui.Button{ID: "summary:cancel", Label: "Cancel", Small: true, OnClick: a.cancelSummary},
-		}}}})
-		return out
+		return append(out, a.summaryCard(run, "summary:progress", "Writing the summary"))
 	}
 	var items []ui.Node
 	if ns != nil {
@@ -351,6 +416,21 @@ func (a *App) summarySection(s *session.Session) []ui.Node {
 		ui.Button{ID: "summary:write", Label: label, Glyph: ui.GlyphNotes, Primary: ns == nil, Disabled: other, OnClick: func() { a.writeSummary(s) }},
 	}})
 	return append(out, ui.Card{Gap: 10, Items: items})
+}
+
+// summaryCard is a running summary on the card transcription uses: its
+// background fills up as it goes; the step and where the model runs under
+// the title, the share done on the right.
+func (a *App) summaryCard(run *summaryRun, id, title string) ui.Node {
+	detail := run.text() + " · " + run.where()
+	if limit := a.finalLimit(); limit > 0 && run.pid != 0 && run.device == llm.CPU {
+		detail += fmt.Sprintf(" · at most %d%% of the processor", limit)
+	}
+	trailing := fmt.Sprintf("%d%%", int(run.value()*100))
+	if run.step == "load" || run.step == "" {
+		trailing = ""
+	}
+	return ui.ProgressCard{ID: id, Title: title, Detail: detail, Trailing: trailing, Value: run.value()}
 }
 
 func (a *App) setSumInstr(id, t string) {

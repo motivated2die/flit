@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -38,6 +39,16 @@ type Request struct {
 	Schema json.RawMessage
 	// Seed makes sampling repeatable (0: the server's choice).
 	Seed int
+	// OnProgress, when set, streams the answer and hears how far the
+	// call has come: tokens of the prompt read (of its total) and tokens
+	// written so far. It runs on the calling goroutine.
+	OnProgress func(CallProgress)
+}
+
+// CallProgress is how far one completion has come.
+type CallProgress struct {
+	Read, ReadTotal int // prompt tokens read so far, of all to read (beyond the cache)
+	Wrote           int // tokens written so far
 }
 
 // Timings are llama-server's figures for one completion: tokens read
@@ -85,19 +96,7 @@ func (c *Client) http() *http.Client {
 }
 
 func (c *Client) post(ctx context.Context, path string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.Key != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Key)
-	}
-	resp, err := c.http().Do(req)
+	resp, err := c.open(ctx, path, body)
 	if err != nil {
 		return err
 	}
@@ -106,7 +105,31 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	if err != nil {
 		return err
 	}
+	return json.Unmarshal(data, out)
+}
+
+// open sends a request and returns the response when its status is a
+// success; the caller closes its body.
+func (c *Client) open(ctx context.Context, path string, body any) (*http.Response, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Key)
+	}
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode/100 != 2 {
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		// The server's error message, not the request: it never holds
 		// the prompt's text.
 		var e struct {
@@ -118,9 +141,9 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
 			msg += ": " + firstLine(e.Error.Message, 200)
 		}
-		return fmt.Errorf("%w: %s", ErrServer, msg)
+		return nil, fmt.Errorf("%w: %s", ErrServer, msg)
 	}
-	return json.Unmarshal(data, out)
+	return resp, nil
 }
 
 func firstLine(s string, n int) string {
@@ -158,6 +181,13 @@ func (c *Client) Chat(ctx context.Context, r Request) (Response, error) {
 			"json_schema": map[string]any{"name": "answer", "strict": true, "schema": r.Schema},
 		}
 	}
+	start := time.Now()
+	if r.OnProgress != nil {
+		body["stream"], body["return_progress"] = true, true
+		resp, err := c.stream(ctx, body, r.OnProgress)
+		resp.Wall = time.Since(start)
+		return resp, err
+	}
 	var out struct {
 		Choices []struct {
 			Message struct {
@@ -171,7 +201,6 @@ func (c *Client) Chat(ctx context.Context, r Request) (Response, error) {
 			CompletionTokens int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
-	start := time.Now()
 	if err := c.post(ctx, "/v1/chat/completions", body, &out); err != nil {
 		return Response{}, err
 	}
@@ -186,6 +215,76 @@ func (c *Client) Chat(ctx context.Context, r Request) (Response, error) {
 		resp.Timings = Timings{PromptN: out.Usage.PromptTokens, PredictedN: out.Usage.CompletionTokens}
 	}
 	return resp, nil
+}
+
+// stream reads a streamed completion (server-sent events): the text as it
+// comes, llama-server's progress while it reads the prompt
+// ("prompt_progress") and its timings with each token.
+func (c *Client) stream(ctx context.Context, body map[string]any, progress func(CallProgress)) (Response, error) {
+	resp, err := c.open(ctx, "/v1/chat/completions", body)
+	if err != nil {
+		return Response{}, err
+	}
+	defer resp.Body.Close()
+	var out Response
+	var text strings.Builder
+	var p CallProgress
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		data := bytes.TrimSpace(line[len("data:"):])
+		if string(data) == "[DONE]" {
+			break
+		}
+		var ev struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Timings  *Timings `json:"timings"`
+			Progress *struct {
+				Total     int `json:"total"`
+				Cache     int `json:"cache"`
+				Processed int `json:"processed"`
+			} `json:"prompt_progress"`
+		}
+		if err := json.Unmarshal(data, &ev); err != nil {
+			continue // another server's extra events
+		}
+		for _, ch := range ev.Choices {
+			text.WriteString(ch.Delta.Content)
+			if ch.FinishReason != "" {
+				out.Finish = ch.FinishReason
+			}
+		}
+		if ev.Timings != nil {
+			out.Timings = *ev.Timings
+			p.Wrote = ev.Timings.PredictedN
+		}
+		if pp := ev.Progress; pp != nil {
+			p.Read, p.ReadTotal = max(0, pp.Processed-pp.Cache), max(0, pp.Total-pp.Cache)
+		} else if len(ev.Choices) > 0 && p.ReadTotal > 0 {
+			p.Read = p.ReadTotal // writing: the prompt is read
+		}
+		progress(p)
+	}
+	if err := sc.Err(); err != nil {
+		return out, err
+	}
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	out.Text = text.String()
+	if out.Finish == "" {
+		return out, fmt.Errorf("%w: the answer stopped early", ErrServer)
+	}
+	return out, nil
 }
 
 // Tokens counts the tokens of a text with the loaded model's tokenizer.

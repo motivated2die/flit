@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/motivated2die/flit/internal/llm"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/sysinfo"
@@ -46,11 +47,30 @@ type debugState struct {
 	threads   int
 	coreMeter sysinfo.CoreMeter
 	reading   bool
+
+	// A summary's language model server, while one runs: its memory and
+	// CPU, and how busy it keeps the graphics processor (the meter is
+	// read on the cores' goroutine, one reading at a time).
+	sumSt    sysinfo.Stats
+	sumCPU   float64
+	sumErr   error
+	sumMeter sysinfo.CPUMeter
+	gpu      float64
+	gpuOK    bool // a reading has come
+	gpuMeter sysinfo.GPUMeter
 }
 
 // transcribing reports whether transcription puts load on the machine now:
 // after a meeting, finding speakers, or as it goes during one.
 func (a *App) transcribing() bool { return a.working != nil || a.finding != nil || a.live != nil }
+
+// busy reports whether flit's heavy work runs now: transcription, or a
+// summary's model (the core squares show either).
+func (a *App) busy() bool { return a.transcribing() || a.summarizing() }
+
+// onGPU reports whether the running summary's model uses the graphics
+// processor.
+func (a *App) onGPU() bool { return a.summarizing() && a.sumRun.device != llm.CPU }
 
 func (a *App) sampleDebug() *debugState {
 	d := &a.dbg
@@ -101,6 +121,19 @@ func (a *App) sampleDebug() *debugState {
 		d.engineCPU += m.Percent(st.CPU, now)
 	}
 	d.engineMeters = meters
+	d.sumSt, d.sumCPU, d.sumErr = sysinfo.Stats{}, 0, nil
+	if a.summarizing() {
+		run := a.sumRun
+		pids = append(pids, uint32(run.pid))
+		d.threads = max(d.threads, run.threads)
+		if st, err := sysinfo.Process(uint32(run.pid)); err != nil {
+			d.sumErr = err
+		} else {
+			d.sumSt, d.sumCPU = st, d.sumMeter.Percent(st.CPU, now)
+		}
+	} else {
+		d.sumMeter = sysinfo.CPUMeter{}
+	}
 	a.sampleCores(pids)
 	if st, err := sysinfo.Process(0); err == nil {
 		d.self, d.selfCPU = st, d.selfMeter.Percent(st.CPU, now)
@@ -116,7 +149,11 @@ func (a *App) sampleDebug() *debugState {
 // transcribing; the result arrives on the UI thread.
 func (a *App) sampleCores(pids []uint32) {
 	d := &a.dbg
-	if !a.transcribing() || len(pids) == 0 {
+	if !a.onGPU() && !d.reading {
+		d.gpu, d.gpuOK = 0, false
+		d.gpuMeter.Close()
+	}
+	if !a.busy() || len(pids) == 0 {
 		d.cores, d.coreMeter = nil, sysinfo.CoreMeter{}
 		return
 	}
@@ -124,15 +161,29 @@ func (a *App) sampleCores(pids []uint32) {
 		return
 	}
 	d.reading = true
+	gpuPID := uint32(0)
+	if a.onGPU() {
+		gpuPID = uint32(a.sumRun.pid)
+	}
 	go func() {
 		th, err := sysinfo.ReadThreads(pids...)
 		at := time.Now()
+		gpu, gpuErr := 0.0, error(nil)
+		if gpuPID != 0 {
+			gpu, gpuErr = d.gpuMeter.Read(gpuPID) // only this goroutine touches the meter while reading
+		}
 		a.tray.Post(func() {
 			d.reading = false
-			if err == nil && a.transcribing() {
-				d.cores = d.coreMeter.Cores(th, at)
-				a.invalidate()
+			if !a.busy() {
+				return
 			}
+			if err == nil {
+				d.cores = d.coreMeter.Cores(th, at)
+			}
+			if gpuPID != 0 && gpuErr == nil {
+				d.gpu, d.gpuOK = gpu, true
+			}
+			a.invalidate()
 		})
 	}()
 }
@@ -142,7 +193,7 @@ func (a *App) sampleCores(pids []uint32) {
 // chunks), at most 8; nil when nothing is being transcribed.
 func (a *App) debugCores() []float32 {
 	d := &a.dbg
-	if !a.transcribing() || !d.loaded {
+	if !(a.transcribing() && d.loaded) && !a.summarizing() {
 		return nil
 	}
 	n := min(8, max(len(d.cores), d.threads))
@@ -154,6 +205,16 @@ func (a *App) debugCores() []float32 {
 		out[i] = float32(d.cores[i])
 	}
 	return out
+}
+
+// debugGPU is the sidebar's GPU square: how busy the summary's model keeps
+// the graphics processor, shown while it runs there (empty until the first
+// reading).
+func (a *App) debugGPU() (float32, bool) {
+	if !a.onGPU() {
+		return 0, false
+	}
+	return float32(a.dbg.gpu), true
 }
 
 // repaintSoon repaints the window after every, as long as it stays open.
@@ -186,10 +247,19 @@ func (a *App) shownModel(d *debugState) (models.Model, bool) {
 func (a *App) debugLines() []string {
 	d := a.sampleDebug()
 	every := 2 * time.Second
-	if a.transcribing() {
+	if a.busy() {
 		every = time.Second // the core squares follow the load
 	}
 	a.repaintSoon(every)
+	if a.summarizing() {
+		// The summary's model, while it runs: the speech worker has made
+		// way for it.
+		usage := "Loaded"
+		if d.sumErr == nil {
+			usage = fmt.Sprintf("%s · %.0f%% CPU", sysinfo.Bytes(d.sumSt.WorkingSet), d.sumCPU) // the GPU: its square
+		}
+		return []string{a.sumRun.model.Name, usage}
+	}
 	name := "No speech model"
 	if m, ok := a.shownModel(d); ok {
 		name = m.Name
@@ -282,12 +352,14 @@ func (a *App) debugPage() ui.Node {
 	if logText == "" {
 		logText = "Nothing logged yet."
 	}
-	return ui.VStack{Gap: 12, Items: []ui.Node{
-		ui.Title("Debug"),
-		ui.Space(4),
+	head := []ui.Node{ui.Title("Debug"), ui.Space(4)}
+	if a.summarizing() {
+		head = append(head, ui.Caption("Summary model"), ui.Card{Gap: 2, Items: a.summaryDebug(d, value)})
+	}
+	return ui.VStack{Gap: 12, Items: append(head,
 		ui.Caption("Speech engine"),
 		ui.Card{Gap: 2, Items: engine},
-		ui.Caption("flit " + Version),
+		ui.Caption("flit "+Version),
 		ui.Card{Gap: 2, Items: self},
 		ui.Caption("Log, latest lines"),
 		ui.Card{Gap: 8, Items: []ui.Node{
@@ -297,7 +369,37 @@ func (a *App) debugPage() ui.Node {
 				ui.Link{ID: "dbg:data", Glyph: ui.GlyphFolder, Label: "Open data folder", OnClick: func() { openFolder(a.dataDir) }},
 			}},
 		}},
-	}}
+	)}
+}
+
+// summaryDebug is the Debug page's card for a running summary's model.
+func (a *App) summaryDebug(d *debugState, value func(string) ui.Node) []ui.Node {
+	run := a.sumRun
+	where := "on the processor"
+	if run.device == llm.GPUPrefill {
+		where = "weights in memory, the graphics processor reads the prompt"
+	} else if run.device == llm.GPU {
+		where = "on the graphics processor"
+	}
+	mem := "unavailable"
+	if d.sumErr == nil {
+		mem = sysinfo.Bytes(d.sumSt.Private) + " private · " + sysinfo.Bytes(d.sumSt.WorkingSet) + " in RAM"
+	}
+	rows := []ui.Node{
+		ui.SettingRow{Label: run.model.Name, Detail: fmt.Sprintf("llama-server (pid %d), %s", run.pid, where), Control: value("llama.cpp " + llm.RuntimeVersion)},
+		ui.Divider{},
+		ui.SettingRow{Label: "Memory", Control: value(mem)},
+		ui.Divider{},
+		ui.SettingRow{Label: "CPU", Detail: "Share of all cores", Control: value(fmt.Sprintf("%.1f%%", d.sumCPU))},
+	}
+	if a.onGPU() {
+		gpu := "measuring"
+		if d.gpuOK {
+			gpu = fmt.Sprintf("%.0f%%", d.gpu*100)
+		}
+		rows = append(rows, ui.Divider{}, ui.SettingRow{Label: "Graphics processor", Detail: "The busiest of its engines, for this process", Control: value(gpu)})
+	}
+	return append(rows, ui.Divider{}, ui.SettingRow{Label: "Job", Control: value(fmt.Sprintf("%s, %d%%", run.text(), int(run.value()*100)))})
 }
 
 // roughDuration is 2 h 05 min, 4 min, 12 s.

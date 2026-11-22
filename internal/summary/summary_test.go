@@ -174,7 +174,7 @@ func TestAskWithoutTime(t *testing.T) {
 		ts = append(ts, Turn{Who: "Anna", Start: sec(i * 10), End: sec(i*10 + 9), Text: text})
 	}
 	f := &fake{}
-	a, _, prompt, err := ask(context.Background(), f, Options{}, wordsFor("de"), "", ts, Question{N: 1, At: notes.Unknown, Text: "Was kostet die Messe?"})
+	a, _, prompt, err := ask(context.Background(), f, Options{}, wordsFor("de"), "", ts, Question{N: 1, At: notes.Unknown, Text: "Was kostet die Messe?"}, nil)
 	if err != nil || a.Text != "Nein, nur vorgeschlagen." {
 		t.Fatalf("answer %+v, %v", a, err)
 	}
@@ -186,7 +186,7 @@ func TestAskWithoutTime(t *testing.T) {
 	}
 	// Nothing in common: not answered, no call.
 	n := len(f.reqs)
-	a, _, _, _ = ask(context.Background(), f, Options{}, wordsFor("de"), "", ts, Question{N: 2, At: notes.Unknown, Text: "Urlaubsplanung?"})
+	a, _, _, _ = ask(context.Background(), f, Options{}, wordsFor("de"), "", ts, Question{N: 2, At: notes.Unknown, Text: "Urlaubsplanung?"}, nil)
 	if a.Text != wordsFor("de").NotDiscussed || len(f.reqs) != n {
 		t.Errorf("unrelated question: %+v", a)
 	}
@@ -200,6 +200,13 @@ func (f *fake) Tokens(_ context.Context, s string) (int, error) { return len(s) 
 func (f *fake) Chat(_ context.Context, r llm.Request) (llm.Response, error) {
 	f.reqs = append(f.reqs, r)
 	prompt := r.Messages[len(r.Messages)-1].Content
+	if r.OnProgress != nil { // as llama-server streams: reading, then writing
+		total := len(prompt) / 4
+		r.OnProgress(llm.CallProgress{Read: 0, ReadTotal: total})
+		r.OnProgress(llm.CallProgress{Read: total / 2, ReadTotal: total})
+		r.OnProgress(llm.CallProgress{Read: total, ReadTotal: total, Wrote: 20})
+		r.OnProgress(llm.CallProgress{Read: total, ReadTotal: total, Wrote: 900}) // more than expected
+	}
 	switch {
 	case r.Schema != nil:
 		return llm.Response{Text: `{"topics":[{"title":"Budget","points":["25.000 Euro vorgeschlagen"]}],"decisions":[{"text":"Budget beschlossen","quote":"das hat niemand gesagt"}],"tasks":[{"who":"Moritz","what":"die Zahlen schicken","due":"Freitag","quote":"Moritz schickt die Zahlen"}],"open":[]}`}, nil
@@ -207,6 +214,52 @@ func (f *fake) Chat(_ context.Context, r llm.Request) (llm.Response, error) {
 		return llm.Response{Text: "Nein, nur vorgeschlagen."}, nil
 	default:
 		return llm.Response{Text: "## Zusammenfassung\n\nBudget besprochen.\n\n## Aufgaben\n\n- [ ] **Moritz:** Zahlen schicken, bis Freitag\n"}, nil
+	}
+}
+
+// The progress of a run never goes back, names each step in order, and
+// ends at 1; every call's reading and writing moves it.
+func TestProgress(t *testing.T) {
+	for _, ap := range []Approach{Single, Extract} {
+		var seen []Progress
+		_, err := Run(context.Background(), &fake{}, meeting(), Options{Approach: ap, Progress: func(p Progress) { seen = append(seen, p) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last, steps := -1.0, []string{}
+		for _, p := range seen {
+			if p.Fraction < last {
+				t.Errorf("%s: went back from %.3f to %.3f at %s", ap, last, p.Fraction, p.Step)
+			}
+			last = p.Fraction
+			if len(steps) == 0 || steps[len(steps)-1] != p.Step {
+				steps = append(steps, p.Step)
+			}
+		}
+		want := "ask,write"
+		if ap == Extract {
+			want = "ask,read,write"
+		}
+		if got := strings.Join(steps, ","); got != want {
+			t.Errorf("%s: steps %s, want %s", ap, got, want)
+		}
+		if last != 1 {
+			t.Errorf("%s: ended at %.3f", ap, last)
+		}
+		// The question is a small part next to the writer's reading the
+		// whole meeting; the writer's writing is a large part of its share.
+		var askEnd, writeStart float64
+		for _, p := range seen {
+			if p.Step == "ask" {
+				askEnd = p.Fraction
+			}
+			if p.Step == "write" && writeStart == 0 {
+				writeStart = p.Fraction
+			}
+		}
+		if askEnd <= 0 || askEnd > writeStart || writeStart > 0.9 {
+			t.Errorf("%s: ask ends at %.2f, write starts at %.2f", ap, askEnd, writeStart)
+		}
 	}
 }
 

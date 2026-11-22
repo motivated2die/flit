@@ -94,6 +94,7 @@ func (a *App) startRecording(c *detect.Candidate) {
 		return
 	}
 	a.stopCountdown()
+	a.yieldSummary()
 	meta := session.Meta{Language: a.cfg.Language, Model: a.cfg.Model}
 	them := capture.Source{Kind: capture.Loopback, DeviceID: a.cfg.OutputID, DeviceName: a.cfg.OutputName}
 	if c != nil {

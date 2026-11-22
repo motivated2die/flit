@@ -44,8 +44,17 @@ type Options struct {
 	Seed        int
 	// NoCues leaves out the cue marks (for measuring what they bring).
 	NoCues bool
-	// Progress hears each step as it starts ("read 2 of 4", "write").
-	Progress func(step string, done, total int)
+	// Progress hears how far the summary has come, as it goes.
+	Progress func(Progress)
+}
+
+// Progress is how far a summary has come: the step running ("ask", "read",
+// "write"), which of how many of its kind, and the whole run's share done
+// (0..1), estimated from the tokens each call reads and writes.
+type Progress struct {
+	Step        string
+	Done, Total int
+	Fraction    float64
 }
 
 // Call is one model call's figures.
@@ -120,16 +129,17 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 		return int(float64(utf8.RuneCountInString(t.Who)+utf8.RuneCountInString(t.Text)+4) * perRune)
 	}
 	head := fmt.Sprintf("Meeting: %q, %s long. Speakers: %s.\n", or(in.Title, "untitled"), clock(ts[len(ts)-1].End), speakersLine(ts, in.me()))
+	if o.Approach == Extract {
+		r.Sections = Split(ts, tokens, o.SectionTokens)
+	}
+	tr := plan(o, ts, qs, r.Sections, n, tokens)
 
 	// The user's questions first, one focused call each, on the part of
 	// the transcript that led up to them: small models answer one
 	// question about a short excerpt far better than several questions
 	// mixed into the whole task.
 	for i, q := range qs {
-		if o.Progress != nil {
-			o.Progress("ask", i, len(qs))
-		}
-		a, call, prompt, err := ask(ctx, m, o, w, head, ts, q)
+		a, call, prompt, err := ask(ctx, m, o, w, head, ts, q, tr.call("ask", i, len(qs)))
 		r.Calls = append(r.Calls, call)
 		r.Prompts = append(r.Prompts, prompt)
 		if err != nil {
@@ -158,13 +168,9 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 		r.Sections = []Section{section(ts, 0, len(ts))}
 		body = head + legend + "<transcript>\n" + whole + "</transcript>\n" + tail.String() + "\n" + format(w, in.Instruction)
 	case Extract:
-		r.Sections = Split(ts, tokens, o.SectionTokens)
 		var items strings.Builder
 		for i, s := range r.Sections {
-			if o.Progress != nil {
-				o.Progress("read", i, len(r.Sections))
-			}
-			it, call, prompt, err := extract(ctx, m, o, w, head, legend, ts, s, i, len(r.Sections), ns)
+			it, call, prompt, err := extract(ctx, m, o, w, head, legend, ts, s, i, len(r.Sections), ns, tr.call("read", i, len(r.Sections)))
 			r.Calls = append(r.Calls, call)
 			r.Prompts = append(r.Prompts, prompt)
 			if err != nil {
@@ -182,14 +188,12 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 	default:
 		return r, fmt.Errorf("unknown approach %q", o.Approach)
 	}
-	if o.Progress != nil {
-		o.Progress("write", 0, 1)
-	}
 	resp, err := m.Chat(ctx, llm.Request{
 		Messages:    []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: body}},
 		MaxTokens:   o.MaxTokens,
 		Temperature: o.Temperature,
 		Seed:        o.Seed,
+		OnProgress:  tr.call("write", 0, 1),
 	})
 	r.Prompts = append(r.Prompts, body)
 	r.Calls = append(r.Calls, Call{Step: "write", Timings: resp.Timings, Wall: resp.Wall, Finish: resp.Finish})
@@ -201,6 +205,7 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 		return r, errors.New("the model wrote nothing usable")
 	}
 	r.Markdown = Assemble(md, r.Answers, w)
+	tr.finish()
 	return r, nil
 }
 
@@ -213,43 +218,10 @@ type Answer struct {
 
 // ask answers one question from the excerpt around it (the whole
 // transcript for a question not typed during the recording).
-func ask(ctx context.Context, m Model, o Options, w words, head string, ts []Turn, q Question) (Answer, Call, string, error) {
-	from, to := 0, len(ts)
-	at := q.At
-	if at == notes.Unknown && estimate(ts) > askWhole {
-		// Not typed during the meeting, and the meeting too long to read
-		// whole: the part that shares the most words with the question.
-		qw, best, score := keyWords(q.Text), -1, 0
-		for i, t := range ts {
-			if s := overlap(qw, keyWords(t.Text)); s > score {
-				best, score = i, s
-			}
-		}
-		if best < 0 {
-			return Answer{Q: q, Text: w.NotDiscussed}, Call{Step: fmt.Sprintf("ask %d", q.N)}, "", nil
-		}
-		at = ts[best].End + questionBefore/2
-	}
-	if at != notes.Unknown {
-		q := Question{N: q.N, At: at, Text: q.Text}
-		from, to = -1, 0
-		for i, t := range ts {
-			if t.End >= q.At-questionBefore && t.Start <= q.At+questionAfter {
-				if from < 0 {
-					from = i
-				}
-				to = i + 1
-			}
-		}
-		if from < 0 { // nothing said near it: the last turns before it
-			from, to = 0, 0
-			for i, t := range ts {
-				if t.Start <= q.At {
-					to = i + 1
-				}
-			}
-			from = max(0, to-6)
-		}
+func ask(ctx context.Context, m Model, o Options, w words, head string, ts []Turn, q Question, progress func(llm.CallProgress)) (Answer, Call, string, error) {
+	from, to, ok := excerpt(ts, q)
+	if !ok {
+		return Answer{Q: q, Text: w.NotDiscussed}, Call{Step: fmt.Sprintf("ask %d", q.N)}, "", nil
 	}
 	excerpt := plainText(ts, from, to)
 	var b strings.Builder
@@ -270,9 +242,10 @@ func ask(ctx context.Context, m Model, o Options, w words, head string, ts []Tur
 	prompt := b.String()
 	resp, err := m.Chat(ctx, llm.Request{
 		Messages:    []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: prompt}},
-		MaxTokens:   160,
+		MaxTokens:   askMax,
 		Temperature: o.Temperature,
 		Seed:        o.Seed,
+		OnProgress:  progress,
 	})
 	call := Call{Step: fmt.Sprintf("ask %d", q.N), Timings: resp.Timings, Wall: resp.Wall, Finish: resp.Finish}
 	if err != nil {
@@ -283,6 +256,49 @@ func ask(ctx context.Context, m Model, o Options, w words, head string, ts []Tur
 		text = w.NotDiscussed
 	}
 	return Answer{Q: q, Text: text}, call, prompt, nil
+}
+
+// excerpt is the turns [from, to) a question is answered from: those from
+// questionBefore before it was typed to questionAfter after it (the last
+// few before it when nothing was said near it); for a question without a
+// time, the whole transcript when it is short, else the part sharing the
+// most words with it. Not ok: nothing in the transcript relates to it.
+func excerpt(ts []Turn, q Question) (from, to int, ok bool) {
+	at := q.At
+	if at == notes.Unknown {
+		if estimate(ts) <= askWhole {
+			return 0, len(ts), true
+		}
+		qw, best, score := keyWords(q.Text), -1, 0
+		for i, t := range ts {
+			if s := overlap(qw, keyWords(t.Text)); s > score {
+				best, score = i, s
+			}
+		}
+		if best < 0 {
+			return 0, 0, false
+		}
+		at = ts[best].End + questionBefore/2
+	}
+	from, to = -1, 0
+	for i, t := range ts {
+		if t.End >= at-questionBefore && t.Start <= at+questionAfter {
+			if from < 0 {
+				from = i
+			}
+			to = i + 1
+		}
+	}
+	if from < 0 {
+		from, to = 0, 0
+		for i, t := range ts {
+			if t.Start <= at {
+				to = i + 1
+			}
+		}
+		from = max(0, to-6)
+	}
+	return from, to, true
 }
 
 // askWhole is how long a transcript may be to answer a question without
@@ -360,7 +376,7 @@ func schema() json.RawMessage {
 	return b
 }
 
-func extract(ctx context.Context, m Model, o Options, w words, head, legend string, ts []Turn, s Section, i, n int, ns []Note) (Items, Call, string, error) {
+func extract(ctx context.Context, m Model, o Options, w words, head, legend string, ts []Turn, s Section, i, n int, ns []Note, progress func(llm.CallProgress)) (Items, Call, string, error) {
 	var b strings.Builder
 	b.WriteString(head)
 	b.WriteString(legend)
@@ -383,10 +399,11 @@ func extract(ctx context.Context, m Model, o Options, w words, head, legend stri
 	prompt := b.String()
 	resp, err := m.Chat(ctx, llm.Request{
 		Messages:    []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: prompt}},
-		MaxTokens:   700,
+		MaxTokens:   extractMax,
 		Temperature: o.Temperature,
 		Seed:        o.Seed,
 		Schema:      schema(),
+		OnProgress:  progress,
 	})
 	call := Call{Step: fmt.Sprintf("read %d/%d", i+1, n), Timings: resp.Timings, Wall: resp.Wall, Finish: resp.Finish}
 	if err != nil {

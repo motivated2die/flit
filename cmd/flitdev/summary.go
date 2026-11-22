@@ -115,13 +115,20 @@ func summaryCmd(ctx context.Context, root string, args []string) error {
 					fmt.Printf("== %s · %s · threads %d: reads %.0f tokens/s, writes %.1f tokens/s (loaded in %s)\n", id, dev, *threads, sp.Prompt, sp.Predict, srv.Loaded.Round(100*time.Millisecond))
 					break
 				}
+				start := time.Now()
 				var peak atomic.Uint64
 				stop := make(chan struct{})
 				go watchMemory(uint32(srv.PID()), &peak, stop)
+				last := ""
 				opt := summary.Options{Approach: summary.Approach(ap), SectionTokens: *section, NoCues: *noCues, Seed: *seed,
-					Progress: func(step string, done, total int) { fmt.Printf("    %s %d/%d\n", step, done+1, total) }}
+					Progress: func(p summary.Progress) {
+						if at := fmt.Sprintf("%s %d/%d", p.Step, p.Done+1, p.Total); at != last {
+							last = at
+							fmt.Printf("    %s at %.0f%% (%s)\n", at, p.Fraction*100, time.Since(start).Round(100*time.Millisecond))
+						}
+					}}
 				fmt.Printf("== %s · %s · %s · ctx %d (loaded in %s)\n", id, dev, ap, n, srv.Loaded.Round(100*time.Millisecond))
-				start := time.Now()
+				start = time.Now()
 				res, err := summary.Run(ctx, &srv.Client, in, opt)
 				wall := time.Since(start)
 				close(stop)
