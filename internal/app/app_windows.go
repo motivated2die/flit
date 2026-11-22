@@ -129,6 +129,7 @@ type App struct {
 	// keyboard.
 	notes      map[string]*notesState
 	focusNotes string
+	focusTitle string // the same for a recording's title field
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary

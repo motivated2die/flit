@@ -1,0 +1,98 @@
+package app
+
+import (
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/motivated2die/flit/internal/capture"
+	"github.com/motivated2die/flit/internal/session"
+	"github.com/motivated2die/flit/internal/ui"
+)
+
+// The running recording's page: back goes Home, a Transcribe button ends
+// it, no player, no folder button and no Notes caption; an unnamed
+// recording opens in its title, then the notes.
+func TestRunningRecordingPage(t *testing.T) {
+	a := testApp(t)
+	var s *session.Session
+	for _, x := range a.sessions {
+		if x.Meta.Title == "" {
+			s = x
+		}
+	}
+	os.WriteFile(s.Path(session.ThemFile), nil, 0o644) // audio on disk, as while recording
+	a.rec = &recording{sess: s, r: &capture.Recording{}, started: time.Now().Add(-5 * time.Minute)}
+
+	a.openNotes(s)
+	if a.page != pageSession+s.Meta.ID || a.focusTitle != s.Meta.ID || a.focusNotes != "" {
+		t.Fatalf("page %q, title %q, notes %q", a.page, a.focusTitle, a.focusNotes)
+	}
+	f := a.frame()
+	if f.Dock != nil {
+		t.Error("a player while the meeting records")
+	}
+	c, err := ui.LayoutFrame(f, 960, 640, 1, "")
+	if err != nil {
+		t.Skip("no Direct2D:", err)
+	}
+	if _, ok := c.HitByID("session:folder"); ok {
+		t.Error("the folder button is still there")
+	}
+	stop, ok := c.HitByID("session:stop")
+	if !ok {
+		t.Fatal("no Transcribe button")
+	}
+	if back, _ := c.HitByID("session:back"); back.R.R > stop.R.L || stop.R.R < 900 {
+		t.Errorf("Transcribe isn't on the right: back %v, stop %v", back.R, stop.R)
+	}
+	if ed, ok := c.EditorTarget("notes:" + s.Meta.ID); !ok || ed.R.H() < 300 {
+		t.Errorf("the notes aren't taller while recording: %v", ed.R)
+	}
+	if dir := os.Getenv("FLIT_RENDER_DIR"); dir != "" {
+		img, err := ui.RenderFrame(a.frame(), 960, 640, 1, "", nil)
+		if err == nil {
+			fh, _ := os.Create(filepath.Join(dir, "window-session-recording.png"))
+			png.Encode(fh, img)
+			fh.Close()
+		}
+		a.page = pageHome
+		img, err = ui.RenderFrame(a.frame(), 960, 640, 1, "", nil)
+		if err == nil {
+			fh, _ := os.Create(filepath.Join(dir, "window-home-recording-icons.png"))
+			png.Encode(fh, img)
+			fh.Close()
+		}
+		a.page = pageSession + s.Meta.ID
+	}
+	back, _ := c.HitByID("session:back")
+	back.OnClick()
+	if a.page != pageHome {
+		t.Errorf("back went to %q", a.page)
+	}
+	// Named, it opens in the notes.
+	s.SetTitle("Design review")
+	a.openNotes(s)
+	if a.focusNotes != s.Meta.ID || a.focusTitle != "" {
+		t.Errorf("named: title %q, notes %q", a.focusTitle, a.focusNotes)
+	}
+	// Home: Cancel and Notes are icons, the main button reads Transcribe.
+	a.page = pageHome
+	c, _ = ui.LayoutFrame(a.frame(), 960, 640, 1, "")
+	for _, id := range []string{"home:cancel", "home:notes"} {
+		if h, ok := c.HitByID(id); !ok || h.R.W() > h.R.H()+1 {
+			t.Errorf("%s isn't a round icon: %v", id, h.R)
+		}
+	}
+	cancel, _ := c.HitByID("home:cancel")
+	cancel.OnClick() // asks again, in words
+	c, _ = ui.LayoutFrame(a.frame(), 960, 640, 1, "")
+	if h, _ := c.HitByID("home:cancel"); h.R.W() <= h.R.H()+1 {
+		t.Error("Cancel doesn't ask again")
+	}
+	if a.rec == nil {
+		t.Error("one click cancelled the recording")
+	}
+}

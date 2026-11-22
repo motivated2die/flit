@@ -57,10 +57,24 @@ func (a *App) homeActions() []ui.Node {
 	switch {
 	case a.rec != nil:
 		rec := a.rec.sess
+		// Cancel and Notes as round icons; Cancel asks again in words.
+		cancel := ui.Node(ui.Button{ID: "home:cancel", Glyph: ui.GlyphDelete, Large: true, OnClick: func() {
+			a.confirm, a.confirmAt = "home:cancel", time.Now()
+			a.invalidate()
+			if a.tray != nil { // none in tests
+				time.AfterFunc(5*time.Second, func() { a.tray.Post(a.invalidate) })
+			}
+		}})
+		if a.confirm == "home:cancel" && time.Since(a.confirmAt) < 5*time.Second {
+			cancel = ui.Button{ID: "home:cancel", Label: "Discard recording", Glyph: ui.GlyphDelete, Danger: true, Large: true, OnClick: func() {
+				a.confirm = ""
+				a.cancelRecording()
+			}}
+		}
 		return []ui.Node{
-			a.confirmButton("home:cancel", "Cancel", true, a.cancelRecording),
-			ui.Button{ID: "home:notes", Label: "Notes", Glyph: ui.GlyphNotes, Large: true, OnClick: func() { a.openNotes(rec) }},
-			ui.Button{ID: "home:stop", Label: "Stop and transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
+			cancel,
+			ui.Button{ID: "home:notes", Glyph: ui.GlyphNotes, Large: true, OnClick: func() { a.openNotes(rec) }},
+			ui.Button{ID: "home:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
 		}
 	case a.detected != nil:
 		c := *a.detected
@@ -327,7 +341,13 @@ func (a *App) recordingRows(list []*session.Session, scope string, snippets map[
 		rows = append(rows, ui.RecordingRow{
 			ID: scope + ":" + s.Meta.ID, Live: a.rec != nil && a.rec.sess.Dir == s.Dir,
 			Title: sessionTitle(s), Facts: a.facts(s), Snippet: snippet, Trailing: a.stateText(s),
-			OnClick: func() { a.go_(pageSession + s.Meta.ID) },
+			OnClick: func() {
+				if a.isRecording(s) {
+					a.openNotes(s) // the running meeting: straight to its title or notes
+					return
+				}
+				a.go_(pageSession + s.Meta.ID)
+			},
 		})
 	}
 	return ui.Card{Gap: 0, Items: rows}
@@ -384,13 +404,26 @@ func plural(n int, what string) string {
 
 func (a *App) sessionPage(id string) ui.Node {
 	s := a.sessionByID(id)
-	back := ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Recordings", OnClick: func() { a.go_(pageRecordings) }}}}
+	back := ui.Node(ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Recordings", OnClick: func() { a.go_(pageRecordings) }}}})
 	if s == nil {
 		return ui.VStack{Gap: 8, Items: []ui.Node{back, ui.Para{Text: "This recording is gone.", Muted: true}}}
 	}
+	live := a.isRecording(s)
+	if live {
+		// The running meeting is not in Recordings yet: back goes Home; a
+		// small button on the right ends it.
+		back = ui.HStack{Items: []ui.Node{
+			ui.VStack{Items: []ui.Node{ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Home", OnClick: func() { a.go_(pageHome) }}}}}},
+			ui.Button{ID: "session:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.stopRecording},
+		}}
+	}
 	ready := s.Meta.State == session.Ready
+	focusTitle := a.focusTitle == id
+	if focusTitle {
+		a.focusTitle = "" // asked for once
+	}
 	title := ui.TextField{ID: "session:title", Title: true, Value: s.Meta.Title, Placeholder: defaultTitle(s), MaxLen: 80,
-		OnCommit: func(t string) { a.renameSession(s, t) }}
+		OnCommit: func(t string) { a.renameSession(s, t) }, Focus: focusTitle, Next: "notes:" + id}
 	items := []ui.Node{back, title,
 		ui.Label{Text: a.facts(s) + " · " + a.stateText(s), Muted: true}}
 	if card := a.meetingCard(s); card != nil {
@@ -399,9 +432,15 @@ func (a *App) sessionPage(id string) ui.Node {
 	if s.Meta.State == session.Failed && s.Meta.Error != "" {
 		items = append(items, ui.Card{Items: []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}})
 	}
+	if live {
+		// While it records: the notes, with room to write.
+		items = append(items, ui.Space(4))
+		items = append(items, a.notesSection(s, false)...)
+		return ui.VStack{Gap: 10, Items: items}
+	}
 	items = append(items, a.sessionActions(s)) // the player is docked below the page (frame)
 	items = append(items, ui.Space(8))
-	items = append(items, a.notesSection(s)...)
+	items = append(items, a.notesSection(s, true)...)
 	if ready {
 		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Speakers", Right: a.analyzeLink(s)}, a.speakersCard(s))
 		items = append(items, ui.Space(8), ui.Caption("Transcript"), a.transcriptBlocks(s))

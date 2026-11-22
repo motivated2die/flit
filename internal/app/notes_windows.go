@@ -102,21 +102,33 @@ func (a *App) dropNotes(id string) {
 	delete(a.notes, id)
 }
 
-// openNotes shows s's page with the notes ready to type in, the caret at
-// their end (the notch's and Home's Notes buttons).
+// openNotes shows s's page ready to type in (the notch's and Home's Notes
+// buttons, Home's recording card and row): a running recording without a
+// name starts in its title (Enter or Tab then goes to the notes), otherwise
+// the notes, the caret at their end.
 func (a *App) openNotes(s *session.Session) {
 	if s == nil {
 		return
 	}
 	ns := a.notesFor(s)
 	ns.ed.End(true, false)
-	a.focusNotes = s.Meta.ID
+	if a.isRecording(s) && s.Meta.Title == "" {
+		a.focusTitle, a.focusNotes = s.Meta.ID, ""
+	} else {
+		a.focusNotes, a.focusTitle = s.Meta.ID, ""
+	}
 	a.openPage(pageSession + s.Meta.ID)
 }
 
-// notesSection is a recording's notes on its page: a caption with the copy
-// links and the editor in a card.
-func (a *App) notesSection(s *session.Session) []ui.Node {
+// isRecording reports whether s is the recording running now.
+func (a *App) isRecording(s *session.Session) bool {
+	return a.rec != nil && s != nil && a.rec.sess.Dir == s.Dir
+}
+
+// notesSection is a recording's notes on its page: the editor in a card,
+// with a caption and copy links above it (caption), or alone and taller
+// (while the meeting records).
+func (a *App) notesSection(s *session.Session, caption bool) []ui.Node {
 	id := s.Meta.ID
 	ns := a.notesFor(s)
 	focus := a.focusNotes == id
@@ -137,11 +149,16 @@ func (a *App) notesSection(s *session.Session) []ui.Node {
 			ui.Link{ID: "notes:md:" + id, Glyph: ui.GlyphCopy, Label: label, OnClick: func() { a.copyNotes(id, true) }},
 		}}
 	}
-	return []ui.Node{
-		ui.CaptionRow{Text: "Notes", Right: right},
-		ui.Card{Items: []ui.Node{ui.NotesEditor{ID: "notes:" + id, Ed: ns.ed, Placeholder: notesPlaceholder,
-			Focus: focus, Toolbar: true, MinH: 64, OnChange: func() { a.notesChanged(id) }}}},
+	minH := float32(120)
+	if !caption {
+		minH = 360
 	}
+	card := ui.Card{Items: []ui.Node{ui.NotesEditor{ID: "notes:" + id, Ed: ns.ed, Placeholder: notesPlaceholder,
+		Focus: focus, Toolbar: true, MinH: minH, OnChange: func() { a.notesChanged(id) }}}}
+	if !caption {
+		return []ui.Node{card}
+	}
+	return []ui.Node{ui.CaptionRow{Text: "Notes", Right: right}, card}
 }
 
 // copyNotes copies all of recording id's notes: Markdown (with HTML for

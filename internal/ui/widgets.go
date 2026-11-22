@@ -335,6 +335,9 @@ func (b Button) font() Font {
 }
 
 func (b Button) Width(c *Ctx) float32 {
+	if b.iconOnly() {
+		return b.height(c) // round
+	}
 	pad := c.Px(16)
 	if b.Large {
 		pad = c.Px(22)
@@ -346,10 +349,20 @@ func (b Button) Width(c *Ctx) float32 {
 	return w
 }
 
-func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
-	h := c.Px(32)
+// iconOnly: a glyph without a label makes a round button.
+func (b Button) iconOnly() bool { return b.Label == "" && b.Glyph != "" }
+
+func (b Button) height(c *Ctx) float32 {
 	if b.Large {
-		h = c.Px(40)
+		return c.Px(40)
+	}
+	return c.Px(32)
+}
+
+func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
+	h := b.height(c)
+	if b.iconOnly() {
+		w = h
 	}
 	r := RectF{x, y, x + w, y + h}
 	fill, text := col(ColControl), col(ColText)
@@ -372,7 +385,9 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	}
 	gr := RectF{}
 	tr := RectF{r.L, r.T, r.R, r.B}
-	if b.Glyph != "" {
+	if b.iconOnly() {
+		gr = r
+	} else if b.Glyph != "" {
 		gx := r.L + c.Px(14)
 		if b.Large {
 			gx = r.L + c.Px(18)
@@ -388,7 +403,9 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 		if b.Glyph != "" {
 			DrawIcon(cv, b.Glyph, gr, c.Px(16), text)
 		}
-		cv.Text(b.Label, tr, label, text)
+		if b.Label != "" {
+			cv.Text(b.Label, tr, label, text)
+		}
 	})
 	if !b.Disabled && b.OnClick != nil {
 		c.Click(b.ID, r, b.OnClick)

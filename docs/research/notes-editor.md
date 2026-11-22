@@ -59,8 +59,9 @@ The required elements are line-shaped, so the editor is a **list of lines, each 
 
 ### Where it lives (`internal/app/notes_windows.go`)
 
-- The recording's page: a **Notes** section under its actions (during and after the recording), with "Copy" and "Copy as text".
-- Opened ready to type, caret at the end, from the notch's **Notes** button while recording, Home's **Notes** button, and a click on Home's recording card.
+- The recording's page: a **Notes** section under its actions after the recording, with a caption, "Copy" and "Copy as text".
+- **While the meeting records** the page is tighter, for writing: back goes to Home (the running meeting isn't in Recordings), a small **Transcribe** button on the right of that row ends the meeting, no folder button, no player, no Notes caption, and a taller notes card (360 px at least).
+- Opened ready to type from the notch's **Notes** button, Home's round **Notes** button, a click on Home's recording card or on the running meeting's row: a recording without a name starts in its **title**, and Enter or Tab there saves it and moves to the notes (`TextField.Next`); a named one starts in the notes, caret at the end.
 - Each recording's editor stays in memory while flit runs (undo and caret survive going elsewhere); saved a second after the last change and at once on leaving the page, hiding the window, the end of the recording and quitting; empty notes leave no files; deleting a recording forgets them. The log gets the line count, never the text.
 
 ### Tests

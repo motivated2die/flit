@@ -172,6 +172,9 @@ func (h *host) paint() {
 			h.focus, h.edDrag = "", false // the editor went away (another page)
 		}
 	}
+	if w := c.wantEdit; w != nil && h.edit == nil {
+		defer h.startEdit(w.id, w.value, w.max) // after this pass: it draws again, editing
+	}
 	for _, t := range c.editors {
 		if t.WantFocus && h.focus != t.ID {
 			h.CommitEdit()
@@ -464,6 +467,10 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 			return h.selectionKey(wp)
 		}
 		e := h.edit
+		if wp == vkTab {
+			h.commitToNext()
+			return 0, true
+		}
 		switch wp {
 		case vkLeft:
 			e.Move(e.Caret - 1)
@@ -815,6 +822,20 @@ func (h *host) CommitEdit() {
 	}
 }
 
+// commitToNext saves the field (Enter, Tab) and hands the keyboard to the
+// editor that follows it, if it has one.
+func (h *host) commitToNext() {
+	next := ""
+	if h.edit != nil && h.last != nil {
+		next = h.last.nextOf(h.edit.ID)
+	}
+	h.CommitEdit()
+	if next != "" {
+		h.focus, h.goalX = next, -1
+		h.Invalidate()
+	}
+}
+
 // CancelEdit ends typing without saving (a field that follows its text
 // as it changes gets its old value back).
 func (h *host) CancelEdit() {
@@ -836,7 +857,7 @@ func (h *host) typed(u uint16) {
 	e := h.edit
 	switch {
 	case u == 0x0D: // Enter
-		h.CommitEdit()
+		h.commitToNext()
 		return
 	case u == 0x1B: // Esc
 		h.CancelEdit()

@@ -95,6 +95,12 @@ type TextField struct {
 	// OnClear, when set, puts a small × at the right end while there is
 	// text, which empties the field.
 	OnClear func()
+	// Focus starts editing the field as it is shown (once).
+	Focus bool
+	// Next is an editor (Ctx.Editor's ID) that gets the keyboard when
+	// typing here ends with Enter or Tab: a recording's title, then its
+	// notes.
+	Next string
 }
 
 // Width is W, or 220 logical pixels (as a SettingRow control).
@@ -209,7 +215,10 @@ func (t TextField) Layout(c *Ctx, x, y, w float32) float32 {
 	if c.StartEdit != nil {
 		value, max_ := t.Value, t.MaxLen
 		c.Click(t.ID, r, func() { c.StartEdit(t.ID, value, max_) })
-		c.inputs = append(c.inputs, input{id: t.ID, commit: t.OnCommit, change: t.OnChange})
+		c.inputs = append(c.inputs, input{id: t.ID, commit: t.OnCommit, change: t.OnChange, next: t.Next})
+		if t.Focus && edit == nil {
+			c.wantEdit = &input{id: t.ID, value: value, max: max_}
+		}
 	}
 	if clear.W() > 0 {
 		c.Click(t.ID+":clear", clear, t.OnClear) // over the field
@@ -221,6 +230,20 @@ type input struct {
 	id     string
 	commit func(string)
 	change func(string)
+	next   string // the editor after Enter or Tab
+	// A field asking to be edited (wantEdit): its value and length.
+	value string
+	max   int
+}
+
+// nextOf is the editor that follows field id (Enter, Tab), or "".
+func (c *Ctx) nextOf(id string) string {
+	for _, in := range c.inputs {
+		if in.id == id {
+			return in.next
+		}
+	}
+	return ""
 }
 
 // changer returns the OnChange of field id in this pass.

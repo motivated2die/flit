@@ -144,6 +144,7 @@ type Ctx struct {
 	Edit      *Editing
 	StartEdit func(id, value string, maxLen int)
 	inputs    []input
+	wantEdit  *input // a field asking to be edited as it is shown
 
 	// Focus is the multi-line editor that has the keyboard (its ID), kept
 	// by the window; editors are this pass's (Ctx.Editor).

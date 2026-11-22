@@ -139,8 +139,11 @@ func (a *App) frame() ui.Frame {
 		nav = append([]ui.NavEntry{{ID: pageWelcome, Label: "Welcome", Glyph: ui.GlyphPower}}, nav...)
 	}
 	selected := a.page
-	if strings.HasPrefix(selected, pageSession) {
+	if id, ok := strings.CutPrefix(selected, pageSession); ok {
 		selected = pageRecordings
+		if s := a.sessionByID(id); s != nil && a.isRecording(s) {
+			selected = pageHome // the running meeting belongs to Home
+		}
 	}
 	var page ui.Node
 	switch {
@@ -172,7 +175,7 @@ func (a *App) frame() ui.Frame {
 	}
 	// A recording's player is docked at the bottom, always in reach.
 	if id, ok := strings.CutPrefix(a.page, pageSession); ok {
-		if s := a.sessionByID(id); s != nil && a.hasAudio(s) {
+		if s := a.sessionByID(id); s != nil && a.hasAudio(s) && !a.isRecording(s) { // nothing to play while it records
 			f.Dock, f.DockID = a.playerBar(s), "player:"+id
 		}
 	}

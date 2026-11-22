@@ -110,3 +110,52 @@ func TestNotesEditorInAWindow(t *testing.T) {
 		t.Error("typed without focus")
 	}
 }
+
+// A title field followed by the notes: Enter or Tab saves the title and
+// gives the notes the keyboard; a field asking for focus starts editing.
+func TestTitleThenNotes(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	w, err := NewWindow("flit title test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+	ed := notes.NewEditor(notes.Doc{})
+	title, focusTitle := "", true
+	w.Build = func() Frame {
+		f := focusTitle
+		focusTitle = false
+		return Frame{Nav: []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}}, Selected: "home", PageID: "p",
+			Page: VStack{Gap: 12, Items: []Node{
+				TextField{ID: "title", Title: true, Value: title, Placeholder: "Recording", Focus: f, Next: "notes", OnCommit: func(s string) { title = s }},
+				NotesEditor{ID: "notes", Ed: ed, MinH: 80},
+			}}}
+	}
+	w.paint() // the field asks to be edited: editing starts after this pass
+	if w.edit == nil || w.edit.ID != "title" {
+		t.Fatal("the title isn't being edited")
+	}
+	for _, r := range "Design review" {
+		w.handle(wmChar, uintptr(r), 0)
+	}
+	w.handle(wmKeyDown, vkReturn, 0)
+	w.handle(wmChar, 0x0D, 0) // Enter's carriage return
+	w.paint()
+	if title != "Design review" || w.edit != nil || w.focus != "notes" {
+		t.Fatalf("after Enter: title %q, editing %v, focus %q", title, w.edit != nil, w.focus)
+	}
+	w.handle(wmChar, 'x', 0)
+	if ed.Doc.Blocks[0].Text != "x" {
+		t.Errorf("the notes didn't get the keyboard: %q", ed.Doc.Blocks[0].Text)
+	}
+	// Tab does the same.
+	w.startEdit("title", title, 80) // all selected, as after a click
+	w.handle(wmKeyDown, vkEnd, 0)
+	w.handle(wmChar, '!', 0)
+	w.handle(wmKeyDown, vkTab, 0)
+	w.handle(wmChar, 0x09, 0)
+	if title != "Design review!" || w.focus != "notes" || ed.Doc.Blocks[0].Text != "x" {
+		t.Errorf("after Tab: title %q, focus %q, notes %q", title, w.focus, ed.Doc.Blocks[0].Text)
+	}
+}
