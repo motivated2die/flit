@@ -13,9 +13,26 @@ Question (2026-11-22): which of the candidate models ([local-summaries.md](local
 
 ## The GPU on the desktop
 
-Vulkan doesn't start on this PC: `llama-server` lists the GPU (`Vulkan0: AMD Radeon RX 7800 XT (16368 MiB, 15408 MiB free)`) but loading a model fails at `vk::PhysicalDevice::createDevice: ErrorDeviceLost`, before any layer is offloaded. Same with every optional feature switched off (`GGML_VK_DISABLE_COOPMAT`, `…_COOPMAT2`, `…_INTEGER_DOT_PRODUCT`, `…_BFLOAT16`, `…_DOT2`, `…_OCP_FP4`, `…_SHADER_CLOCK`, `…_ASYNC`, `…_F16`), and with a two-month-older build (`b11000`, 2026-09-16), so not a llama.cpp regression. No display driver reset in the System event log. Guess: the driver (32.0.32029.2010) on this Insider build of Windows. flit had never used Vulkan before (transcription is CPU-only, [native.go](../../internal/engine/native/native.go)).
+On first try (2026-11-22), Vulkan didn't start on this PC: `llama-server` listed the GPU (`Vulkan0: AMD Radeon RX 7800 XT (16368 MiB, 15408 MiB free)`) but loading a model failed at `vk::PhysicalDevice::createDevice: ErrorDeviceLost`, before any layer was offloaded, even with every optional `GGML_VK_DISABLE_*` flag switched off and in `b11000` (2026-09-16) alike.
 
-Consequence for the design: a GPU that fails is a normal case, not an edge case. `llm.StartFallback` tries the GPU and starts again on the CPU when the server ends while loading; the summary records the device it actually ran on. Yogurt does the same on `ErrorDeviceLost` ([yogurt.md](../references/yogurt.md#the-worker-appsrcengine-appsrcmainenginets)).
+**Root cause (found 2026-11-23):** third-party **Vulkan implicit layers** registered in `HKLM\SOFTWARE\Khronos\Vulkan\ImplicitLayers` — specifically Twitch Studio's `VK_LAYER_Twitch_Overlay` (API version 1.1.0, `TwitchNativeOverlay64.dll`), alongside OBS (`VK_LAYER_OBS_HOOK`, 1.2.131), EOS and Steam layers — were injected by `vulkan-1.dll` (1.4.357.0) into `llama-server`'s Vulkan 1.4 `vkCreateDevice` chain (`[Vulkan Loader] ERROR: vkCreateDevice: Failed to create device chain.`). Disabling `VK_LAYER_Twitch_Overlay` alone (`DISABLE_TWITCH_VULKAN_OVERLAY=1`) or disabling all implicit layers (`VK_LOADER_LAYERS_DISABLE=~implicit~`) fixed it immediately. The speech worker already set `VK_LOADER_LAYERS_DISABLE=~implicit~` (`internal/engine/supervisor.go`, from Handy's lesson in [handy.md](../references/handy.md#7-smaller-details)), and `internal/llm/server_windows.go` now sets the same for GPU runs (respecting any explicit `VK_LOADER_LAYERS_DISABLE` already in the environment).
+
+`llm.StartFallback` stays as the safety net: a GPU that fails for any other reason falls back to the CPU, and the summary records the device it actually ran on. Yogurt does the same on `ErrorDeviceLost` ([yogurt.md](../references/yogurt.md#the-worker-appsrcengine-appsrcmainenginets)).
+
+### Measured on the desktop's RX 7800 XT (Vulkan, 2026-11-23)
+
+With `VK_LOADER_LAYERS_DISABLE=~implicit~` and full offload (`-ngl 999`), `llama.cpp b12633`:
+
+- `flitdev summary -speed` (first run includes Vulkan shader compile for that architecture): Qwen3.5 2B **329 read / 91.3 write t/s** (loaded 5.4 s); Qwen3.5 4B **2,068 read / 116.5 write t/s** (loaded 2.1 s); Gemma 4 E2B **349 read / 150.3 write t/s** (loaded 5.7 s). In `gpu-prefill` (`-ngl 0`), Qwen3.5 4B measured **528 read / 11.8 write t/s** (loaded 2.0 s).
+- Full summaries (Qwen3.5 4B, `single`, `ctx 8192`):
+
+| Meeting | Setup | Wall | Read | Read/s | Written | Write/s | Peak RAM |
+|---|---|---:|---:|---:|---:|---:|---:|
+| AMI IS1009a (14:00, en, 2 questions) | GPU, unlimited | **9.1 s** | 6,168 | 1,268–2,558 | 692 | 113–117 | 3.6 GB |
+| AMI IS1009a (14:00, en, 2 questions) | GPU, `-cpulimit 50 -threads 4` | **8.9 s** | 6,168 | 1,787–2,584 | 692 | 107–115 | 3.6 GB |
+| interview (6:35, de, 3 questions) | GPU, unlimited | **8.0 s** | 4,659 | 1,511–2,331 | 655 | 115–118 | 3.8 GB |
+
+~16.5× faster than the 8-thread CPU run (150 s → 9 s on AMI, 130 s → 8 s on the interview; ~20 s estimated for a one-hour meeting), with lower system RAM working set and no slowdown from flit's default 50% CPU cap. Progress bar pacing stayed linear on the interview (`ask 1` 10% at 0.8 s, `ask 2` 22% at 1.8 s, `ask 3` 35% at 2.6 s of 8.0 s).
 
 ## Round 1: the interview, everything in one prompt
 

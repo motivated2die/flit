@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -121,6 +122,7 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		args = append(args, "-ngl", "999")
 	}
 	cmd := exec.Command(o.Exe, args...)
+	cmd.Env = serverEnv(os.Environ(), o.Device)
 	engine.HideWindow(cmd)
 	tail := &lineTail{max: 30}
 	out, err := cmd.StdoutPipe()
@@ -235,6 +237,23 @@ func randomKey() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// serverEnv sets the server's environment. For Vulkan runs, implicit Vulkan
+// layers (game overlays, capture hooks such as OBS or Twitch) are disabled:
+// they inject into vkCreateDevice even for headless compute and can fail it
+// with ErrorDeviceLost. An explicit VK_LOADER_LAYERS_DISABLE in base wins.
+func serverEnv(base []string, d Device) []string {
+	if d == CPU {
+		return nil
+	}
+	const key = "VK_LOADER_LAYERS_DISABLE="
+	for _, kv := range base {
+		if len(kv) >= len(key) && strings.EqualFold(kv[:len(key)], key) {
+			return base
+		}
+	}
+	return append(append([]string(nil), base...), key+"~implicit~")
 }
 
 // lineTail keeps the last lines of the server's output, for errors.

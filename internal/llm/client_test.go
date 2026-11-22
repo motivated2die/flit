@@ -109,3 +109,21 @@ func TestRuntimeKept(t *testing.T) {
 		}
 	}
 }
+
+func TestServerEnv(t *testing.T) {
+	base := []string{"PATH=C:\\Windows", "TEMP=C:\\Temp"}
+	if got := serverEnv(base, CPU); got != nil {
+		t.Errorf("CPU env %v, want nil", got)
+	}
+	for _, d := range []Device{GPU, GPUPrefill} {
+		got := serverEnv(base, d)
+		want := "VK_LOADER_LAYERS_DISABLE=~implicit~"
+		if len(got) != len(base)+1 || got[len(got)-1] != want {
+			t.Errorf("%s env %v, want %q appended", d, got, want)
+		}
+	}
+	custom := append(append([]string(nil), base...), "vk_loader_layers_disable=VK_LAYER_FOO")
+	if got := serverEnv(custom, GPU); len(got) != len(custom) || got[len(got)-1] != "vk_loader_layers_disable=VK_LAYER_FOO" {
+		t.Errorf("explicit override changed: %v", got)
+	}
+}
