@@ -21,7 +21,7 @@ Notices calls in Teams, Zoom, Webex and Slack, and in Teams, Zoom and Google Mee
 
 flit isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. Each release lists the file's SHA-256 and can be checked with `gh attestation verify` ([how](docs/RELEASING.md#verifying-a-release)).
 
-New versions show up as **Update** in flit's sidebar. To uninstall: Settings → Uninstall… (keeping or deleting your recordings), or Windows' Installed apps.
+New versions show up as **Update available** at the bottom of flit's sidebar. To uninstall: Settings → Uninstall… (keeping or deleting your recordings), or Windows' Installed apps.
 
 Requirements: Windows 10 or 11, 64-bit. Transcription runs on the processor; no graphics card needed.
 

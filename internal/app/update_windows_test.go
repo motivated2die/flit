@@ -11,13 +11,15 @@ import (
 	"github.com/motivated2die/flit/internal/update"
 )
 
+// hasUpdateNav reports whether the sidebar offers the update: the pill,
+// and no navigation entry for it.
 func hasUpdateNav(f ui.Frame) bool {
 	for _, e := range f.Nav {
 		if e.ID == pageUpdate {
-			return e.Dot
+			return false
 		}
 	}
-	return false
+	return f.Update == "Update available" && f.OnUpdate != nil
 }
 
 func TestUpdateEntryOnlyWhenNewer(t *testing.T) {

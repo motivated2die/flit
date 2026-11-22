@@ -18,7 +18,7 @@ How versions, tags and releases work, step by step. Building in general is in [B
 - **`main`** always holds the latest finished work. Changes reach it through **pull requests** from a branch; CI ([ci.yml](../.github/workflows/ci.yml)) checks every pull request and every push to `main`: formatting, vet, the tests (with the real engine and the small test models), govulncheck and a build. `main` takes no direct pushes: the ruleset below lets a commit in only once CI has passed on it.
 - **Nothing is released automatically from `main`.** You decide which commit becomes a release by putting a **version tag** on it.
 - **A tag** is a permanent name for one commit: `v0.2.0` → commit `3f37898`. Unlike a branch, it never moves. Pushing a tag that looks like a version starts the release workflow ([release.yml](../.github/workflows/release.yml)).
-- The workflow creates a **draft** release. Drafts are visible only to you. The release becomes public, and **installed copies of flit start offering it** (the *Update* entry in the sidebar), only when you click **Publish**.
+- The workflow creates a **draft** release. Drafts are visible only to you. The release becomes public, and **installed copies of flit start offering it** (*Update available* at the bottom of the sidebar), only when you click **Publish**.
 
 ## Version numbers
 
@@ -119,7 +119,7 @@ If a job fails, open it to read the log, and see [Fixing mistakes](#fixing-mista
 2. Optionally download `flit.exe`, run it on a test PC, and check that its hash matches the notes.
 3. **Publish release.**
 
-Done: the release is public and `https://github.com/motivated2die/flit/releases/latest` points at it (not for pre-releases). Installed copies show *Update* in the sidebar at their next start or within 12 hours. **Publishing is what ships an update to every user**, so only publish an exe you have tested.
+Done: the release is public and `https://github.com/motivated2die/flit/releases/latest` points at it (not for pre-releases). Installed copies show *Update available* in the sidebar at their next start or within 12 hours. **Publishing is what ships an update to every user**, so only publish an exe you have tested.
 
 ### Release candidates
 
@@ -187,10 +187,10 @@ Before tagging (step 2), with the locally built exe, ideally on a second Windows
 2. **Install**: run `flit.exe` from the Desktop folder. It installs to `%LOCALAPPDATA%\Programs\flit`, the notch says hello, Start Menu and Installed apps show the new version.
 3. **Setup**: the Welcome page; the models download (or copy them in, [BUILDING.md](BUILDING.md#trying-an-installed-build)).
 4. **A meeting**: a short call in Teams or Zoom (or Start recording by hand); the transcript appears, both sides, speakers.
-5. **Update over the previous release**: recordings and settings are kept, and "flit was updated" is shown. Also the **in-app update**: with the previous version installed, run `go run ./cmd/flitdev release-server -exe <this flit.exe> -version X.Y.Z`, start the installed flit with `FLIT_UPDATE_API` set ([BUILDING.md](BUILDING.md#testing-updates)), and update from the *Update* entry; once while a recording runs (it waits for the recording to stop).
+5. **Update over the previous release**: recordings and settings are kept, and "flit was updated" is shown. Also the **in-app update**: with the previous version installed, run `go run ./cmd/flitdev release-server -exe <this flit.exe> -version X.Y.Z`, start the installed flit with `FLIT_UPDATE_API` set ([BUILDING.md](BUILDING.md#testing-updates)), and update from *Update available*; once while a recording runs (it waits for the recording to stop).
 6. **Uninstall** (Settings → Uninstall…), keeping and deleting the data.
 
 After publishing:
 
 7. The release page shows `flit.exe` and `SHA256SUMS.txt`, and `releases/latest` points at it (not for pre-releases).
-8. An installed previous version shows *Update* (Settings → App → *Check now*) and updates to it.
+8. An installed previous version shows *Update available* (Settings → App → *Check now*) and updates to it.
