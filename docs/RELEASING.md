@@ -32,7 +32,7 @@ flit uses [semantic versioning](https://semver.org): `MAJOR.MINOR.PATCH`, and th
 
 - **Pre-releases** add a suffix: `v0.3.0-rc.1`, `v0.3.0-rc.2`, then `v0.3.0`. They become GitHub pre-releases, which the "latest release" link and the in-app update skip, so you can hand them to testers safely.
 - **A version is used once.** Once a release is published, never publish different files under its number; release the next PATCH instead.
-- The version in the source (`Version = "0.1.0-dev"` in `internal/app/app_windows.go`, and `winres/winres.json`) is only the default for development builds. Release builds take the version from the tag. You don't edit any file to make a release. After a release, raising the dev version (to `0.2.0-dev`) is optional and only changes what dev builds call themselves.
+- The version in the source (`Version = "X.Y.Z-dev"` in `internal/app/app_windows.go`, and `winres/winres.json`) is only the default for development builds. Release builds take the version from the tag. You don't edit any file to make a release. After a release, raising the dev version (to `0.2.0-dev`) is optional and only changes what dev builds call themselves.
 
 ## One-time setup on GitHub
 

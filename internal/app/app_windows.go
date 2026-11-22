@@ -25,7 +25,7 @@ import (
 )
 
 // Version is set by release builds (-ldflags -X).
-var Version = "0.1.0-dev"
+var Version = "0.1.1-dev"
 
 // Run dispatches on the first argument:
 //
