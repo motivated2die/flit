@@ -5,17 +5,17 @@ How versions, tags and releases work, step by step. Building in general is in [B
 ## The idea in one picture
 
 ```
- change ──push or PR──▶ main ──(test locally)──▶ git tag v0.2.0 ──push──▶ GitHub Actions
-                         │                                                 │ build: engine, vet, test, exe
-                       CI checks                                           │ sign: (later, SignPath)
-                       every change                                        ▼
+ branch ──PR──▶ main ──(test locally)──▶ git tag v0.2.0 ──push──▶ GitHub Actions
+                 │                                                 │ build: engine, vet, test, exe
+               CI checks                                           │ sign: (later, SignPath)
+               every change                                        ▼
                                                               DRAFT release with flit.exe
                                                                            │ you review it
                                                                            ▼
                                                      Published release: installed copies offer it
 ```
 
-- **`main`** always holds the latest finished work. Every push and pull request to it is checked by CI ([ci.yml](../.github/workflows/ci.yml)): formatting, vet, the tests (with the real engine and the small test models), govulncheck and a build.
+- **`main`** always holds the latest finished work. Changes reach it through **pull requests** from a branch; CI ([ci.yml](../.github/workflows/ci.yml)) checks every pull request and every push to `main`: formatting, vet, the tests (with the real engine and the small test models), govulncheck and a build. `main` takes no direct pushes: the ruleset below lets a commit in only once CI has passed on it.
 - **Nothing is released automatically from `main`.** You decide which commit becomes a release by putting a **version tag** on it.
 - **A tag** is a permanent name for one commit: `v0.2.0` → commit `3f37898`. Unlike a branch, it never moves. Pushing a tag that looks like a version starts the release workflow ([release.yml](../.github/workflows/release.yml)).
 - The workflow creates a **draft** release. Drafts are visible only to you. The release becomes public, and **installed copies of flit start offering it** (the *Update* entry in the sidebar), only when you click **Publish**.
@@ -42,11 +42,28 @@ Done once per repository. Repository: `https://github.com/motivated2die/flit` (p
 2. **Protect `main`** (Settings → Rules → Rulesets → New ruleset → New branch ruleset):
    - Name `main`, Enforcement: Active, Target branches: *Include default branch*.
    - Rules: *Restrict deletions*, *Block force pushes*, *Require status checks to pass* → add `test` (the CI job; it can be picked once CI has run once).
-   - Optional, once others contribute: *Require a pull request before merging*. While you work alone, pushing to `main` directly and letting CI check it afterwards is fine; the status check then guards pull requests (Dependabot's).
+   - Required status checks also refuse **direct pushes** to `main`: a commit must have passed `test` on another branch first, which is what a pull request does (see [Everyday changes](#everyday-changes)). *Require a pull request before merging* is not needed on top; add it once others contribute.
 3. **Protect version tags** (New ruleset → New tag ruleset): name `versions`, target *Include by pattern* `v*`, rules *Restrict updates* and *Restrict deletions*. A published version then can't be moved or removed by accident. Add *Repository admin* to the bypass list, to clean up a failed attempt (see [Fixing mistakes](#fixing-mistakes)).
 4. **Security** (Settings → Advanced Security, "Code security" on older layouts): enable *Private vulnerability reporting* ([SECURITY.md](../SECURITY.md) points there), *Dependabot alerts* and *Dependabot security updates*. [dependabot.yml](../.github/dependabot.yml) adds weekly version updates for the actions and Go modules.
 5. **Repository details** (the ⚙ next to *About* on the main page): description "Meeting transcripts on your Windows PC: records both sides, transcribes locally", topics such as `windows`, `transcription`, `speech-to-text`, `meetings`, `go`. Untick *Packages* and *Deployments* if you like; tick *Releases*.
 6. **Two-factor authentication** on your GitHub account (also required for code signing later).
+
+## Everyday changes
+
+Work on a branch, open a pull request, merge it when CI is green:
+
+```powershell
+git switch -c fix/notch-position          # a new branch from main
+# ... change, gofmt, go vet, go test ...
+git commit -am "fix(notch): ..."
+git push -u origin fix/notch-position
+gh pr create --fill                       # or the "Compare & pull request" button on GitHub
+gh pr checks --watch                      # wait for the green check
+gh pr merge --squash --delete-branch      # or "Squash and merge" on GitHub
+git switch main; git pull
+```
+
+Dependabot opens its pull requests the same way; merge them when CI passes.
 
 ## Making a release
 
@@ -54,7 +71,7 @@ Example: releasing 0.2.0. Commands are for PowerShell in the repository folder.
 
 ### 1. Get `main` ready
 
-Everything that belongs in the release is on `main` and CI has passed (the green check next to the latest commit on GitHub). Then:
+Everything that belongs in the release is merged into `main` and CI has passed (the green check next to the latest commit on GitHub). Then:
 
 ```powershell
 git switch main
