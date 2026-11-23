@@ -390,7 +390,7 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	case b.Disabled:
 		fill, text = RGBA(ColControl, 0.5), col(ColFaint)
 	case b.Primary && c.Hover == b.ID:
-		fill, text = col(rgb(0xDC, 0xDC, 0xE0)), col(ColInk)
+		fill, text = col(rgb(0xDC, 0xDC, 0xDC)), col(ColInk)
 	case b.Primary:
 		fill, text = col(ColText), col(ColInk)
 	case (b.Danger || b.HoverDanger) && c.Hover == b.ID:

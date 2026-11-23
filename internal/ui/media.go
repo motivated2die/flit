@@ -287,7 +287,7 @@ func (b RoundButton) Layout(c *Ctx, x, y, w float32) float32 {
 	fill, fg := col(ColControl), col(ColText)
 	switch {
 	case b.Active && c.Hover == b.ID:
-		fill, fg = col(rgb(0xDC, 0xDC, 0xE0)), col(ColInk)
+		fill, fg = col(rgb(0xDC, 0xDC, 0xDC)), col(ColInk)
 	case b.Active:
 		fill, fg = col(ColText), col(ColInk)
 	case c.Hover == b.ID:

@@ -37,7 +37,7 @@ var (
 	notchButton     = RGBA(ColControl, 1)
 	notchButtonHov  = RGBA(ColControlHi, 1)
 	notchPrimary    = RGBA(ColText, 1)
-	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xDC), 1)
+	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xD8), 1)
 	notchOnPrimary  = RGBA(ColInk, 1)
 	notchTrack      = RGBA(ColText, 0.18)
 )
