@@ -182,6 +182,11 @@ type EditorTarget struct {
 	Char func(r rune, env *EditorEnv)
 	// WantFocus asks for the keyboard (once, when shown on request).
 	WantFocus bool
+	// ExpandTop is the height (device pixels) this editor adds above its
+	// text when focused (ToolbarOnFocus), so the host adjusts scroll by
+	// +ExpandTop on focus and -ExpandTop on blur, extending the container
+	// upward while keeping the text below completely still.
+	ExpandTop float32
 }
 
 // Editor registers a multi-line editor: a click inside it focuses it.

@@ -372,6 +372,28 @@ func (a *App) copyTranscript(s *session.Session, markdown bool) {
 	a.refresh()
 }
 
+// copyTranscriptAs copies the transcript from a section link and briefly shows
+// "Copied" on key.
+func (a *App) copyTranscriptAs(s *session.Session, markdown bool, key string) {
+	if s == nil || a.tray == nil {
+		return
+	}
+	text, err := s.Transcript(markdown)
+	if err == nil {
+		err = ui.SetClipboard(a.tray.Hwnd(), text)
+	}
+	if err != nil {
+		logx.Printf("copy: %v", err)
+		return
+	}
+	if a.lastReady == s {
+		a.lastReady = nil
+	}
+	a.copied, a.copiedAt = key, time.Now()
+	a.refresh()
+	time.AfterFunc(copiedFor, func() { a.tray.Post(a.invalidate) })
+}
+
 func (a *App) save() {
 	a.syncProviders()
 	if err := config.Save(a.dataDir, a.cfg); err != nil {

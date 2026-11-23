@@ -52,6 +52,15 @@ type host struct {
 	focus  string
 	edDrag bool
 	goalX  float32
+	// Upward-expanding ToolbarOnFocus compensation: remember the scroll area
+	// and delta added when focus entered so blur restores it cleanly, and
+	// defer blurring until button-up when clicking a button so the target
+	// does not shift out from under the pointer before release.
+	focusScrollID      string
+	focusScrollDelta   float32
+	focusScrollFrom    float32
+	focusScrollPending bool
+	blurOnUp           bool
 
 	// layout lays out the client area (w×h device pixels) into c.
 	layout func(c *Ctx, w, h float32)
@@ -167,9 +176,13 @@ func (h *host) paint() {
 	c.Sel = h.sel
 	c.Focus = h.focus
 	h.layout(c, float32(cw), float32(ch))
+	if h.focusScrollPending {
+		h.focusScrollDelta = h.scroll[h.focusScrollID] - h.focusScrollFrom
+		h.focusScrollPending = false
+	}
 	if h.focus != "" {
 		if _, ok := c.editorByID(h.focus); !ok {
-			h.focus, h.edDrag = "", false // the editor went away (another page)
+			h.setFocus("") // the editor went away (another page)
 		}
 	}
 	if w := c.wantEdit; w != nil && h.edit == nil {
@@ -178,7 +191,8 @@ func (h *host) paint() {
 	for _, t := range c.editors {
 		if t.WantFocus && h.focus != t.ID {
 			h.CommitEdit()
-			h.focus, h.goalX = t.ID, -1
+			h.setFocus(t.ID)
+			h.goalX = -1
 			defer h.Invalidate() // drawn again with the caret
 		}
 	}
@@ -349,14 +363,21 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, true
 	case wmLButtonDown:
+		h.blurOnUp = false
 		if hit, ok := h.hitAt(lp); ok && hit.editor {
 			h.pressEditor(hit, float32(int16(lp&0xFFFF)), float32(int16(lp>>16&0xFFFF)))
 			return 0, true
 		} else if ok && h.last != nil && h.editorPart(hit.ID) != "" {
-			h.focus = h.editorPart(hit.ID) // its toolbar or checkboxes: it keeps (or gets) the keyboard
+			h.setFocus(h.editorPart(hit.ID)) // its toolbar or checkboxes: it keeps (or gets) the keyboard
 		} else if h.focus != "" {
-			h.focus = "" // a click elsewhere lets go of the keyboard
-			h.Invalidate()
+			if ok && hit.clickable() {
+				// Defer blur until button-up so an expanding summary card
+				// doesn't shift a clicked button above it before release.
+				h.blurOnUp = true
+			} else {
+				h.setFocus("") // a click elsewhere lets go of the keyboard
+				h.Invalidate()
+			}
 		}
 		if h.edit != nil {
 			if hit, ok := h.hitAt(lp); !ok || hit.ID != h.edit.ID {
@@ -404,8 +425,8 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 			h.endDrag()
 			return 0, true
 		}
-		pressed := h.pressed
-		h.pressed = ""
+		pressed, blur := h.pressed, h.blurOnUp
+		h.pressed, h.blurOnUp = "", false
 		procReleaseCapture.Call()
 		h.Invalidate()
 		if hit, ok := h.hitAt(lp); ok && hit.ID == pressed {
@@ -416,9 +437,13 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 				hit.OnClick()
 			}
 		}
+		if blur {
+			h.setFocus("")
+			h.Invalidate()
+		}
 		return 0, true
 	case wmCaptureChange:
-		h.selecting, h.edDrag = false, false
+		h.selecting, h.edDrag, h.blurOnUp = false, false, false
 		if h.drag != "" {
 			h.endDrag() // capture taken away: the drag ends where it was
 		}
@@ -654,15 +679,54 @@ func (h *host) focused() (EditorTarget, bool) {
 	return h.last.editorByID(h.focus)
 }
 
+// setFocus switches editor keyboard focus and compensates page scroll when
+// entering or leaving a ToolbarOnFocus editor (ExpandTop > 0) so its container
+// expands/collapses upward without shifting the text beneath.
+func (h *host) setFocus(next string) {
+	if next == h.focus {
+		return
+	}
+	if h.focus != "" {
+		h.edDrag = false
+		if h.focusScrollID != "" {
+			delta := h.focusScrollDelta
+			if h.focusScrollPending {
+				delta = h.scroll[h.focusScrollID] - h.focusScrollFrom
+				h.focusScrollPending = false
+			}
+			if delta > 0 {
+				h.scroll[h.focusScrollID] = max(0, h.scroll[h.focusScrollID]-delta)
+				delete(h.scrollTo, h.focusScrollID)
+			}
+			h.focusScrollID, h.focusScrollDelta, h.focusScrollFrom = "", 0, 0
+		}
+	}
+	h.focus = next
+	if next != "" && h.last != nil {
+		if t, ok := h.last.editorByID(next); ok && t.ExpandTop > 0 && len(h.last.scrolls) > 0 {
+			a := h.last.scrolls[0]
+			for _, s := range h.last.scrolls {
+				if s.R.Contains(t.R.L+1, t.R.T+1) {
+					a = s
+				}
+			}
+			from := h.scroll[a.ID]
+			h.scroll[a.ID] = from + t.ExpandTop
+			delete(h.scrollTo, a.ID)
+			h.focusScrollID = a.ID
+			h.focusScrollFrom = from
+			h.focusScrollDelta = t.ExpandTop
+			h.focusScrollPending = true
+		}
+	}
+}
+
 // pressEditor focuses the editor clicked and hands it the click (counted
 // for double and triple clicks); the button held selects with the pointer.
 func (h *host) pressEditor(hit Hit, x, y float32) {
 	h.CommitEdit()
 	if h.sel != nil {
 		h.sel = nil
-	}
-	if h.focus != hit.ID {
-		h.focus = hit.ID
 	}
 	h.goalX = -1
 	dt, _, _ := procGetDoubleClickTime.Call()
@@ -676,6 +740,7 @@ func (h *host) pressEditor(hit Hit, x, y float32) {
 	if t, ok := h.last.editorByID(hit.ID); ok && t.Press != nil {
 		t.Press(x, y, keyDown(vkShift), n)
 	}
+	h.setFocus(hit.ID)
 	h.edDrag = true
 	procSetCapture.Call(h.hwnd)
 	h.Invalidate()
@@ -714,7 +779,7 @@ func (h *host) editorEnv() *EditorEnv {
 	return &EditorEnv{
 		SetClipboard: func(text, html string) { _ = SetClipboardRich(h.hwnd, text, html) },
 		Clipboard:    func() string { return ClipboardText(h.hwnd) },
-		Blur:         func() { h.focus, h.edDrag = "", false },
+		Blur:         func() { h.setFocus("") },
 		GoalX:        &h.goalX,
 	}
 }
@@ -722,7 +787,7 @@ func (h *host) editorEnv() *EditorEnv {
 // Blur takes the keyboard from the focused editor.
 func (h *host) Blur() {
 	if h.focus != "" {
-		h.focus = ""
+		h.setFocus("")
 		h.Invalidate()
 	}
 }
@@ -735,7 +800,7 @@ func (h *host) startEdit(id, value string, maxLen int) {
 		}
 		h.CommitEdit()
 	}
-	h.focus = "" // a field takes the keyboard from an editor
+	h.setFocus("") // a field takes the keyboard from an editor
 	text := []rune(value)
 	h.edit = &Editing{ID: id, Text: text, Caret: len(text), All: len(text) > 0, Since: time.Now(), Max: maxLen, Orig: value}
 	h.Invalidate()
@@ -854,7 +919,8 @@ func (h *host) focusAfterCommit(target string) {
 			return
 		}
 	}
-	h.focus, h.goalX = target, -1
+	h.setFocus(target)
+	h.goalX = -1
 	h.Invalidate()
 }
 

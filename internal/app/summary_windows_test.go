@@ -55,17 +55,45 @@ func TestSummarySection(t *testing.T) {
 		t.Error("cancel kept the run")
 	}
 
-	// Written: the editor, Copy, Write again.
+	// Top Copy button is disabled before a summary exists, and neither Copy as
+	// Markdown nor Transcribe again live in the top action bar anymore.
+	if b := findButton([]ui.Node{a.sessionActions(s)}, "session:copy"); b == nil || !b.Disabled {
+		t.Errorf("top Copy button should exist and be disabled before summary: %+v", b)
+	}
+	if b := findButton([]ui.Node{a.sessionActions(s)}, "session:md"); b != nil {
+		t.Error("top bar should not have Copy as Markdown")
+	}
+	if b := findButton([]ui.Node{a.sessionActions(s)}, "session:again"); b != nil {
+		t.Error("top bar should not have Transcribe again")
+	}
+
+	// Written: the editor, Copy & Copy as text, Write again, top Copy enabled,
+	// and Transcript caption has Transcribe again + Copy links.
 	if err := s.SaveSummary("## Zusammenfassung\n\nRelease am Freitag.\n", session.SummaryInfo{Model: "qwen3.5-2b"}); err != nil {
 		t.Fatal(err)
 	}
 	delete(a.summaries, id) // as summaryEnded does
 	c, _ = ui.LayoutFrame(a.frame(), 960, 2400, 1, "")
+	if b := findButton([]ui.Node{a.sessionActions(s)}, "session:copy"); b == nil || b.Disabled || !b.Primary {
+		t.Errorf("top Copy button should be enabled and primary once summary exists: %+v", b)
+	}
 	if _, ok := c.EditorTarget("summary:" + id); !ok {
 		t.Error("the summary isn't shown in an editor")
 	}
 	if _, ok := c.HitByID("summary:md:" + id); !ok {
-		t.Error("no Copy link")
+		t.Error("no Summary Copy link")
+	}
+	if _, ok := c.HitByID("summary:text:" + id); !ok {
+		t.Error("no Summary Copy as text link")
+	}
+	if _, ok := c.HitByID("session:again"); !ok {
+		t.Error("no Transcribe again link on Transcript section")
+	}
+	if _, ok := c.HitByID("transcript:copy:" + id); !ok {
+		t.Error("no Transcript Copy link")
+	}
+	if _, ok := c.HitByID("transcript:md:" + id); !ok {
+		t.Error("no Transcript Copy as Markdown link")
 	}
 	if b := findButton(a.summarySection(s), "summary:write"); b == nil || b.Label != "Write again" {
 		t.Error("no Write again")

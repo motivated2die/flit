@@ -238,3 +238,66 @@ func TestTextFieldTabNavigation(t *testing.T) {
 		t.Fatalf("after Shift+Tab 1->0: edit=%+v", w.edit)
 	}
 }
+
+// Clicking inside a ToolbarOnFocus editor (Summary) expands its container
+// upward by compensating page scroll so the text beneath does not shift on
+// screen, and collapsing on blur restores the scroll cleanly.
+func TestSummaryUpwardExpansionNoTextShift(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	w, err := NewWindow("flit summary expand test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+	ed := notes.NewEditor(notes.Parse("## Summary\n\nKey decision made.\n"))
+	w.Build = func() Frame {
+		return Frame{
+			Nav: []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}}, Selected: "home", PageID: "rec",
+			Page: VStack{Gap: 12, Items: []Node{
+				Space(180),
+				Caption("Summary"),
+				Card{Items: []Node{NotesEditor{ID: "sum", Ed: ed, Toolbar: true, ToolbarOnFocus: true, MinH: 80}}},
+				Space(800),
+			}},
+		}
+	}
+	sid := FrameScrollID("rec")
+	w.scroll[sid] = 60
+	w.paint()
+	before, ok := w.last.editorByID("sum")
+	if !ok {
+		t.Fatal("missing summary editor")
+	}
+	// Click inside the summary text.
+	at := func(x, y float32) uintptr { return uintptr(uint16(int16(x))) | uintptr(uint16(int16(y)))<<16 }
+	w.handle(wmLButtonDown, 0, at(before.R.L+6, before.R.T+6))
+	w.handle(wmLButtonUp, 0, at(before.R.L+6, before.R.T+6))
+	w.paint()
+	if w.focus != "sum" {
+		t.Fatalf("expected focus on sum, got %q", w.focus)
+	}
+	after, _ := w.last.editorByID("sum")
+	if after.R.T != before.R.T {
+		t.Errorf("summary text shifted on focus: before=%v after=%v", before.R.T, after.R.T)
+	}
+	if bar, ok := w.last.HitByID("sum:bar"); !ok || bar.R.B >= after.R.T {
+		t.Errorf("toolbar not above summary text inside container: ok=%v bar=%+v textT=%v", ok, bar.R, after.R.T)
+	}
+	if w.scroll[sid] != 60+before.ExpandTop {
+		t.Errorf("scroll = %v, want %v", w.scroll[sid], 60+before.ExpandTop)
+	}
+	// Esc collapses the toolbar and keeps the text at the exact same screen Y.
+	w.handle(wmKeyDown, vkEscape, 0)
+	w.paint()
+	if w.focus != "" {
+		t.Fatalf("Esc did not blur: %q", w.focus)
+	}
+	afterBlur, _ := w.last.editorByID("sum")
+	if afterBlur.R.T != before.R.T {
+		t.Errorf("summary text shifted on blur: before=%v afterBlur=%v", before.R.T, afterBlur.R.T)
+	}
+	if w.scroll[sid] != 60 {
+		t.Errorf("scroll after blur = %v, want 60", w.scroll[sid])
+	}
+}

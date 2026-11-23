@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/motivated2die/flit/internal/notes"
@@ -27,7 +28,8 @@ type NotesEditor struct {
 	// task, bold, italic and @flit (the same as the Markdown shortcuts).
 	Toolbar bool
 	// ToolbarOnFocus hides the toolbar until the editor has the keyboard,
-	// extending it upward above the text so the layout below doesn't shift.
+	// expanding the container upward above the text (compensated by page
+	// scroll) so the text below does not shift.
 	ToolbarOnFocus bool
 }
 
@@ -217,8 +219,10 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	geoms := make([]blockGeom, len(doc.Blocks))
 	y0 := y
 	laneH := c.Px(38) // 30 px buttons + 4 px padding above and below
-	if n.Toolbar && !n.ToolbarOnFocus {
-		y += laneH + c.Px(10)
+	barSpace := laneH + c.Px(10)
+	showBar := n.Toolbar && (!n.ToolbarOnFocus || focused)
+	if showBar {
+		y += barSpace
 	}
 	top := y
 	for i, b := range doc.Blocks {
@@ -286,7 +290,13 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			}
 		}
 		if ed.Reveal {
-			c.KeepInView(ct, ct+ch)
+			keepTop := ct
+			if showBar {
+				// Keep the caret clear below a docked toolbar (8 px top pad +
+				// 38 px swim lane + 8 px breathing room, vs Frame's 24 px margin).
+				keepTop = ct - c.Px(30)
+			}
+			c.KeepInView(keepTop, ct+ch)
 		}
 	}
 	ed.Reveal = false
@@ -344,8 +354,12 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			*env.GoalX = cx
 		}
 	}
+	var expandTop float32
+	if n.Toolbar && n.ToolbarOnFocus {
+		expandTop = barSpace
+	}
 	c.Editor(EditorTarget{
-		ID: n.ID, R: area, WantFocus: n.Focus,
+		ID: n.ID, R: area, WantFocus: n.Focus, ExpandTop: expandTop,
 		Press: func(px, py float32, shift bool, clicks int) {
 			p := posAt(px, py)
 			switch clicks {
@@ -445,13 +459,16 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			return true
 		},
 	})
-	if n.Toolbar && (!n.ToolbarOnFocus || focused) {
+	if showBar {
+		clipTop := c.ClipRect().T
 		barY := y0
-		floating := n.ToolbarOnFocus
-		if floating {
-			barY = y0 - laneH - c.Px(8)
+		if clipTop > -1e5 {
+			// Dock the toolbar with 8 px top padding when scrolled past the
+			// top of the container, stopping at the bottom of the text area.
+			barY = max(y0, min(clipTop+c.Px(8), area.B-laneH))
 		}
-		n.toolbar(c, x, barY, w, laneH, floating, changed)
+		stuck := barY > y0
+		n.toolbar(c, x, barY, w, laneH, y0, area.B, clipTop, stuck, changed)
 	}
 	// Checkboxes, over the editor: a click ticks the task.
 	for i, b := range doc.Blocks {
@@ -470,26 +487,50 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	return height
 }
 
-// toolbar draws the formatting buttons inside a full-width swim lane above the
-// text; a click acts on the caret's lines or the selection (and gives the
-// editor the keyboard, as part of it). When floating (ToolbarOnFocus), the lane
-// extends upward above the text without shifting the layout below.
-func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH float32, floating bool, changed func(int)) {
+// toolbar draws the formatting buttons inside a full-width swim lane inside
+// the container; when scrolled past its resting top (stuck), it stays docked
+// at the top of the view with a soft card-coloured backing so scrolled text
+// recedes cleanly behind it.
+func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH, y0, areaB, clipTop float32, stuck bool, changed func(int)) {
 	pad := c.Px(4)
 	lane := RectF{x, y, x + w, y + laneH}
 	rad := c.Px(10)
 	border := max(1, c.Px(1))
+	if stuck {
+		cardPad := c.Px(16)
+		cardRect := RectF{x - cardPad, y0 - cardPad, x + w + cardPad, areaB + cardPad}
+		fade := c.Px(18)
+		halo := RectF{lane.L - fade, lane.T - fade, lane.R + fade, lane.B + fade}
+		hw, hh := int(math.Ceil(float64(halo.W()))), int(math.Ceil(float64(halo.H())))
+		key := fmt.Sprintf("toolhalo:%dx%d:%v", hw, hh, fade)
+		c.PushClip(cardRect)
+		c.Draw(func(cv Canvas) {
+			// Cover the 8 px top margin above the docked lane so scrolled lines
+			// never peek through above the toolbar.
+			if clipTop < lane.T+rad {
+				cv.RoundRect(RectF{x - c.Px(4), clipTop, x + w + c.Px(4), lane.T + rad}, 0, col(ColCard))
+			}
+			cv.Bitmap(key, halo.L, halo.T, hw, hh, 1, func() []byte {
+				return haloPixels(hw, hh, float64(fade), float64(rad), ColCard, 0.85)
+			})
+		})
+		c.PopClip()
+	}
 	c.Draw(func(cv Canvas) {
-		if floating {
+		if stuck {
 			cv.RoundRect(RectF{lane.L - border, lane.T - border, lane.R + border, lane.B + border}, rad+border, col(ColEdge))
 		} else {
 			cv.RoundRect(RectF{lane.L - border, lane.T - border, lane.R + border, lane.B + border}, rad+border, col(ColDivider))
 		}
 		cv.RoundRect(lane, rad, col(ColSidebar))
 	})
-	// Clicking empty space in the swim lane keeps focus in the editor (and
-	// blocks click-through when the toolbar floats upward).
-	c.Click(n.ID+":bar", lane, func() {})
+	// Clicking empty space in the swim lane (or the docked top margin) keeps
+	// focus in the editor and blocks clicks from reaching text beneath.
+	hitRect := lane
+	if stuck && clipTop < lane.T {
+		hitRect.T = clipTop
+	}
+	c.Click(n.ID+":bar", hitRect, func() {})
 
 	bw, bh := c.Px(30), c.Px(30)
 	bx, by := x+pad, y+(laneH-bh)/2

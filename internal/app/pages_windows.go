@@ -461,7 +461,14 @@ func (a *App) sessionPage(id string) ui.Node {
 		items = append(items, a.transcribeCard(s, "session:working", "Transcribing"))
 	}
 	if s.Meta.State == session.Failed && s.Meta.Error != "" {
-		items = append(items, ui.Card{Items: []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}})
+		failItems := []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}
+		busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
+		if !busy && a.hasAudio(s) {
+			failItems = append(failItems, ui.HStack{Items: []ui.Node{
+				ui.Button{ID: "session:again", Label: "Transcribe again", Glyph: ui.GlyphRefresh, OnClick: func() { a.retranscribe(s) }},
+			}})
+		}
+		items = append(items, ui.Card{Gap: 8, Items: failItems})
 	}
 	if live {
 		// While it records: the notes, with room to write.
@@ -476,7 +483,7 @@ func (a *App) sessionPage(id string) ui.Node {
 		items = append(items, ui.Space(8))
 		items = append(items, a.summarySection(s)...)
 		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Speakers", Right: a.analyzeLink(s)}, a.speakersCard(s))
-		items = append(items, ui.Space(8), ui.Caption("Transcript"), a.transcriptBlocks(s))
+		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Transcript", Right: a.transcriptLinks(s)}, a.transcriptBlocks(s))
 	}
 	if files := a.filesCard(s); files != nil {
 		items = append(items, ui.Space(8), ui.Caption("Files"), files)
@@ -500,22 +507,44 @@ func (a *App) filesCard(s *session.Session) ui.Node {
 	return ui.Card{Gap: 2, Items: rows}
 }
 
-// sessionActions are a recording's smaller actions.
+// sessionActions are a recording's top actions: Copy (the summary) and Open folder.
 func (a *App) sessionActions(s *session.Session) ui.Node {
 	var btns []ui.Node
 	if s.Meta.State == session.Ready {
-		btns = append(btns,
-			ui.Button{ID: "session:copy", Label: "Copy", Glyph: ui.GlyphCopy, Primary: true, OnClick: func() { a.copyTranscript(s, false) }},
-			ui.Button{ID: "session:md", Label: "Copy as Markdown", OnClick: func() { a.copyTranscript(s, true) }})
+		id := s.Meta.ID
+		hasSummary := a.summaryFor(s) != nil
+		label := "Copy"
+		if a.copied == "session:copy:"+id && time.Since(a.copiedAt) < copiedFor {
+			label = "Copied"
+		}
+		btns = append(btns, ui.Button{ID: "session:copy", Label: label, Glyph: ui.GlyphCopy, Primary: hasSummary, Disabled: !hasSummary,
+			OnClick: func() { a.copySummary(id, true, "session:copy:"+id) }})
 	}
 	btns = append(btns, ui.Button{ID: "session:folder", Label: "Open folder", Glyph: ui.GlyphFolder, OnClick: func() { openFolder(s.Dir) }})
-	busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
-	if !busy {
-		if (s.Meta.State == session.Failed || s.Meta.State == session.Ready || s.Meta.State == session.Recorded) && a.hasAudio(s) {
-			btns = append(btns, ui.Button{ID: "session:again", Label: "Transcribe again", Glyph: ui.GlyphRefresh, OnClick: func() { a.retranscribe(s) }})
-		}
-	}
 	return ui.HStack{Gap: 8, Items: btns}
+}
+
+// transcriptLinks are the actions beside the Transcript caption: Transcribe
+// again (when audio is kept and idle), Copy as Markdown, and Copy.
+func (a *App) transcriptLinks(s *session.Session) ui.Node {
+	id := s.Meta.ID
+	var links []ui.Node
+	busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
+	if !busy && a.hasAudio(s) {
+		links = append(links, ui.Link{ID: "session:again", Glyph: ui.GlyphRefresh, Label: "Transcribe again", OnClick: func() { a.retranscribe(s) }})
+	}
+	mdLabel, copyLabel := "Copy as Markdown", "Copy"
+	if a.copied == "transcript:md:"+id && time.Since(a.copiedAt) < copiedFor {
+		mdLabel = "Copied"
+	}
+	if a.copied == "transcript:copy:"+id && time.Since(a.copiedAt) < copiedFor {
+		copyLabel = "Copied"
+	}
+	links = append(links,
+		ui.Link{ID: "transcript:md:" + id, Label: mdLabel, OnClick: func() { a.copyTranscriptAs(s, true, "transcript:md:"+id) }},
+		ui.Link{ID: "transcript:copy:" + id, Glyph: ui.GlyphCopy, Label: copyLabel, OnClick: func() { a.copyTranscriptAs(s, false, "transcript:copy:"+id) }},
+	)
+	return ui.HStack{Gap: 14, Right: true, Items: links}
 }
 
 // confirmButton is a destructive button that asks for a second click

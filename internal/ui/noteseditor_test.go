@@ -151,33 +151,53 @@ func TestNotesEditorToolbarSwimLaneAndFocus(t *testing.T) {
 		t.Error("missing toolbar button in always-on swim lane")
 	}
 
-	// ToolbarOnFocus: hidden while unfocused; extends upward on focus with zero layout shift.
+	// ToolbarOnFocus: hidden while unfocused; expands inside the container on
+	// focus and reports ExpandTop so the host compensates scroll with zero text shift.
 	cOff := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
 	hOff := NotesEditor{ID: "sum", Ed: ed, Toolbar: true, ToolbarOnFocus: true}.Layout(cOff, 16, 100, 400)
 	if _, ok := cOff.HitByID("sum:bar"); ok {
 		t.Error("toolbar shown while unfocused")
 	}
 	tgOff, _ := cOff.editorByID("sum")
+	if tgOff.ExpandTop != 48 {
+		t.Errorf("ExpandTop = %v, want 48", tgOff.ExpandTop)
+	}
 
 	cOn := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
 	cOn.Focus = "sum"
 	hOn := NotesEditor{ID: "sum", Ed: ed, Toolbar: true, ToolbarOnFocus: true}.Layout(cOn, 16, 100, 400)
-	if hOn != hOff {
-		t.Errorf("height shifted on focus: unfocused=%v focused=%v", hOff, hOn)
+	if hOn != hOff+48 {
+		t.Errorf("height with toolbar inside container = %v, want %v", hOn, hOff+48)
 	}
 	tgOn, _ := cOn.editorByID("sum")
-	if tgOn.R.T != tgOff.R.T {
-		t.Errorf("text top shifted on focus: unfocused=%v focused=%v", tgOff.R.T, tgOn.R.T)
+	if tgOn.R.T != tgOff.R.T+48 {
+		t.Errorf("text top inside container = %v, want %v", tgOn.R.T, tgOff.R.T+48)
 	}
 	sumBar, ok := cOn.HitByID("sum:bar")
 	if !ok {
 		t.Fatal("toolbar did not appear on focus")
 	}
-	if sumBar.R.B >= 100 {
-		t.Errorf("focus toolbar did not extend upward above y=100: R=%+v", sumBar.R)
+	if sumBar.R.T != 100 || sumBar.R.B != 138 {
+		t.Errorf("focus toolbar not inside container at [100..138]: R=%+v", sumBar.R)
 	}
 	if _, ok := cOn.HitByID("sum:tool:bold"); !ok {
 		t.Error("missing bold button in focus toolbar")
+	}
+
+	// Sticky docking: when scrolled past the top of the clip rect (y=32),
+	// the toolbar docks 8 px below the clip top (y=40) and stays within the card.
+	tall := notes.NewEditor(notes.Parse(strings.Repeat("Line of notes.\n\n", 20)))
+	cScroll := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
+	cScroll.PushClip(RectF{0, 32, 500, 300})
+	NotesEditor{ID: "notes", Ed: tall, Toolbar: true}.Layout(cScroll, 16, -120, 400)
+	cScroll.PopClip()
+	h2, ok := cScroll.HitByID("notes:tool:h2")
+	if !ok {
+		t.Fatal("docked toolbar button missing")
+	}
+	// Lane top = clipTop(32) + 8 = 40; 30 px button centered in 38 px lane -> T = 44.
+	if h2.R.T != 44 {
+		t.Errorf("docked h2 button top = %v, want 44", h2.R.T)
 	}
 }
 

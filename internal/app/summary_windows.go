@@ -371,12 +371,16 @@ func (a *App) summarySection(s *session.Session) []ui.Node {
 	ns := a.summaryFor(s)
 	var right ui.Node
 	if ns != nil && !busy {
-		label := "Copy"
+		label, plainLabel := "Copy", "Copy as text"
 		if a.copied == "summary:md:"+id && time.Since(a.copiedAt) < copiedFor {
 			label = "Copied"
 		}
+		if a.copied == "summary:text:"+id && time.Since(a.copiedAt) < copiedFor {
+			plainLabel = "Copied"
+		}
 		right = ui.HStack{Gap: 14, Right: true, Items: []ui.Node{
-			ui.Link{ID: "summary:md:" + id, Glyph: ui.GlyphCopy, Label: label, OnClick: func() { a.copySummary(id) }},
+			ui.Link{ID: "summary:text:" + id, Label: plainLabel, OnClick: func() { a.copySummary(id, false, "summary:text:"+id) }},
+			ui.Link{ID: "summary:md:" + id, Glyph: ui.GlyphCopy, Label: label, OnClick: func() { a.copySummary(id, true, "summary:md:"+id) }},
 		}}
 	}
 	if busy {
@@ -440,18 +444,24 @@ func (a *App) setSumInstr(id, t string) {
 	a.sumInstr[id] = t
 }
 
-// copySummary copies the summary as Markdown (with HTML for apps that
-// paste formatting).
-func (a *App) copySummary(id string) {
+// copySummary copies the summary as Markdown (with HTML for apps that paste
+// formatting) or plain text, and flashes "Copied" on key.
+func (a *App) copySummary(id string, markdown bool, key string) {
 	ns := a.summaries[id]
-	if ns == nil {
+	if ns == nil || a.tray == nil {
 		return
 	}
-	if err := ui.SetClipboardRich(a.tray.Hwnd(), strings.TrimSuffix(ns.ed.Doc.Markdown(), "\n"), ns.ed.Doc.HTML()); err != nil {
+	var err error
+	if markdown {
+		err = ui.SetClipboardRich(a.tray.Hwnd(), strings.TrimSuffix(ns.ed.Doc.Markdown(), "\n"), ns.ed.Doc.HTML())
+	} else {
+		err = ui.SetClipboard(a.tray.Hwnd(), strings.TrimSuffix(ns.ed.Doc.Plain(), "\n"))
+	}
+	if err != nil {
 		logx.Printf("copying the summary: %v", err)
 		return
 	}
-	a.copied, a.copiedAt = "summary:md:"+id, time.Now()
+	a.copied, a.copiedAt = key, time.Now()
 	a.invalidate()
 	time.AfterFunc(copiedFor, func() { a.tray.Post(a.invalidate) })
 }
