@@ -65,7 +65,9 @@ func NewPanel() (*Panel, error) {
 	p := &Panel{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColSidebar)}, width: panelWidth}
 	p.layout = func(c *Ctx, w, hh float32) {
 		if p.Build != nil {
-			panelLayout(c, p.Build(), w, hh, p.Lit != nil && p.Lit(), p.rounded)
+			if node := p.Build(); node != nil {
+				panelLayout(c, node, w, hh, p.Lit != nil && p.Lit(), p.rounded)
+			}
 		}
 	}
 	panelByHwnd[h] = p
@@ -131,7 +133,9 @@ func (p *Panel) contentHeight() int32 {
 	pad := c.Px(panelPad)
 	h := float32(0)
 	if p.Build != nil {
-		h = p.Build().Layout(c, pad, pad, w-2*pad)
+		if node := p.Build(); node != nil {
+			h = node.Layout(c, pad, pad, w-2*pad)
+		}
 	}
 	return int32(h + 2*pad)
 }

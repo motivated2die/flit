@@ -83,6 +83,7 @@ var (
 // paragraph, with a leading backslash (an escaped marker) removed.
 func Parse(md string) Doc {
 	md = strings.ReplaceAll(strings.ReplaceAll(md, "\r\n", "\n"), "\r", "\n")
+	md = strings.ReplaceAll(md, "\x00", "")
 	var d Doc
 	// Open list levels: the column each level's marker sits at.
 	var levels []int

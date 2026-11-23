@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -233,7 +234,7 @@ func (g *d2d) paragraphHeight(s string, f Font, width float32) float32 {
 	if err != nil || s == "" {
 		return 0
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(width), f32(1e6), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -271,7 +272,7 @@ func (g *d2d) paragraphLines(s string, f Font, width float32) *TextLines {
 	if err != nil || s == "" {
 		return &TextLines{}
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(width), f32(1e6), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -334,7 +335,7 @@ func (g *d2d) Measure(s string, f Font) float32 {
 	if err != nil || s == "" {
 		return 0
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(10000), f32(1000), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -437,7 +438,7 @@ func (p *Painter) Text(s string, r RectF, f Font, c ColorF) {
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 2 /* clip */, 0)
 }
@@ -448,7 +449,7 @@ func (p *Painter) Paragraph(s string, r RectF, f Font, c ColorF) {
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 0, 0)
 }
@@ -465,7 +466,7 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(p.g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(r.W()), f32(max(r.H(), 1)), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -490,6 +491,13 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 		}
 	}
 	p.g.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
+}
+
+// utf16Units encodes s as UTF-16 code units with a trailing NUL (like
+// windows.UTF16FromString, but never failing on embedded NUL bytes).
+func utf16Units(s string) []uint16 {
+	u := utf16.Encode([]rune(s))
+	return append(u, 0)
 }
 
 // utf16Index is byte offset i of s in UTF-16 code units (DirectWrite's).

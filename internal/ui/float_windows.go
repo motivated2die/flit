@@ -99,11 +99,15 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 	if f.Build == nil {
 		return
 	}
+	node := f.Build()
+	if node == nil {
+		return
+	}
 	pad := c.Px(floatPad)
 	off := float32(math.Round(float64(c.Scroll[floatScrollID])))
 	view := RectF{0, 0, w, h}
 	c.PushClip(view)
-	ph := f.Build().Layout(c, pad, pad-off, w-2*pad)
+	ph := node.Layout(c, pad, pad-off, w-2*pad)
 	c.PopClip()
 
 	maxScroll := max(0, ph+2*pad-h)
