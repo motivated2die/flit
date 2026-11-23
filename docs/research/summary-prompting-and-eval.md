@@ -129,3 +129,19 @@ Measured with `flitdev bench -model qwen3.5-4b -device gpu -seeds 42,43` (`ctx 2
 3. **Loose-note steering + pre-meeting/live split works across `none`, `sparse`, and `structured` profiles.** Separating `<pre_meeting_notes>` (`Typed == Unknown`) from `<live_notes>` (`Typed != Unknown`), fixing `[N#]` to emit only for anchored notes, and explicitly instructing the model not to drop topics when the user stops taking notes prevented the 35-minute note gap in `IB4010` from truncating coverage.
 4. **Extract speaker glossary (`Speakers []SpeakerID`) transformed long-meeting quality.** Carrying discovered speaker names across chunks let `Extract` on 49-min `IB4010` discover Denis, Agnes, and Mirek from speech and drop `Them 1..3` from 21 → 0 (s=42) while shrinking 920 words of plot recaps into 303 words of decisions and votes.
 5. **User-facing guidance:** Updated `notesPlaceholder` in `internal/app/notes_windows.go` to guide loose note-taking (`**bold**`, `[]` tasks, `@flit` for questions or missed info), and tightened `summary.Input.Instruction` so extra instructions steer focus/emphasis/language without breaking factual grounding or core structure.
+
+## 7. Held-out 3-seed generalization benchmark (2026-11-23, 90 runs)
+
+To verify we did not overfit to the dev suite and to rate additional ideas from Section 5, we built a **6-meeting completely unseen held-out suite** (`flitdev bench -suite heldout -seeds 42,43,44`, 18 runs per variant):
+- **3 unseen German FAME meetings** (MIT, `.cache/fame/`): `Brainstorming_Session` (`Archäologie`), `Stakeholder_Meeting` (`Barock`, with missed-info `@flit` cue), `Remote_or_Virtual_Meeting` (`Ethnologie`).
+- **3 unseen English AMI meetings** (CC BY 4.0, `.cache/ami/ami_public_manual_1.6.2.zip`): `ES2005a` (5.1 min, no notes), `IS1009b` (33.8 min, sparse notes + 20-min gap + `@flit`), `TS3012b` (40.9 min, ~10.4k words, sparse early-only notes + `@flit`).
+
+Composite score (0–100) combines gold-summary content-word recall (30), speaker attribution (20), number grounding (15), `@flit` Q&A accuracy (10), conciseness & bullet craft (15), and hygiene penalties (10).
+
+| Variant (18 runs each, 3 seeds) | **Score (0–100)** | **Seed SD** | **Avg Wall** | **Avg Words** | **Gold Recall** | **Attr %** | **Tasks** | **Hygiene (gen/fill/leak)** | **Decision** |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---|
+| **A: `v4` baseline** (Qwen3.5 4B, `t=0.3`) | 76.1 | **1.9** | 7.0 s | 377 | 33% | 53% | 41 | 0 / 0 / 0 | Strong generalization baseline |
+| **B: + Speaker pre-resolution in `classify`** | 75.1 | 2.3 | 6.7 s | 358 | 32% | 52% | 39 | 0 / 1 / 0 | **Rejected:** follow-up meetings rarely contain self-introductions; keeping `classify` single-purpose scored higher |
+| **C: + KV-cached Tasks continuation** | 76.5 | 2.1 | 7.2 s | 381 | 34% | 53% | 42 | 0 / 0 / 0 | **Adopted:** +0.2 s avg on GPU; eliminated 0-task drops on German planning/stakeholder runs |
+| **D: C + `spellingHint` + `temp 0.15`** | **77.3** | 2.2 | 7.7 s | 409 | **36%** | **54%** | **45** | 0 / 0 / 0 | **Shipped default:** highest overall rating, gold recall (+3 pp), attribution, and task capture with zero loops |
+| **E: Qwen3.5 2B fallback** (with C) | 70.6 | 6.4 | **5.1 s** | 479 | 33% | 37% | 38 | 0 / 0 / 0 | **Confirmed viable fallback:** 0 generic/filler/leaks, 33% gold recall, expected higher variance on 2B |

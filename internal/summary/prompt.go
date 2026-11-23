@@ -185,6 +185,60 @@ func cueLegend(qs []Question, ns []Note, you bool) string {
 	return "In the transcript, " + strings.Join(parts, "; ") + ". Pay special attention to these lines.\n"
 }
 
+func hasTaskCheckboxes(md string) bool {
+	for _, b := range notes.Parse(md).Blocks {
+		if b.Kind == notes.Task {
+			return true
+		}
+	}
+	return false
+}
+
+// spellingHint extracts distinctive acronyms or proper terms from the title
+// and user notes as a compact 1-line spelling reference (Yogurt's vocab idea).
+func spellingHint(title string, d notes.Doc) string {
+	seen := map[string]bool{}
+	var terms []string
+	scan := func(s string) {
+		for _, tok := range strings.Fields(notes.PlainInline(withoutMentions(s))) {
+			tok = strings.Trim(tok, ".,;:!?()[]{}\"'*/–—-")
+			if len(tok) < 3 || len(tok) > 28 {
+				continue
+			}
+			// Keep acronyms (IPCC, DIN, ISO) or mixed/hyphenated terms (RAMSIS, Qwen3.5).
+			hasUpper, hasDigit := false, false
+			upperCount := 0
+			for _, r := range tok {
+				if r >= 'A' && r <= 'Z' {
+					hasUpper = true
+					upperCount++
+				}
+				if r >= '0' && r <= '9' {
+					hasDigit = true
+				}
+			}
+			if (upperCount >= 2 || (hasUpper && hasDigit)) && !seen[tok] {
+				seen[tok] = true
+				terms = append(terms, tok)
+				if len(terms) >= 12 {
+					return
+				}
+			}
+		}
+	}
+	scan(title)
+	for _, b := range d.Blocks {
+		scan(b.Text)
+		if len(terms) >= 12 {
+			break
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	return "Preferred spellings for terms/acronyms from the user: " + strings.Join(terms, ", ") + ".\n"
+}
+
 func hasYou(ts []Turn) bool {
 	for _, t := range ts {
 		for _, m := range t.Marks {

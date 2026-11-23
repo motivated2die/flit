@@ -339,4 +339,14 @@ func TestMissedInfoCueAndUnanchoredNotes(t *testing.T) {
 	if !strings.Contains(nb, "<live_notes>\n- [N1] Live point") {
 		t.Errorf("live note not anchored as [N1]:\n%s", nb)
 	}
+	// Spelling hint extracts acronyms and mixed-case/alphanumeric terms.
+	hint := spellingHint("DIN33402 Review", notes.Parse("- IPCC report & RAMSIS model\n- regular words\n"))
+	for _, want := range []string{"DIN33402", "IPCC", "RAMSIS"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("spellingHint missing %q: %q", want, hint)
+		}
+	}
+	if strings.Contains(hint, "regular") {
+		t.Errorf("spellingHint included common word: %q", hint)
+	}
 }

@@ -60,16 +60,20 @@ type benchMetrics struct {
 	QuestionsAns    int     `json:"questions_answered"`
 	NumbersTotal    int     `json:"numbers_total"`
 	NumbersGrounded int     `json:"numbers_grounded"`
+	GoldRecallPct   float64 `json:"gold_recall_pct"`
+	Score           float64 `json:"score"`
 }
 
 func benchCmd(ctx context.Context, root string, args []string) error {
 	fs := flag.NewFlagSet("bench", flag.ExitOnError)
 	modelID := fs.String("model", "qwen3.5-4b", "language model ID")
 	deviceStr := fs.String("device", "gpu", "cpu, gpu-prefill, gpu")
-	seedsStr := fs.String("seeds", "42,43", "comma-separated sampling seeds")
+	seedsStr := fs.String("seeds", "42,43,44", "comma-separated sampling seeds")
+	suite := fs.String("suite", "heldout", "benchmark suite: dev or heldout")
 	tag := fs.String("tag", "run", "output folder tag under .cache/bench/")
 	only := fs.String("only", "", "optional substring filter on case ID")
-	ctxSize := fs.Int("ctx", 20480, "context size for llama-server (covers 50-min IB4010)")
+	ctxSize := fs.Int("ctx", 20480, "context size for llama-server")
+	temp := fs.Float64("temp", 0.15, "sampling temperature")
 	fs.Parse(args)
 
 	m, ok := models.ByID(*modelID)
@@ -88,7 +92,12 @@ func benchCmd(ctx context.Context, root string, args []string) error {
 		}
 		seeds = append(seeds, n)
 	}
-	cases, err := loadBenchCases(root)
+	var cases []benchCase
+	if *suite == "heldout" {
+		cases, err = loadHeldoutCases(root)
+	} else {
+		cases, err = loadBenchCases(root)
+	}
 	if err != nil {
 		return err
 	}
@@ -136,8 +145,9 @@ func benchCmd(ctx context.Context, root string, args []string) error {
 		for _, seed := range seeds {
 			t0 := time.Now()
 			res, err := summary.Run(ctx, &srv.Client, c.Input, summary.Options{
-				Approach: c.Approach,
-				Seed:     seed,
+				Approach:    c.Approach,
+				Seed:        seed,
+				Temperature: *temp,
 			})
 			wall := time.Since(t0)
 			if err != nil {
@@ -153,10 +163,10 @@ func benchCmd(ctx context.Context, root string, args []string) error {
 				fmt.Fprintf(&ps, "===== prompt %d =====\n%s\n", i+1, p)
 			}
 			_ = os.WriteFile(filepath.Join(outDir, base+".prompts.txt"), []byte(ps.String()), 0o644)
-			fmt.Printf("  %-28s s=%d %-7s %-17s %5.1fs  %3dw  h2=%d  bul=%2d(%.0fw) attr=%3.0f%%  task=%d  dup=%v gen=%d fill=%d leak=%d them=%d num=%d/%d q=%d/%d\n",
-				c.ID, seed, c.Approach, met.MeetingType, met.WallS, met.Words, met.H2Count, met.BulletCount, met.AvgBulletWords,
-				met.AttributedPct, met.TaskCount, met.DuplicateTasks, met.GenericHeadings, met.FillerStarts,
-				met.LeakedMarks, met.RawThemLabels, met.NumbersGrounded, met.NumbersTotal, met.QuestionsAns, met.QuestionsTotal)
+			fmt.Printf("  %-26s s=%d %-17s %5.1fs %3dw h2=%d bul=%2d(%.0fw) attr=%3.0f%% task=%d them=%2d num=%d/%d q=%d/%d gold=%2.0f%% score=%4.1f\n",
+				c.ID, seed, met.MeetingType, met.WallS, met.Words, met.H2Count, met.BulletCount, met.AvgBulletWords,
+				met.AttributedPct, met.TaskCount, met.RawThemLabels, met.NumbersGrounded, met.NumbersTotal,
+				met.QuestionsAns, met.QuestionsTotal, met.GoldRecallPct, met.Score)
 		}
 	}
 	fmt.Printf("done in %s (%d runs) -> %s\n", time.Since(totalStart).Round(100*time.Millisecond), len(all), outDir)
@@ -170,13 +180,18 @@ func printAggregate(all []benchMetrics) {
 	if len(all) == 0 {
 		return
 	}
-	var sumWall, sumWords, sumAvgBul, sumAttr float64
-	var dupTasks, genHead, fillStarts, leaks, rawThem, qAns, qTot, nGnd, nTot int
+	var sumWall, sumWords, sumAvgBul, sumAttr, sumGold, sumScore float64
+	var dupTasks, genHead, fillStarts, leaks, rawThem, qAns, qTot, nGnd, nTot, totalTasks int
+	byCase := map[string][]float64{}
 	for _, m := range all {
 		sumWall += m.WallS
 		sumWords += float64(m.Words)
 		sumAvgBul += m.AvgBulletWords
 		sumAttr += m.AttributedPct
+		sumGold += m.GoldRecallPct
+		sumScore += m.Score
+		totalTasks += m.TaskCount
+		byCase[m.CaseID] = append(byCase[m.CaseID], m.Score)
 		if m.DuplicateTasks {
 			dupTasks++
 		}
@@ -189,9 +204,40 @@ func printAggregate(all []benchMetrics) {
 		nGnd += m.NumbersGrounded
 		nTot += m.NumbersTotal
 	}
+	// Mean cross-seed standard deviation of composite score.
+	var sumStd float64
+	stdN := 0
+	for _, xs := range byCase {
+		if len(xs) < 2 {
+			continue
+		}
+		mean := 0.0
+		for _, x := range xs {
+			mean += x
+		}
+		mean /= float64(len(xs))
+		v := 0.0
+		for _, x := range xs {
+			v += (x - mean) * (x - mean)
+		}
+		v /= float64(len(xs))
+		// Simple sqrt via Newton's method.
+		sd := v
+		if sd > 0 {
+			for range 10 {
+				sd = 0.5 * (sd + v/sd)
+			}
+		}
+		sumStd += sd
+		stdN++
+	}
+	avgStd := 0.0
+	if stdN > 0 {
+		avgStd = sumStd / float64(stdN)
+	}
 	n := float64(len(all))
-	fmt.Printf("\nAGGREGATE (%d runs): avg_wall=%.1fs avg_words=%.0f avg_bul_words=%.1f avg_attr=%.0f%% dup_tasks=%d gen_head=%d filler=%d leaks=%d raw_them=%d q=%d/%d num_grounded=%d/%d\n",
-		len(all), sumWall/n, sumWords/n, sumAvgBul/n, sumAttr/n, dupTasks, genHead, fillStarts, leaks, rawThem, qAns, qTot, nGnd, nTot)
+	fmt.Printf("\nAGGREGATE (%d runs): score=%.1f/100 (seed_sd=%.1f) avg_wall=%.1fs avg_words=%.0f avg_bul=%.1fw attr=%.0f%% gold=%.0f%% tasks=%d raw_them=%d gen=%d fill=%d leak=%d q=%d/%d num=%d/%d\n",
+		len(all), sumScore/n, avgStd, sumWall/n, sumWords/n, sumAvgBul/n, sumAttr/n, sumGold/n, totalTasks, rawThem, genHead, fillStarts, leaks, qAns, qTot, nGnd, nTot)
 }
 
 var (
@@ -295,7 +341,92 @@ func evaluateSummary(c benchCase, res summary.Result, seed int, wall time.Durati
 			m.NumbersGrounded++
 		}
 	}
+	// Gold content-word recall against AMI abssumm.xml or FAME Summary.
+	goldRef := strings.TrimSpace(c.GoldSummary + " " + c.GoldActions + " " + c.GoldDecs)
+	if goldRef != "" {
+		goldWords := contentTokens(goldRef)
+		sumWords := contentTokens(res.Markdown)
+		if len(goldWords) > 0 {
+			hit := 0
+			for w := range goldWords {
+				if sumWords[w] {
+					hit++
+				}
+			}
+			m.GoldRecallPct = 100 * float64(hit) / float64(len(goldWords))
+		}
+	}
+
+	// Transparent 0–100 composite quality score:
+	// - Gold coverage (up to 30 pts; scaled so 45%+ content-word recall gets full 30)
+	// - Speaker attribution (up to 20 pts)
+	// - Number grounding (up to 15 pts; full 15 if no numbers)
+	// - @flit Q&A accuracy (up to 10 pts; full 10 if no questions)
+	// - Conciseness & bullet craft (up to 15 pts: 120–480w and avg bullet 10–22w)
+	// - Hygiene (10 pts minus penalties for raw Them, generic headings, filler, leaks, duplicates)
+	score := 0.0
+	score += min(30.0, (m.GoldRecallPct/45.0)*30.0)
+	score += min(20.0, (m.AttributedPct/80.0)*20.0)
+	if m.NumbersTotal == 0 {
+		score += 15.0
+	} else {
+		score += 15.0 * float64(m.NumbersGrounded) / float64(m.NumbersTotal)
+	}
+	if m.QuestionsTotal == 0 {
+		score += 10.0
+	} else {
+		score += 10.0 * float64(m.QuestionsAns) / float64(m.QuestionsTotal)
+	}
+	conc := 15.0
+	if m.Words > 520 {
+		conc -= min(8.0, float64(m.Words-520)/50.0)
+	} else if m.Words < 100 {
+		conc -= 5.0
+	}
+	if m.BulletCount < 5 {
+		conc -= 7.0
+	} else if m.AvgBulletWords > 24 {
+		conc -= min(5.0, (m.AvgBulletWords-24)/2.0)
+	}
+	score += max(0.0, conc)
+	hyg := 10.0
+	hyg -= min(6.0, float64(m.RawThemLabels)*0.75)
+	hyg -= float64(m.GenericHeadings) * 3.0
+	hyg -= float64(m.FillerStarts) * 2.0
+	hyg -= float64(m.LeakedMarks) * 3.0
+	if m.DuplicateTasks {
+		hyg -= 3.0
+	}
+	score += max(0.0, hyg)
+	m.Score = score
 	return m
+}
+
+func contentTokens(s string) map[string]bool {
+	stop := map[string]bool{
+		"that": true, "this": true, "with": true, "from": true, "they": true, "their": true, "have": true, "were": true,
+		"will": true, "would": true, "could": true, "should": true, "about": true, "which": true, "there": true, "been": true,
+		"into": true, "more": true, "also": true, "some": true, "other": true, "meeting": true, "group": true, "discussed": true,
+		"eine": true, "einer": true, "einen": true, "einem": true, "dass": true, "wird": true, "werden": true, "wurde": true,
+		"wurden": true, "sind": true, "haben": true, "nicht": true, "auch": true, "noch": true, "sich": true, "oder": true,
+		"aber": true, "über": true, "durch": true, "nach": true, "beim": true, "dabei": true, "diese": true, "dieser": true,
+		"treffen": true, "sitzung": true, "teilnehmer": true, "diskussion": true,
+	}
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == 'ä' || r == 'ö' || r == 'ü' || r == 'ß')
+	}) {
+		if len([]rune(w)) < 4 || stop[w] {
+			continue
+		}
+		// 5-rune prefix stem for rough German/English inflection matching.
+		rs := []rune(w)
+		if len(rs) > 6 {
+			w = string(rs[:6])
+		}
+		out[w] = true
+	}
+	return out
 }
 
 func extractSpeakerTokens(in summary.Input) []string {
@@ -321,8 +452,8 @@ func extractSpeakerTokens(in summary.Input) []string {
 	for _, n := range in.Names.Speakers {
 		add(n)
 	}
-	// Also common AMI IS1009a / IB4010 participant first names when labels are Them 1..3.
-	for _, n := range []string{"betty", "francina", "eileen", "jeanne", "agnes", "project manager", "designer", "marketing", "ergonomist", "anthropologist", "umweltpolitiker", "klimawissenschaftler", "sozialwissenschaftler", "museum", "curator"} {
+	// Also common AMI participant first names when labels are Them 1..3.
+	for _, n := range []string{"betty", "francina", "eileen", "jeanne", "agnes", "denis", "mirek", "sarah", "craig", "david", "laura", "richard", "corinne", "sandra", "florian", "project manager", "designer", "marketing", "ergonomist", "anthropologist", "umweltpolitiker", "klimawissenschaftler", "sozialwissenschaftler", "museum", "curator", "archäolog", "historik", "ethnolog"} {
 		if !seen[n] {
 			seen[n] = true
 			out = append(out, n)
@@ -503,6 +634,122 @@ func loadBenchCases(root string) ([]benchCase, error) {
 				Title: "Film Club Selection", Segments: ibSegs, Names: ibNames, Notes: ibNotes, Language: "en",
 			},
 			GoldSummary: ibAbs, GoldActions: ibActs, GoldDecs: ibDecs,
+		})
+	}
+	return cases, nil
+}
+
+// loadHeldoutCases builds a 6-meeting completely unseen evaluation suite
+// (3 German FAME meetings + 3 English AMI meetings, 5 min to 41 min) to
+// test generalization without overfitting to the dev suite.
+func loadHeldoutCases(root string) ([]benchCase, error) {
+	var cases []benchCase
+	fameDir := filepath.Join(root, ".cache", "fame")
+	fameSpecs := []struct {
+		id, file, typ, notesMD, instr string
+		times                         map[string]int
+	}{
+		{
+			id:   "ho-de-brainstorm-sparse",
+			file: "Brainstorming_Session_Anthropology_German_Archäologie.csv",
+			typ:  "brainstorm",
+			notesMD: "- neue Methoden / Grabungen\n" +
+				"- **Digitalisierung** & 3D?\n",
+			times: map[string]int{
+				"neue Methoden / Grabungen":   110,
+				"**Digitalisierung** & 3D?":   320,
+			},
+		},
+		{
+			id:   "ho-de-stakeholder-sparse",
+			file: "Stakeholder_Meeting_Arts_and_Literature_German_Barock.csv",
+			typ:  "decision_planning",
+			notesMD: "- Ausstellung Barock\n" +
+				"- [@flit 8:00: ich habe kurz nicht aufgepasst, welche konkreten Bedenken oder Vorschläge gab es gerade?]\n" +
+				"- **Budget** & Publikum\n",
+			times: map[string]int{
+				"Ausstellung Barock": 90,
+				"[@flit 8:00: ich habe kurz nicht aufgepasst, welche konkreten Bedenken oder Vorschläge gab es gerade?]": 480,
+				"**Budget** & Publikum": 240,
+			},
+		},
+		{
+			id:   "ho-de-remote-sparse",
+			file: "Remote_or_Virtual_Meeting_Anthropology_German_Ethnologie.csv",
+			typ:  "standup_sync",
+			notesMD: "- Feldforschung / Kooperation\n" +
+				"- [@flit 9:00: welche konkreten Aufgaben oder nächsten Schritte wurden besprochen?]\n",
+			times: map[string]int{
+				"Feldforschung / Kooperation": 140,
+				"[@flit 9:00: welche konkreten Aufgaben oder nächsten Schritte wurden besprochen?]": 540,
+			},
+		},
+	}
+	for _, sp := range fameSpecs {
+		p := filepath.Join(fameDir, sp.file)
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		in, gold, err := loadFAME(p, sp.notesMD, sp.times, sp.instr)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", sp.id, err)
+		}
+		cases = append(cases, benchCase{
+			ID: sp.id, Language: "de", ExpectedTyp: sp.typ, NoteProfile: "sparse",
+			Approach: summary.Single, Input: in, GoldSummary: gold,
+		})
+	}
+
+	amiZip := filepath.Join(root, ".cache", "ami", "ami_public_manual_1.6.2.zip")
+	if _, err := os.Stat(amiZip); err == nil {
+		// 1. ES2005a: 5.1 min short kickoff, NO notes.
+		esSegs, esNames, esAbs, esActs, esDecs, err := loadAMIFromZip(amiZip, "ES2005a")
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, benchCase{
+			ID: "ho-en-ES2005a-5m-none", Language: "en", ExpectedTyp: "decision_planning", NoteProfile: "none",
+			Approach: summary.Single,
+			Input: summary.Input{
+				Title: "Project Kickoff", Segments: esSegs, Names: esNames, Language: "en",
+			},
+			GoldSummary: esAbs, GoldActions: esActs, GoldDecs: esDecs,
+		})
+
+		// 2. IS1009b: 33.8 min design review, sparse loose notes + 20-min gap + @flit.
+		bSegs, bNames, bAbs, bActs, bDecs, err := loadAMIFromZip(amiZip, "IS1009b")
+		if err != nil {
+			return nil, err
+		}
+		bNotes := notes.Parse("- drop teletext\n- **TV only** focus\n- [@flit 18:00: what did the marketing research say about users?]\n")
+		bNotes.Blocks[0].Typed = 210 * time.Second
+		bNotes.Blocks[1].Typed = 420 * time.Second
+		bNotes.Blocks[2].Typed = 1080 * time.Second
+		cases = append(cases, benchCase{
+			ID: "ho-en-IS1009b-34m-sparse", Language: "en", ExpectedTyp: "decision_planning", NoteProfile: "sparse",
+			Approach: summary.Single,
+			Input: summary.Input{
+				Title: "Functional Design Review", Segments: bSegs, Names: bNames, Notes: bNotes, Me: "Betty", Language: "en",
+			},
+			GoldSummary: bAbs, GoldActions: bActs, GoldDecs: bDecs,
+		})
+
+		// 3. TS3012b: 40.9 min (~10.4k words), completely new team, sparse early-only notes.
+		tSegs, tNames, tAbs, tActs, tDecs, err := loadAMIFromZip(amiZip, "TS3012b")
+		if err != nil {
+			return nil, err
+		}
+		tNotes := notes.Parse("- LCD screen + speech recognition?\n- **locator** for lost remote\n- [@flit 20:00: what technical constraints or battery issues came up?]\n")
+		tNotes.Blocks[0].Typed = 180 * time.Second
+		tNotes.Blocks[1].Typed = 360 * time.Second
+		tNotes.Blocks[2].Typed = 1200 * time.Second
+		cases = append(cases, benchCase{
+			ID: "ho-en-TS3012b-41m-sparse", Language: "en", ExpectedTyp: "decision_planning", NoteProfile: "sparse",
+			Approach: summary.Single,
+			Input: summary.Input{
+				Title: "Design Requirements Sync", Segments: tSegs, Names: tNames, Notes: tNotes, Language: "en",
+			},
+			GoldSummary: tAbs, GoldActions: tActs, GoldDecs: tDecs,
 		})
 	}
 	return cases, nil

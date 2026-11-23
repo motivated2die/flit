@@ -40,7 +40,7 @@ type Options struct {
 	SectionTokens int
 	// MaxTokens caps the notes the writer writes (default 1200).
 	MaxTokens   int
-	Temperature float64 // default 0.3
+	Temperature float64 // default 0.15
 	Seed        int
 	// NoCues leaves out the cue marks (for measuring what they bring).
 	NoCues bool
@@ -104,7 +104,7 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 		o.MaxTokens = 1200
 	}
 	if o.Temperature == 0 {
-		o.Temperature = 0.3
+		o.Temperature = 0.15
 	}
 	ts := in.Turns()
 	if len(ts) == 0 {
@@ -176,11 +176,12 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 	hasNotes := nb != ""
 
 	var body string
+	vocabLine := spellingHint(in.Title, in.Notes)
 	fmtPrompt := format(w, dur, hasNotes, mc, in.Instruction)
 	switch o.Approach {
 	case Single:
 		r.Sections = []Section{section(ts, 0, len(ts))}
-		body = head + legend + "<transcript>\n" + whole + "</transcript>\n" + nb + "\n" + fmtPrompt
+		body = head + vocabLine + legend + "<transcript>\n" + whole + "</transcript>\n" + nb + "\n" + fmtPrompt
 	case Extract:
 		var items strings.Builder
 		glossary := map[string]string{}
@@ -213,13 +214,14 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 			slices.Sort(gp)
 			glossLine = "Identified speakers across parts: " + strings.Join(gp, "; ") + ".\n"
 		}
-		body = head + glossLine + "\nWhat was extracted from each part of the transcript, in order:\n<extracted>\n" + items.String() + "</extracted>\n" + nb +
+		body = head + vocabLine + glossLine + "\nWhat was extracted from each part of the transcript, in order:\n<extracted>\n" + items.String() + "</extracted>\n" + nb +
 			"\n" + fmtPrompt + "Merge topics that recur across parts. Use only the extracted notes and the user's notes.\n"
 	default:
 		return r, fmt.Errorf("unknown approach %q", o.Approach)
 	}
+	writerMsgs := []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: body}}
 	resp, err := m.Chat(ctx, llm.Request{
-		Messages:    []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: body}},
+		Messages:    writerMsgs,
 		MaxTokens:   o.MaxTokens,
 		Temperature: o.Temperature,
 		Seed:        o.Seed,
@@ -233,6 +235,29 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 	md := Tidy(resp.Text)
 	if md == "" {
 		return r, errors.New("the model wrote nothing usable")
+	}
+	// KV-cached continuation for missing Tasks on planning/sync meetings
+	// (+0.2s on GPU, eliminates cross-seed 0-task omissions).
+	if (mc.Type == "decision_planning" || mc.Type == "standup_sync") && !hasTaskCheckboxes(md) {
+		follow := fmt.Sprintf("Check the meeting above once more: did any specific person agree to or get assigned a concrete follow-up task or deliverable after the meeting? If yes, write ONLY a \"## %s\" section in %s with one \"- [ ] **Name:** what, by when\" line per concrete task (never use \"Them 1\" or vague \"All participants\" tasks). If nobody committed to concrete work, answer ONLY: NONE", w.Tasks, w.Name)
+		fmsgs := append(append([]llm.Message(nil), writerMsgs...),
+			llm.Message{Role: "assistant", Content: resp.Text},
+			llm.Message{Role: "user", Content: follow},
+		)
+		fresp, ferr := m.Chat(ctx, llm.Request{
+			Messages:    fmsgs,
+			MaxTokens:   240,
+			Temperature: 0.1,
+			Seed:        o.Seed,
+		})
+		r.Calls = append(r.Calls, Call{Step: "tasks", Timings: fresp.Timings, Wall: fresp.Wall, Finish: fresp.Finish})
+		r.Prompts = append(r.Prompts, follow)
+		if ferr == nil {
+			ft := Tidy(fresp.Text)
+			if hasTaskCheckboxes(ft) && !strings.EqualFold(strings.TrimSpace(ft), "none") {
+				md = md + "\n\n" + ft
+			}
+		}
 	}
 	r.Markdown = Assemble(md, r.Answers, w)
 	tr.finish()
