@@ -23,15 +23,99 @@ const homeRecent = 4 // recordings on Home
 
 // --- home -----------------------------------------------------------------
 
+// greeting is one Home header greeting, optionally limited to local hours
+// [from, to) (wrapping across midnight when from > to; both 0 = anytime).
+type greeting struct {
+	text     string
+	from, to int
+}
+
+func (g greeting) activeAt(hour int) bool {
+	if g.from == g.to {
+		return true
+	}
+	if g.from < g.to {
+		return hour >= g.from && hour < g.to
+	}
+	return hour >= g.from || hour < g.to
+}
+
+var homeGreetings = []greeting{
+	// Morning (05:00–12:00)
+	{"Good morning", 5, 12},
+	{"Morning", 5, 12},
+	{"Rise and shine", 5, 11},
+	{"Fresh start", 5, 11},
+	{"Coffee first", 6, 11},
+	{"Ready for the day", 6, 12},
+	// Afternoon (12:00–18:00)
+	{"Good afternoon", 12, 18},
+	{"Afternoon", 12, 18},
+	{"Hope the day's going well", 12, 17},
+	{"Midday check-in", 11, 15},
+	{"Cruising through the day", 13, 18},
+	// Evening (18:00–23:00)
+	{"Good evening", 18, 23},
+	{"Evening", 18, 23},
+	{"Wrapping up", 17, 21},
+	{"Winding down", 19, 23},
+	// Late night (23:00–05:00)
+	{"Burning the midnight oil", 22, 5},
+	{"Night owl mode", 23, 5},
+	{"Quiet hours", 23, 5},
+	// Anytime
+	{"Welcome back", 0, 0},
+	{"Hey there", 0, 0},
+	{"What's up", 0, 0},
+	{"Good to see you", 0, 0},
+	{"Glad you're here", 0, 0},
+	{"Let's dive in", 0, 0},
+	{"All ears", 0, 0},
+	{"Ready when you are", 0, 0},
+	{"Hello again", 0, 0},
+	{"Back in action", 0, 0},
+}
+
+// homeGreeting picks a greeting for now's local 2-hour window with zero
+// timers or allocations, appending ", <name>" when a name is set or "!"
+// otherwise.
+func homeGreeting(now time.Time, name string) string {
+	t := now.Local()
+	hour := t.Hour()
+	n := uint64(0)
+	for _, g := range homeGreetings {
+		if g.activeAt(hour) {
+			n++
+		}
+	}
+	y, m, d := t.Date()
+	bucket := uint64(y)*100000 + uint64(m)*1000 + uint64(d)*20 + uint64(hour/2)
+	h := bucket * 0x9E3779B97F4A7C15
+	h ^= h >> 30
+	h *= 0xBF58476D1CE4E5B9
+	h ^= h >> 27
+	pick := h % n
+	base := "Welcome back"
+	idx := uint64(0)
+	for _, g := range homeGreetings {
+		if !g.activeAt(hour) {
+			continue
+		}
+		if idx == pick {
+			base = g.text
+			break
+		}
+		idx++
+	}
+	if name != "" {
+		return base + ", " + name
+	}
+	return base + "!"
+}
+
 func (a *App) homePage() ui.Node {
 	status := []ui.Node{ui.Para{Text: a.homeStatus(), Muted: true}}
-	head := ui.Node(ui.Title("Home"))
-	if name := a.cfg.GreetingName(); name != "" {
-		head = ui.VStack{Gap: 2, Items: []ui.Node{
-			ui.Title("Home"),
-			ui.Label{Text: "Welcome, " + name, Muted: true},
-		}}
-	}
+	head := ui.Node(ui.Title(homeGreeting(time.Now(), a.cfg.GreetingName())))
 	items := []ui.Node{
 		head,
 		ui.HStack{Gap: 12, Items: append(status, a.homeActions()...)},
