@@ -46,7 +46,9 @@ const (
 	GlyphPlay      = "player-play-filled"
 	GlyphPause     = "player-pause-filled"
 	GlyphDelete    = "trash"
-	GlyphArticle   = "file-text" // a recording in a list
+	GlyphArticle    = "file-text" // a meeting with notes / Meetings nav
+	GlyphFileSignal = "file-signal"
+	GlyphFileTextAI = "file-text-ai"
 	GlyphSearch    = "search"
 	GlyphPeople    = "users"
 	GlyphPower     = "power"

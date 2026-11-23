@@ -46,11 +46,11 @@ func (a *App) homePage() ui.Node {
 		}})
 	}
 	items = append(items, a.upcomingSection()...)
-	items = append(items, ui.Space(8), ui.CaptionRow{Text: "Latest recordings",
-		Right: ui.Link{ID: "home:all", Glyph: ui.GlyphHistory, Label: "All recordings", OnClick: func() { a.go_(pageRecordings) }}})
+	items = append(items, ui.Space(8), ui.CaptionRow{Text: "Latest meetings",
+		Right: ui.Link{ID: "home:all", Glyph: ui.GlyphArticle, Label: "All meetings", OnClick: func() { a.go_(pageRecordings) }}})
 	if listed := a.listed(); len(listed) == 0 {
 		items = append(items, ui.Card{Items: []ui.Node{
-			ui.Para{Text: "Your recordings and their transcripts appear here once a meeting has been recorded.", Muted: true},
+			ui.Para{Text: "Your meetings and their transcripts appear here once a meeting has been recorded.", Muted: true},
 		}})
 	} else {
 		items = append(items, a.recordingList(listed[:min(homeRecent, len(listed))], "home"))
@@ -181,17 +181,17 @@ func (a *App) transcribeCard(s *session.Session, id, title string) ui.Node {
 // --- recordings -----------------------------------------------------------
 
 func (a *App) recordingsPage() ui.Node {
-	items := []ui.Node{ui.Title("Recordings")}
+	items := []ui.Node{ui.Title("Meetings")}
 	listed := a.listed()
 	if len(listed) == 0 {
-		return ui.VStack{Gap: 12, Items: append(items, ui.Para{Text: "No recordings yet.", Muted: true})}
+		return ui.VStack{Gap: 12, Items: append(items, ui.Para{Text: "No meetings yet.", Muted: true})}
 	}
-	n := fmt.Sprintf("%d recordings", len(listed))
+	n := fmt.Sprintf("%d meetings", len(listed))
 	if len(listed) == 1 {
-		n = "1 recording"
+		n = "1 meeting"
 	}
 	items = append(items,
-		ui.Para{Text: n + " · " + sysinfo.Bytes(uint64(a.storage)) + " on disk. Settings can free up space; a recording's page can delete its audio or all of it.", Muted: true},
+		ui.Para{Text: n + " · " + sysinfo.Bytes(uint64(a.storage)) + " on disk. Settings can free up space; a meeting's page can delete its audio or all of it.", Muted: true},
 		ui.HStack{Gap: 8, Items: []ui.Node{
 			ui.Button{ID: "rec:folder", Label: "Open folder", Glyph: ui.GlyphFolder, OnClick: func() { openFolder(session.Root(a.dataDir)) }},
 			ui.Button{ID: "rec:clean", Label: "Free up space", OnClick: func() { a.go_(pageSettings) }},
@@ -200,15 +200,15 @@ func (a *App) recordingsPage() ui.Node {
 		a.searchBar())
 	found, snippets := a.searchSessions()
 	if strings.TrimSpace(a.search) != "" {
-		line := fmt.Sprintf("%d of %d recordings match", len(found), len(listed))
+		line := fmt.Sprintf("%d of %d meetings match", len(found), len(listed))
 		switch {
 		case len(found) == 0:
-			line = "No recording matches “" + strings.TrimSpace(a.search) + "”"
+			line = "No meeting matches “" + strings.TrimSpace(a.search) + "”"
 			if !a.searchDeep {
 				line += ". Also in transcripts searches what was said."
 			}
 		case len(found) == 1:
-			line = fmt.Sprintf("1 of %d recordings matches", len(listed))
+			line = fmt.Sprintf("1 of %d meetings matches", len(listed))
 		}
 		items = append(items, ui.Para{Text: line, Muted: true, Small: true})
 	}
@@ -218,9 +218,9 @@ func (a *App) recordingsPage() ui.Node {
 	return ui.VStack{Gap: 12, Items: items}
 }
 
-// searchBar is the Recordings page's search field and what it searches.
+// searchBar is the Meetings page's search field and what it searches.
 func (a *App) searchBar() ui.Node {
-	field := ui.TextField{ID: "rec:search", Glyph: ui.GlyphSearch, Value: a.search, Placeholder: "Search recordings", MaxLen: 100, H: 34, Round: true,
+	field := ui.TextField{ID: "rec:search", Glyph: ui.GlyphSearch, Value: a.search, Placeholder: "Search meetings", MaxLen: 100, H: 34, Round: true,
 		OnCommit: a.setSearch, OnChange: a.setSearch, OnClear: func() { a.setSearch("") }}
 	scope := 0
 	if a.searchDeep {
@@ -366,8 +366,9 @@ func (a *App) recordingRows(list []*session.Session, scope string, snippets map[
 		if sn, ok := snippets[s.Meta.ID]; ok {
 			snippet = sn
 		}
+		glyph, spinning := a.meetingRowIcon(s)
 		rows = append(rows, ui.RecordingRow{
-			ID: scope + ":" + s.Meta.ID, Live: a.rec != nil && a.rec.sess.Dir == s.Dir,
+			ID: scope + ":" + s.Meta.ID, Glyph: glyph, Live: a.rec != nil && a.rec.sess.Dir == s.Dir, Spinning: spinning,
 			Title: sessionTitle(s), Facts: a.facts(s), Snippet: snippet, Trailing: a.stateText(s),
 			OnClick: func() {
 				if a.isRecording(s) {
@@ -379,6 +380,47 @@ func (a *App) recordingRows(list []*session.Session, scope string, snippets map[
 		})
 	}
 	return ui.Card{Gap: 0, Items: rows}
+}
+
+// hasNotes reports whether meeting s has non-empty notes (in memory or on disk).
+func (a *App) hasNotes(s *session.Session) bool {
+	if ns := a.notes[s.Meta.ID]; ns != nil {
+		return !ns.ed.Doc.Empty()
+	}
+	return s.HasNotes()
+}
+
+// hasSummary reports whether meeting s has a non-empty summary (in memory or on disk).
+func (a *App) hasSummary(s *session.Session) bool {
+	if ns, ok := a.summaries[s.Meta.ID]; ok {
+		return ns != nil && !ns.ed.Doc.Empty()
+	}
+	return s.HasSummary()
+}
+
+// meetingRowIcon chooses the leading icon (or spinner) for a meeting row based
+// on its status and collected content:
+//   - transcribing → loading spinner
+//   - summarized   → file-text-ai
+//   - has notes    → file-text
+//   - transcribed  → file-signal
+//   - failed       → alert-triangle
+func (a *App) meetingRowIcon(s *session.Session) (glyph string, spinning bool) {
+	if (a.working != nil && a.working.Dir == s.Dir) || s.Meta.State == session.Transcribing {
+		return "", true
+	}
+	if s.Meta.State == session.Failed {
+		return ui.GlyphWarning, false
+	}
+	if s.Meta.State == session.Ready {
+		if a.hasSummary(s) {
+			return ui.GlyphFileTextAI, false
+		}
+		if a.hasNotes(s) {
+			return ui.GlyphArticle, false
+		}
+	}
+	return ui.GlyphFileSignal, false
 }
 
 // facts is a recording's when, length, words and speakers.
@@ -432,7 +474,7 @@ func plural(n int, what string) string {
 
 func (a *App) sessionPage(id string) ui.Node {
 	s := a.sessionByID(id)
-	back := ui.Node(ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Recordings", OnClick: func() { a.go_(pageRecordings) }}}})
+	back := ui.Node(ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Meetings", OnClick: func() { a.go_(pageRecordings) }}}})
 	if s == nil {
 		return ui.VStack{Gap: 8, Items: []ui.Node{back, ui.Para{Text: "This recording is gone.", Muted: true}}}
 	}

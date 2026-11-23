@@ -8,6 +8,12 @@ import (
 	"github.com/motivated2die/flit/internal/notes"
 )
 
+// HasNotes reports whether the recording has non-empty notes on disk.
+func (s *Session) HasNotes() bool {
+	st, err := os.Stat(s.Path(NotesFile))
+	return err == nil && st.Size() > 0
+}
+
 // Notes reads the recording's notes: notes.md, with the lines' typing
 // times from notes.json (an empty doc when there are none).
 func (s *Session) Notes() (notes.Doc, error) {

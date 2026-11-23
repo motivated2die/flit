@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/motivated2die/flit/internal/calendar"
+	"github.com/motivated2die/flit/internal/notes"
+	"github.com/motivated2die/flit/internal/session"
+	"github.com/motivated2die/flit/internal/ui"
 )
 
 func TestUpcomingJoinMeeting(t *testing.T) {
@@ -49,5 +52,49 @@ func TestNotchJoinPromptState(t *testing.T) {
 	a.onNotchButton("join-close")
 	if a.joinPrompt != nil {
 		t.Fatal("join-close did not clear joinPrompt")
+	}
+}
+
+func TestMeetingRowIconsAndStatus(t *testing.T) {
+	a := &App{dataDir: t.TempDir()}
+	s, err := session.Create(a.dataDir, session.Meta{Title: "Sync", Started: time.Now(), State: session.Transcribing})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Transcribing shows a loading spinner.
+	if glyph, spin := a.meetingRowIcon(s); !spin || glyph != "" {
+		t.Fatalf("transcribing: (%q, %v), want (\"\", true)", glyph, spin)
+	}
+
+	// Transcribed only shows file-signal + "Transcribed".
+	s.Meta.State = session.Ready
+	if glyph, spin := a.meetingRowIcon(s); spin || glyph != ui.GlyphFileSignal {
+		t.Fatalf("transcribed: (%q, %v), want (%q, false)", glyph, spin, ui.GlyphFileSignal)
+	}
+	if got := a.stateText(s); got != "Transcribed" {
+		t.Fatalf("transcribed status = %q, want Transcribed", got)
+	}
+
+	// With notes shows file-text + "Transcribed".
+	if err := s.SaveNotes(notes.Parse("Action item\n")); err != nil {
+		t.Fatal(err)
+	}
+	if glyph, spin := a.meetingRowIcon(s); spin || glyph != ui.GlyphArticle {
+		t.Fatalf("with notes: (%q, %v), want (%q, false)", glyph, spin, ui.GlyphArticle)
+	}
+	if got := a.stateText(s); got != "Transcribed" {
+		t.Fatalf("with notes status = %q, want Transcribed", got)
+	}
+
+	// With summary shows file-text-ai + "Summarized".
+	if err := s.SaveSummary("## Summary\n\nAll good.\n", session.SummaryInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if glyph, spin := a.meetingRowIcon(s); spin || glyph != ui.GlyphFileTextAI {
+		t.Fatalf("summarized: (%q, %v), want (%q, false)", glyph, spin, ui.GlyphFileTextAI)
+	}
+	if got := a.stateText(s); got != "Summarized" {
+		t.Fatalf("summarized status = %q, want Summarized", got)
 	}
 }

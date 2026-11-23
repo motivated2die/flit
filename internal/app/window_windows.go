@@ -162,7 +162,7 @@ func dirSize(dir string) int64 {
 func (a *App) frame() ui.Frame {
 	nav := []ui.NavEntry{
 		{ID: pageHome, Label: "Home", Glyph: ui.GlyphHome},
-		{ID: pageRecordings, Label: "Recordings", Glyph: ui.GlyphHistory},
+		{ID: pageRecordings, Label: "Meetings", Glyph: ui.GlyphArticle},
 		{ID: pageCalendar, Label: "Calendar", Glyph: ui.GlyphCalendar},
 		{ID: pageAudio, Label: "Audio", Glyph: ui.GlyphMic},
 		{ID: pageSettings, Label: "Settings", Glyph: ui.GlyphSettings},
@@ -316,6 +316,9 @@ func (a *App) stateText(s *session.Session) string {
 	}
 	switch s.Meta.State {
 	case session.Ready:
+		if a.hasSummary(s) {
+			return "Summarized"
+		}
 		return "Transcribed"
 	case session.Failed:
 		return "Failed"
