@@ -235,3 +235,41 @@ func TestNotesEditorMentionTab(t *testing.T) {
 		t.Fatalf("suggestion should disappear after @x: %q", r2.texts)
 	}
 }
+
+func TestNotesEditorPinAndDragHandle(t *testing.T) {
+	ed := notes.NewEditor(notes.Parse("Pinned note.\n"))
+	pinnedClicks := 0
+
+	// Unpinned: shows pin button on the right, no drag handle.
+	c1 := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
+	NotesEditor{ID: "notes", Ed: ed, Toolbar: true, OnPin: func() { pinnedClicks++ }}.Layout(c1, 16, 20, 400)
+	pin, ok := c1.HitByID("notes:tool:pin")
+	if !ok {
+		t.Fatal("missing pin button")
+	}
+	if pin.R.R != 416-4 {
+		t.Errorf("pin button right = %v, want %v", pin.R.R, 412)
+	}
+	if _, ok := c1.HitByID("notes:drag"); ok {
+		t.Error("unpinned editor should not show drag handle")
+	}
+	pin.OnClick()
+	if pinnedClicks != 1 {
+		t.Errorf("pin click count = %d, want 1", pinnedClicks)
+	}
+
+	// Pinned: shows 6-dot drag handle directly to the left of the pin button.
+	c2 := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
+	NotesEditor{ID: "float", Ed: ed, Toolbar: true, Pinned: true, OnPin: func() {}}.Layout(c2, 12, 12, 396)
+	fpin, ok := c2.HitByID("float:tool:pin")
+	if !ok {
+		t.Fatal("missing pinned button")
+	}
+	drag, ok := c2.HitByID("float:drag")
+	if !ok {
+		t.Fatal("missing 6-dot drag handle in pinned mode")
+	}
+	if drag.R.R >= fpin.R.L {
+		t.Errorf("drag handle (%+v) should sit to the left of pin button (%+v)", drag.R, fpin.R)
+	}
+}

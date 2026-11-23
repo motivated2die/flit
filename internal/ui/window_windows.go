@@ -209,6 +209,15 @@ func (w *Window) Shown() bool {
 	return w.Visible() && ic == 0
 }
 
+// Rect returns the window's screen rectangle (left, top, right, bottom).
+func (w *Window) Rect() (l, t, r, b int32, ok bool) {
+	var rc struct{ L, T, R, B int32 }
+	if ret, _, _ := procGetWindowRect.Call(w.hwnd, uintptr(unsafe.Pointer(&rc))); ret == 0 {
+		return 0, 0, 0, 0, false
+	}
+	return rc.L, rc.T, rc.R, rc.B, true
+}
+
 // Hide hides the window (flit keeps running in the tray).
 func (w *Window) Hide() {
 	w.CommitEdit() // closing the window saves what was typed

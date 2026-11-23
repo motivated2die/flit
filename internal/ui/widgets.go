@@ -65,6 +65,7 @@ const (
 	GlyphH2        = "h-2"
 	GlyphH3        = "h-3"
 	GlyphAt        = "at"
+	GlyphPin       = "pin"
 	glyphMinimize  = "minus"
 	glyphClose     = "x"
 )

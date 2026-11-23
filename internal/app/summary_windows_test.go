@@ -217,6 +217,46 @@ func TestDebugLinesActiveTaskModel(t *testing.T) {
 	}
 }
 
+func TestPinnedNotesLifecycle(t *testing.T) {
+	a := testApp(t)
+	s := a.sessions[0]
+	id := s.Meta.ID
+
+	// Pinning sets pinnedNotes and shares the exact same editor instance.
+	a.pinNotes(s)
+	if a.pinnedNotes != id {
+		t.Fatalf("pinnedNotes = %q, want %q", a.pinnedNotes, id)
+	}
+	node, ok := a.pinnedNotesNode().(ui.NotesEditor)
+	if !ok || !node.Pinned || node.OnPin == nil {
+		t.Fatalf("pinnedNotesNode = %#v", node)
+	}
+	if node.Ed != a.notesFor(s).ed {
+		t.Error("pinned editor is not sharing the session's notes.Editor")
+	}
+
+	// Unpinning returns to the recording's page and asks for notes focus.
+	a.unpinNotes()
+	if a.pinnedNotes != "" || a.page != pageSession+id || a.focusNotes != id {
+		t.Fatalf("after unpin: pinned=%q page=%q focusNotes=%q", a.pinnedNotes, a.page, a.focusNotes)
+	}
+
+	// Opening the main window while pinned auto-unpins cleanly.
+	a.pinNotes(s)
+	a.page = pageHome
+	a.openWindow()
+	if a.pinnedNotes != "" || a.page != pageSession+id || a.focusNotes != id {
+		t.Fatalf("after openWindow auto-unpin: pinned=%q page=%q focusNotes=%q", a.pinnedNotes, a.page, a.focusNotes)
+	}
+
+	// Deleting/dropping a pinned recording clears pinnedNotes.
+	a.pinNotes(s)
+	a.dropNotes(id)
+	if a.pinnedNotes != "" {
+		t.Errorf("dropNotes left pinnedNotes=%q", a.pinnedNotes)
+	}
+}
+
 func TestSummaryModelForMemory(t *testing.T) {
 	cases := []struct {
 		name string

@@ -96,10 +96,87 @@ func (a *App) saveAllNotes() {
 
 // dropNotes forgets recording id's notes (it was deleted).
 func (a *App) dropNotes(id string) {
+	if a.pinnedNotes == id {
+		a.pinnedNotes = ""
+		if a.notesFloat != nil {
+			a.notesFloat.Hide()
+		}
+	}
 	if ns := a.notes[id]; ns != nil && ns.timer != nil {
 		ns.timer.Stop()
 	}
 	delete(a.notes, id)
+}
+
+// pinNotes pops recording s's notes out into the always-on-top floating panel
+// and hides the main window.
+func (a *App) pinNotes(s *session.Session) {
+	if s == nil {
+		return
+	}
+	a.notesFor(s) // ensure editor exists
+	a.pinnedNotes = s.Meta.ID
+	a.focusFloat = true
+	var ax, ay int32
+	var hasAnchor bool
+	if a.win != nil {
+		if _, t, r, _, ok := a.win.Rect(); ok {
+			ax, ay, hasAnchor = r, t, true
+		}
+		a.win.Hide()
+	}
+	if a.notesFloat != nil {
+		a.notesFloat.ShowNear(ax, ay, hasAnchor)
+	}
+}
+
+// unpinNotes returns the pinned notes back into the main window on that
+// recording's page.
+func (a *App) unpinNotes() {
+	id := a.pinnedNotes
+	if id == "" {
+		return
+	}
+	a.saveNotes(id)
+	a.pinnedNotes = ""
+	if a.notesFloat != nil {
+		a.notesFloat.Hide()
+	}
+	a.page = pageSession + id
+	a.focusNotes = id
+	a.openWindow()
+}
+
+// pinnedNotesNode builds the content of the floating notes window.
+func (a *App) pinnedNotesNode() ui.Node {
+	if a.pinnedNotes == "" {
+		return nil
+	}
+	s := a.sessionByID(a.pinnedNotes)
+	if s == nil {
+		if a.rec != nil && a.rec.sess.Meta.ID == a.pinnedNotes {
+			s = a.rec.sess
+		} else {
+			return nil
+		}
+	}
+	ns := a.notesFor(s)
+	focus := a.focusFloat
+	if focus {
+		a.focusFloat = false
+	}
+	id := s.Meta.ID
+	return ui.NotesEditor{
+		ID:          "float:" + id,
+		Ed:          ns.ed,
+		Placeholder: notesPlaceholder,
+		Focus:       focus,
+		Toolbar:     true,
+		Pinned:      true,
+		OnPin:       a.unpinNotes,
+		MinH:        140,
+		OnChange:    func() { a.notesChanged(id) },
+	}
 }
 
 // openNotes shows s's page ready to type in (the notch's and Home's Notes
@@ -158,7 +235,7 @@ func (a *App) notesSection(s *session.Session, caption bool) []ui.Node {
 		minH = 360
 	}
 	card := ui.Card{Items: []ui.Node{ui.NotesEditor{ID: "notes:" + id, Ed: ns.ed, Placeholder: notesPlaceholder,
-		Focus: focus, Toolbar: true, MinH: minH, OnChange: func() { a.notesChanged(id) }}}}
+		Focus: focus, Toolbar: true, OnPin: func() { a.pinNotes(s) }, MinH: minH, OnChange: func() { a.notesChanged(id) }}}}
 	if !caption {
 		return []ui.Node{card}
 	}

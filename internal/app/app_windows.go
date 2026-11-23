@@ -57,13 +57,14 @@ func Run(args []string) int {
 
 // App is the tray app. Its fields belong to the UI thread unless noted.
 type App struct {
-	dataDir  string
-	cfg      config.Config
-	portable bool // a development build: never installs or updates itself
-	tray     *ui.Tray
-	notch    *ui.Notch // nil: notifications instead
-	win      *ui.Window
-	panel    *ui.Panel // nil: the native menu instead
+	dataDir    string
+	cfg        config.Config
+	portable   bool // a development build: never installs or updates itself
+	tray       *ui.Tray
+	notch      *ui.Notch // nil: notifications instead
+	win        *ui.Window
+	panel      *ui.Panel       // nil: the native menu instead
+	notesFloat *ui.FloatWindow // always-on-top popped-out notes panel
 
 	// The Audio page's devices and level meters.
 	devs        devices
@@ -129,13 +130,15 @@ type App struct {
 	// notes are the recordings' notes being edited (notes_windows.go);
 	// focusNotes asks the next layout to give that recording's editor the
 	// keyboard.
-	notes      map[string]*notesState
-	summaries  map[string]*notesState // nil entry: none written
-	sumRun     *summaryRun            // the summary being written
-	sumErr     map[string]string      // why a recording's last summary failed
-	sumInstr   map[string]string      // the extra instruction typed, per recording
-	focusNotes string
-	focusTitle string // the same for a recording's title field
+	notes       map[string]*notesState
+	summaries   map[string]*notesState // nil entry: none written
+	sumRun      *summaryRun            // the summary being written
+	sumErr      map[string]string      // why a recording's last summary failed
+	sumInstr    map[string]string      // the extra instruction typed, per recording
+	focusNotes  string
+	focusTitle  string // the same for a recording's title field
+	pinnedNotes string // session ID shown in notesFloat ("" when not pinned)
+	focusFloat  bool   // ask notesFloat's editor for keyboard focus once
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
@@ -403,6 +406,9 @@ func (a *App) save() {
 
 func (a *App) quit() {
 	logx.Printf("quit")
+	if a.notesFloat != nil {
+		a.notesFloat.Hide()
+	}
 	a.saveAllNotes()
 	a.cancelSummary() // the server is in a job that also ends with flit
 	a.shutdown()

@@ -52,12 +52,34 @@ func (a *App) initWindow() {
 			a.closePlayer() // closed (not minimised): nothing plays on
 		}
 	}
+	if fw, err := ui.NewFloatWindow("flit notes"); err != nil {
+		logx.Printf("floating notes window unavailable: %v", err)
+	} else {
+		fw.Build = a.pinnedNotesNode
+		fw.OnClose = a.unpinNotes
+		a.notesFloat = fw
+	}
 }
 
-// openWindow shows the main window.
+// openWindow shows the main window. If notes are currently pinned in the
+// floating panel, they auto-unpin back into the main window.
 func (a *App) openWindow() {
+	if a.pinnedNotes != "" {
+		id := a.pinnedNotes
+		a.saveNotes(id)
+		a.pinnedNotes = ""
+		if a.notesFloat != nil {
+			a.notesFloat.Hide()
+		}
+		if a.page == "" || a.page == pageHome || a.page == pageSession+id {
+			a.page = pageSession + id
+			a.focusNotes = id
+		}
+	}
 	if a.win == nil {
-		a.showStatus()
+		if a.tray != nil { // none in tests
+			a.showStatus()
+		}
 		return
 	}
 	a.reloadSessions()
@@ -69,10 +91,14 @@ func (a *App) openWindow() {
 	logx.Printf("main window opened (%s)", a.page)
 }
 
-// invalidate repaints the window and the tray panel if they are open.
+// invalidate repaints the window, the floating notes panel and the tray panel
+// if they are open.
 func (a *App) invalidate() {
 	if a.win != nil && a.win.Visible() {
 		a.win.Invalidate()
+	}
+	if a.notesFloat != nil && a.notesFloat.Visible() {
+		a.notesFloat.Invalidate()
 	}
 	if a.panel != nil && a.panel.Visible() {
 		a.panel.Invalidate()

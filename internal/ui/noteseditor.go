@@ -31,6 +31,13 @@ type NotesEditor struct {
 	// expanding the container upward above the text (compensated by page
 	// scroll) so the text below does not shift.
 	ToolbarOnFocus bool
+	// OnPin, when set, shows a pin button at the right end of the toolbar
+	// swim lane (popping the notes out into an always-on-top window, or
+	// returning them to the main window).
+	OnPin func()
+	// Pinned marks the editor as currently popped out in the floating window:
+	// highlights the pin button and shows a 6-dot (3×2) drag handle beside it.
+	Pinned bool
 }
 
 // tool is a toolbar button.
@@ -565,6 +572,53 @@ func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH, y0, areaB, clipTop float32,
 			changed(rev)
 		})
 		bx += bw + c.Px(2)
+	}
+	if n.OnPin != nil {
+		pr := RectF{x + w - pad - bw, by, x + w - pad, by + bh}
+		pinID := n.ID + ":tool:pin"
+		pinHover := c.Hover == pinID
+		pinned := n.Pinned
+		c.Draw(func(cv Canvas) {
+			switch {
+			case pinHover:
+				cv.RoundRect(pr, c.Px(7), col(ColControlHi))
+			case pinned:
+				cv.RoundRect(pr, c.Px(7), col(ColControl))
+			}
+			k := col(ColMuted)
+			if pinHover || pinned {
+				k = col(ColText)
+			}
+			DrawIcon(cv, GlyphPin, pr, c.Px(17), k)
+		})
+		c.Click(pinID, pr, n.OnPin)
+
+		if pinned {
+			// Six dots arranged 3 wide × 2 high directly to the left of the pin
+			// button: FloatWindow's WM_NCHITTEST turns this area into HTCAPTION.
+			gw := c.Px(26)
+			gr := RectF{pr.L - c.Px(4) - gw, by, pr.L - c.Px(4), by + bh}
+			dragID := n.ID + ":drag"
+			dragHover := c.Hover == dragID
+			c.Draw(func(cv Canvas) {
+				k := col(ColFaint)
+				if dragHover {
+					k = col(ColMuted)
+				}
+				step := c.Px(5)
+				rad := max(1.2, c.Px(1.5))
+				cx := (gr.L + gr.R) / 2
+				cy := (gr.T + gr.B) / 2
+				for row := range 2 {
+					dy := (float32(row) - 0.5) * step
+					for colIdx := range 3 {
+						dx := (float32(colIdx) - 1) * step
+						cv.Circle(cx+dx, cy+dy, rad, k)
+					}
+				}
+			})
+			c.HoverArea(dragID, gr)
+		}
 	}
 }
 
