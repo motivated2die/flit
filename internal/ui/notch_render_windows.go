@@ -46,7 +46,7 @@ var (
 // plus room for the top-edge flares and the shadow below and at the sides.
 func notchSurfaceSize(scale float32) (int32, int32) {
 	px := func(v float32) int32 { return int32(math.Ceil(float64(v * scale))) }
-	return px(notchMaxW + 2*(notchShadow+notchFlareMax)), px(notchHeight + notchShadow)
+	return px(notchMaxW + 2*(notchShadow+notchFlareMax)), px(notchHeight + notchHighlightGrowH + notchShadow)
 }
 
 // capsuleOrigin is where the capsule's top-left corner is in the surface.
@@ -113,7 +113,8 @@ func renderNotch(s *Surface, f notchFrame) error {
 	// Content keeps its final layout and is centred in the capsule while
 	// the capsule resizes, fading in as it reaches its width.
 	cx := ox + (f.width-f.layout.W)/2
-	at := func(rc RectF) RectF { return RectF{rc.L + cx, rc.T + oy, rc.R + cx, rc.B + oy} }
+	cy := oy + (f.height-f.layout.H)/2
+	at := func(rc RectF) RectF { return RectF{rc.L + cx, rc.T + cy, rc.R + cx, rc.B + cy} }
 	fade := func(c ColorF) ColorF { c.A *= a; return c }
 	scaled := func(fn Font) Font { fn.Size *= f.scale; return fn }
 

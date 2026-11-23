@@ -88,9 +88,11 @@ const (
 	notchButtonPad = 12
 	notchButtonGap = 6
 	notchLevelW    = 16
-	notchMaxW      = 560
-	notchShadow    = 14 // room for the shadow around the capsule
-	notchFlareMax  = 10 // max concave flare radius at the top edge
+	notchMaxW           = 560
+	notchShadow         = 14 // room for the shadow around the capsule
+	notchFlareMax       = 10 // max concave flare radius at the top edge
+	notchHighlightGrowX = 10 // extra horizontal padding on each side when highlighted
+	notchHighlightGrowH = 6  // extra height when highlighted
 )
 
 var (
@@ -139,8 +141,12 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 	}
 	px := func(f float32) float32 { return float32(math.Round(float64(f * s))) }
 	scaled := func(f Font) Font { f.Size *= s; return f }
-	h := px(notchHeight)
-	x := px(notchPadX)
+	growX, growH := float32(0), float32(0)
+	if v.Mode == NotchStashDrop && v.Highlight {
+		growX, growH = px(notchHighlightGrowX), px(notchHighlightGrowH)
+	}
+	h := px(notchHeight) + growH
+	x := px(notchPadX) + growX
 	l := NotchLayout{H: h}
 	l.Icon = RectF{x, (h - px(notchIcon)) / 2, x + px(notchIcon), (h + px(notchIcon)) / 2}
 	x = l.Icon.R + px(notchGap)
@@ -184,7 +190,7 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 	if len(l.Buttons) > 0 {
 		x += (h - bh) / 2 // the same margin right of a button as above it
 	} else {
-		x += px(notchPadX + 2)
+		x += px(notchPadX+2) + growX
 	}
 	l.W = min(x, px(notchMaxW))
 	return l

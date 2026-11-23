@@ -388,7 +388,7 @@ func (n *Notch) tick() {
 	}
 	width, height := n.currentSize(now)
 	content := float32(1)
-	if resizing := now.Sub(n.resizeStart) < notchResize && (n.fromW != n.toW || n.fromH != n.toH); resizing {
+	if resizing := now.Sub(n.resizeStart) < notchResize && (n.fromW != n.toW || n.fromH != n.toH); resizing && n.view.Mode != NotchStashDrop {
 		// The content fades in on an S-curve as the shape nears its size.
 		content = float32(Smoothstep(0.3, 0.85, float64(now.Sub(n.resizeStart))/float64(notchResize)))
 	}

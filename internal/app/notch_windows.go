@@ -169,6 +169,17 @@ func (a *App) clearJoinPrompt() {
 // order: stash drop target > detected meeting > upcoming join prompt >
 // recording > transcribing > ready transcript > stashed notes > hidden.
 func (a *App) syncNotch() {
+	a.syncNotchState(false)
+}
+
+// syncNotchCompact reconciles the notch like syncNotch, but transitions a
+// running recording directly into its compact capsule instead of expanding it
+// for CollapseAfter first (used after cancelling a notes drag or unstashing).
+func (a *App) syncNotchCompact() {
+	a.syncNotchState(true)
+}
+
+func (a *App) syncNotchState(startCollapsed bool) {
 	if a.notch == nil {
 		return
 	}
@@ -180,7 +191,7 @@ func (a *App) syncNotch() {
 	case a.joinPrompt != nil:
 		// Keep the active join prompt and its countdown undisturbed.
 	case a.rec != nil:
-		a.showRecording()
+		a.showRecordingView(startCollapsed)
 	case a.working != nil || a.status != "":
 		a.showWorking(true)
 	case a.lastReady != nil:

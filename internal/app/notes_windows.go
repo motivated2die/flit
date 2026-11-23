@@ -181,7 +181,7 @@ func (a *App) onFloatDragEnd(cx, cy, winTop int32) bool {
 		return true
 	}
 	if wasDragging {
-		a.syncNotch()
+		a.syncNotchCompact()
 	}
 	return false
 }
@@ -198,11 +198,7 @@ func (a *App) stashNotes(id string) {
 	if a.notesFloat != nil {
 		a.notesFloat.Hide()
 	}
-	if a.rec != nil {
-		a.showRecordingView(true)
-	} else {
-		a.syncNotch()
-	}
+	a.syncNotchCompact()
 	logx.Printf("notes of %s stashed", id)
 }
 
@@ -222,7 +218,7 @@ func (a *App) unstashNotes(cx, cy int32, drag bool) {
 	a.stashDragging = false
 	a.stashReady = false
 	if s == nil {
-		a.syncNotch()
+		a.syncNotchCompact()
 		return
 	}
 	a.notesFor(s)
@@ -231,7 +227,7 @@ func (a *App) unstashNotes(cx, cy int32, drag bool) {
 	if a.win != nil && a.win.Visible() {
 		a.win.Hide()
 	}
-	a.syncNotch()
+	a.syncNotchCompact()
 	if a.notesFloat != nil {
 		if drag {
 			a.notesFloat.ShowAtDrag(cx, cy)

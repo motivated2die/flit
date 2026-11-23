@@ -206,6 +206,10 @@ func TestStashedAndDropLayouts(t *testing.T) {
 	if drop.H != notchHeight || drop.Title.W() <= 0 {
 		t.Fatalf("stash drop layout: %+v", drop)
 	}
+	dropReady := Layout(NotchView{Mode: NotchStashDrop, Title: "Stash the notes", Highlight: true}, 1, now, fixedMeasure)
+	if dropReady.H != notchHeight+notchHighlightGrowH || dropReady.W <= drop.W {
+		t.Fatalf("highlighted stash drop layout should grow: normal=%+v ready=%+v", drop, dropReady)
+	}
 	stashedIdle := Layout(NotchView{Mode: NotchStashed, StashedNotes: true}, 1, now, fixedMeasure)
 	if stashedIdle.W != notchStashedW || stashedIdle.H != notchStashedH {
 		t.Fatalf("stashed idle layout: %+v", stashedIdle)
