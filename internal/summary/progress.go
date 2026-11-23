@@ -40,10 +40,13 @@ type plannedCall struct {
 
 func (c plannedCall) cost() float64 { return c.read + writeCost*c.write }
 
-// plan lists the calls Run will make, in order: a question each, the
-// sections (Extract), the writer.
-func plan(o Options, ts []Turn, qs []Question, sections []Section, transcript int, tokens func(Turn) int) *tracker {
+// plan lists the calls Run will make, in order: optional classify, a question
+// each, the sections (Extract), the writer.
+func plan(o Options, ts []Turn, qs []Question, sections []Section, transcript int, tokens func(Turn) int, withClassify bool) *tracker {
 	t := &tracker{fn: o.Progress}
+	if withClassify {
+		t.calls = append(t.calls, plannedCall{600, classifyWrites})
+	}
 	sum := func(from, to int) float64 {
 		n := 0
 		for _, tr := range ts[from:to] {

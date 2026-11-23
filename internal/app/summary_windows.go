@@ -54,6 +54,8 @@ func (r *summaryRun) text() string {
 		return "Downloading " + r.model.Name + ", once"
 	case "load":
 		return "Loading " + r.model.Name
+	case "classify":
+		return "Checking the meeting style"
 	case "ask":
 		if r.total > 1 {
 			return fmt.Sprintf("Answering your questions: %d of %d", r.done+1, r.total)

@@ -69,6 +69,7 @@ type Call struct {
 type Result struct {
 	Markdown string
 	Language string
+	Class    MeetingClass // detected meeting type and density (when classifier runs)
 	Turns    int
 	Tokens   int // the compact transcript's tokens
 	Sections []Section
@@ -109,6 +110,7 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 	if len(ts) == 0 {
 		return Result{}, ErrEmpty
 	}
+	dur := ts[len(ts)-1].End
 	r := Result{Turns: len(ts), Language: Language(ts, in.Language)}
 	w := wordsFor(r.Language)
 	qs, ns := Cues(in, ts)
@@ -128,11 +130,21 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 	tokens := func(t Turn) int {
 		return int(float64(utf8.RuneCountInString(t.Who)+utf8.RuneCountInString(t.Text)+4) * perRune)
 	}
-	head := fmt.Sprintf("Meeting: %q, %s long. Speakers: %s.\n", or(in.Title, "untitled"), clock(ts[len(ts)-1].End), speakersLine(ts, in.me()))
+	head := fmt.Sprintf("Meeting: %q, %s long. Speakers: %s.\n", or(in.Title, "untitled"), clock(dur), speakersLine(ts, in.me()))
 	if o.Approach == Extract {
 		r.Sections = Split(ts, tokens, o.SectionTokens)
 	}
-	tr := plan(o, ts, qs, r.Sections, n, tokens)
+	tr := plan(o, ts, qs, r.Sections, n, tokens, true)
+
+	// Fast meeting-type classification (AnyJev-style, ~0.3s GPU) on the
+	// already-loaded model; gracefully falls back on error.
+	mc, call, prompt, err := classify(ctx, m, o, head, ts, tr.call("classify", 0, 1))
+	r.Calls = append(r.Calls, call)
+	r.Prompts = append(r.Prompts, prompt)
+	if err != nil && ctx.Err() != nil {
+		return r, ctx.Err()
+	}
+	r.Class = mc
 
 	// The user's questions first, one focused call each, on the part of
 	// the transcript that led up to them: small models answer one
@@ -155,22 +167,25 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 		ts[i].Marks = slices.DeleteFunc(ts[i].Marks, func(m string) bool { return strings.HasPrefix(m, "Q") })
 	}
 	whole = transcriptText(ts, 0, len(ts))
-	legend := cueLegend(nil, ns, hasYou(ts))
-	notesMD := notesText(in.Notes, ns)
-	var tail strings.Builder
-	if notesMD != "" {
-		fmt.Fprintf(&tail, "\nThe user's own notes, written during the meeting:\n<notes>\n%s\n</notes>\n", notesMD)
+	var legendNotes []Note
+	if hasAnchoredNotes(ns) {
+		legendNotes = ns
 	}
+	legend := cueLegend(nil, legendNotes, hasYou(ts))
+	nb := notesBlock(in.Notes, ns)
+	hasNotes := nb != ""
 
 	var body string
+	fmtPrompt := format(w, dur, hasNotes, mc, in.Instruction)
 	switch o.Approach {
 	case Single:
 		r.Sections = []Section{section(ts, 0, len(ts))}
-		body = head + legend + "<transcript>\n" + whole + "</transcript>\n" + tail.String() + "\n" + format(w, in.Instruction)
+		body = head + legend + "<transcript>\n" + whole + "</transcript>\n" + nb + "\n" + fmtPrompt
 	case Extract:
 		var items strings.Builder
+		glossary := map[string]string{}
 		for i, s := range r.Sections {
-			it, call, prompt, err := extract(ctx, m, o, w, head, legend, ts, s, i, len(r.Sections), ns, tr.call("read", i, len(r.Sections)))
+			it, call, prompt, err := extract(ctx, m, o, w, head, legend, glossary, ts, s, i, len(r.Sections), ns, tr.call("read", i, len(r.Sections)))
 			r.Calls = append(r.Calls, call)
 			r.Prompts = append(r.Prompts, prompt)
 			if err != nil {
@@ -179,12 +194,27 @@ func Run(ctx context.Context, m Model, in Input, o Options) (Result, error) {
 				}
 				it = Items{} // a failed section leaves a gap, not a failed summary
 			}
+			for _, sp := range it.Speakers {
+				lbl, real := strings.TrimSpace(sp.Label), strings.TrimSpace(sp.Name)
+				if lbl != "" && real != "" && !strings.EqualFold(lbl, real) {
+					glossary[lbl] = real
+				}
+			}
 			r.Dropped += it.check(ts, s)
 			r.Items = append(r.Items, it)
 			items.WriteString(it.text(i, s))
 		}
-		body = head + "\nWhat was extracted from each part of the transcript, in order:\n<extracted>\n" + items.String() + "</extracted>\n" + tail.String() +
-			"\n" + format(w, in.Instruction) + "Merge topics that recur across parts. Use only the extracted notes and the user's notes.\n"
+		var glossLine string
+		if len(glossary) > 0 {
+			var gp []string
+			for k, v := range glossary {
+				gp = append(gp, k+" = "+v)
+			}
+			slices.Sort(gp)
+			glossLine = "Identified speakers across parts: " + strings.Join(gp, "; ") + ".\n"
+		}
+		body = head + glossLine + "\nWhat was extracted from each part of the transcript, in order:\n<extracted>\n" + items.String() + "</extracted>\n" + nb +
+			"\n" + fmtPrompt + "Merge topics that recur across parts. Use only the extracted notes and the user's notes.\n"
 	default:
 		return r, fmt.Errorf("unknown approach %q", o.Approach)
 	}
@@ -238,7 +268,11 @@ func ask(ctx context.Context, m Model, o Options, w words, head string, ts []Tur
 		when = " at " + clock(q.At)
 	}
 	fmt.Fprintf(&b, "\nDuring the meeting%s, the user wrote this question: %q\n", when, q.Text)
-	fmt.Fprintf(&b, "Answer it in one or two sentences in %s from what the excerpt says, with the concrete facts (names, numbers, places). Look for the lines that relate to the question even when they use other words. Only if nothing in the excerpt relates to it, write: %s\n", w.Name, w.NotDiscussed)
+	if isMissedInfoCue(q.Text) {
+		fmt.Fprintf(&b, "The user missed what was just discussed. Summarize the key point, decision, number, or argument from the excerpt in one or two concise sentences in %s, attributing it to the speaker when known. Only if nothing relevant is in the excerpt, write: %s\n", w.Name, w.NotDiscussed)
+	} else {
+		fmt.Fprintf(&b, "Answer it in one or two sentences in %s from what the excerpt says, with the concrete facts (names, numbers, places). Look for the lines that relate to the question even when they use other words. Only if nothing in the excerpt relates to it, write: %s\n", w.Name, w.NotDiscussed)
+	}
 	prompt := b.String()
 	resp, err := m.Chat(ctx, llm.Request{
 		Messages:    []llm.Message{{Role: "system", Content: system(w)}, {Role: "user", Content: prompt}},
@@ -326,6 +360,16 @@ func plainText(ts []Turn, from, to int) string {
 	return b.String()
 }
 
+func isMissedInfoCue(s string) bool {
+	low := strings.ToLower(s)
+	for _, k := range []string{"missed", "verpasst", "nicht aufgepasst", "abgelenkt", "catch up", "recap", "was wurde gerade", "???"} {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	return false
+}
+
 func or(s, def string) string {
 	if strings.TrimSpace(s) == "" {
 		return def
@@ -335,10 +379,16 @@ func or(s, def string) string {
 
 // Items are what one section gave.
 type Items struct {
-	Topics    []Topic    `json:"topics"`
-	Decisions []Decision `json:"decisions"`
-	Tasks     []Task     `json:"tasks"`
-	Open      []string   `json:"open"`
+	Speakers  []SpeakerID `json:"speakers,omitempty"`
+	Topics    []Topic     `json:"topics"`
+	Decisions []Decision  `json:"decisions"`
+	Tasks     []Task      `json:"tasks"`
+	Open      []string    `json:"open"`
+}
+
+type SpeakerID struct {
+	Label string `json:"label"`
+	Name  string `json:"name"`
 }
 
 type Topic struct {
@@ -370,23 +420,32 @@ func schema() json.RawMessage {
 		return map[string]any{"type": "array", "items": items, "maxItems": n}
 	}
 	props := map[string]any{
+		"speakers":  arr(obj(map[string]any{"label": str, "name": str}, "label", "name"), 6),
 		"topics":    arr(obj(map[string]any{"title": str, "points": arr(str, 5)}, "title", "points"), 4),
 		"decisions": arr(obj(map[string]any{"text": str, "quote": str}, "text", "quote"), 5),
 		"tasks":     arr(obj(map[string]any{"who": str, "what": str, "due": str, "quote": str}, "who", "what", "due", "quote"), 6),
 		"open":      arr(str, 4),
 	}
-	b, _ := json.Marshal(obj(props, "topics", "decisions", "tasks", "open"))
+	b, _ := json.Marshal(obj(props, "speakers", "topics", "decisions", "tasks", "open"))
 	return b
 }
 
-func extract(ctx context.Context, m Model, o Options, w words, head, legend string, ts []Turn, s Section, i, n int, ns []Note, progress func(llm.CallProgress)) (Items, Call, string, error) {
+func extract(ctx context.Context, m Model, o Options, w words, head, legend string, glossary map[string]string, ts []Turn, s Section, i, n int, ns []Note, progress func(llm.CallProgress)) (Items, Call, string, error) {
 	var b strings.Builder
 	b.WriteString(head)
+	if len(glossary) > 0 {
+		var gp []string
+		for k, v := range glossary {
+			gp = append(gp, k+" = "+v)
+		}
+		slices.Sort(gp)
+		fmt.Fprintf(&b, "Known speaker names from earlier parts: %s.\n", strings.Join(gp, "; "))
+	}
 	b.WriteString(legend)
 	fmt.Fprintf(&b, "Part %d of %d of the transcript, %s to %s:\n<transcript>\n%s</transcript>\n", i+1, n, clock(s.Start), clock(s.End), transcriptText(ts, s.From, s.To))
 	var mineNotes []string
 	for _, nt := range ns {
-		if nt.Turn >= s.From && nt.Turn < s.To {
+		if nt.N > 0 && nt.Turn >= s.From && nt.Turn < s.To {
 			mineNotes = append(mineNotes, fmt.Sprintf("N%d %q", nt.N, nt.Text))
 		}
 	}
@@ -394,10 +453,11 @@ func extract(ctx context.Context, m Model, o Options, w words, head, legend stri
 		fmt.Fprintf(&b, "\nNotes the user wrote during this part: %s\n", strings.Join(mineNotes, ", "))
 	}
 	b.WriteString("\nExtract from this part, as JSON:\n")
-	b.WriteString("- topics: up to 4 topics discussed, each a short title and up to 5 short points with the concrete facts (names, numbers, dates, reasons)\n")
-	b.WriteString("- decisions: what was decided, each with a quote\n")
-	b.WriteString("- tasks: what someone agreed or was asked to do: who (a speaker as named above), what, due (\"\" if not said), quote\n")
-	b.WriteString("- open: questions left open\n")
+	b.WriteString("- speakers: any speaker labels (like \"Them 1\") whose real name or role is revealed in this part (empty list if none)\n")
+	b.WriteString("- topics: up to 4 topics discussed, each a short title and up to 5 crisp points attributing ideas/opinions to speakers by real name or role (never \"Them 1\" if a name is known); keep concrete facts, numbers, reasons\n")
+	b.WriteString("- decisions: ONLY explicit finalized agreements (not brainstormed ideas), each with a quote\n")
+	b.WriteString("- tasks: ONLY explicit commitments: who (real name or role), what, due (\"\" if not said), quote\n")
+	b.WriteString("- open: unresolved questions explicitly raised in this part\n")
 	fmt.Fprintf(&b, "A quote is up to 12 words copied exactly from the transcript. Use empty lists rather than guesses. Write the text in %s.\n", w.Name)
 	prompt := b.String()
 	resp, err := m.Chat(ctx, llm.Request{

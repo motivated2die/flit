@@ -50,6 +50,8 @@ func main() {
 		err = fetchLLM(ctx, root, args)
 	case "summary":
 		err = summaryCmd(ctx, root, args)
+	case "bench":
+		err = benchCmd(ctx, root, args)
 	case "callnames-sim":
 		err = callnamesSim(args)
 	default:

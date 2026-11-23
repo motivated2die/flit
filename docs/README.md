@@ -37,6 +37,7 @@ flit is past research and being built (see the package table in [architecture/ov
    - [research/dependencies.md](research/dependencies.md): every library, tool and engine flit relies on, their versions and known vulnerabilities
    - [research/local-summaries.md](research/local-summaries.md): a local LLM on Windows laptops: cost, models, accelerators (Vulkan, iGPU), picking a model for the PC (proposed)
    - [research/summary-pipeline.md](research/summary-pipeline.md): from transcript and the user's notes to notes: approaches, context, attention cues, prompts, evaluation (proposed)
+   - [research/summary-prompting-and-eval.md](research/summary-prompting-and-eval.md): diagnosis of current summaries, reference prompt analysis, recent research, datasets and benchmark plan
    - [research/notes-editor.md](research/notes-editor.md): a small Markdown notes editor in flit's own UI (proposed)
    - [research/call-app-names.md](research/call-app-names.md): naming speakers from what Teams, Zoom and Meet show (proposed)
 5. The reference analyses: [Resound](references/resound.md), [Handy](references/handy.md), [AutoDoc](references/autodoc.md), [transcribe.cpp](references/transcribe-cpp.md), [Yogurt](references/yogurt.md), [anarlog](references/anarlog.md)
