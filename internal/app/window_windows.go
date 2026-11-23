@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/motivated2die/flit/internal/audio/m4a"
 	"github.com/motivated2die/flit/internal/capture"
 	"github.com/motivated2die/flit/internal/detect"
 	"github.com/motivated2die/flit/internal/install"
 	"github.com/motivated2die/flit/internal/logx"
-	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/session"
 	"github.com/motivated2die/flit/internal/ui"
 )
@@ -46,17 +46,40 @@ func (a *App) initWindow() {
 	w.Build = a.frame
 	w.OnEscape = a.closePopover
 	w.OnHide = func() {
+		a.saveAllNotes()
 		a.syncMeters()
 		if !w.Visible() {
 			a.closePlayer() // closed (not minimised): nothing plays on
 		}
 	}
+	if fw, err := ui.NewFloatWindow("flit notes"); err != nil {
+		logx.Printf("floating notes window unavailable: %v", err)
+	} else {
+		fw.Build = a.pinnedNotesNode
+		fw.OnClose = a.unpinNotes
+		a.notesFloat = fw
+	}
 }
 
-// openWindow shows the main window.
+// openWindow shows the main window. If notes are currently pinned in the
+// floating panel, they auto-unpin back into the main window.
 func (a *App) openWindow() {
+	if a.pinnedNotes != "" {
+		id := a.pinnedNotes
+		a.saveNotes(id)
+		a.pinnedNotes = ""
+		if a.notesFloat != nil {
+			a.notesFloat.Hide()
+		}
+		if a.page == "" || a.page == pageHome || a.page == pageSession+id {
+			a.page = pageSession + id
+			a.focusNotes = id
+		}
+	}
 	if a.win == nil {
-		a.showStatus()
+		if a.tray != nil { // none in tests
+			a.showStatus()
+		}
 		return
 	}
 	a.reloadSessions()
@@ -68,10 +91,14 @@ func (a *App) openWindow() {
 	logx.Printf("main window opened (%s)", a.page)
 }
 
-// invalidate repaints the window and the tray panel if they are open.
+// invalidate repaints the window, the floating notes panel and the tray panel
+// if they are open.
 func (a *App) invalidate() {
 	if a.win != nil && a.win.Visible() {
 		a.win.Invalidate()
+	}
+	if a.notesFloat != nil && a.notesFloat.Visible() {
+		a.notesFloat.Invalidate()
 	}
 	if a.panel != nil && a.panel.Visible() {
 		a.panel.Invalidate()
@@ -84,6 +111,7 @@ func (a *App) go_(page string) {
 	}
 	a.confirm = ""
 	a.uninstallAsk = false
+	a.saveAllNotes()
 	if page != a.page {
 		a.tsQuery, a.tsIndex, a.tsJump = "", 0, false // a search belongs to its page
 	}
@@ -137,8 +165,11 @@ func (a *App) frame() ui.Frame {
 		nav = append([]ui.NavEntry{{ID: pageWelcome, Label: "Welcome", Glyph: ui.GlyphPower}}, nav...)
 	}
 	selected := a.page
-	if strings.HasPrefix(selected, pageSession) {
+	if id, ok := strings.CutPrefix(selected, pageSession); ok {
 		selected = pageRecordings
+		if s := a.sessionByID(id); s != nil && a.isRecording(s) {
+			selected = pageHome // the running meeting belongs to Home
+		}
 	}
 	var page ui.Node
 	switch {
@@ -161,16 +192,17 @@ func (a *App) frame() ui.Frame {
 	default:
 		page = a.homePage()
 	}
+	gpu, gpuShown := a.debugGPU()
 	f := ui.Frame{Nav: nav, Selected: selected, OnNav: a.go_, Page: page, PageID: a.page,
 		Status: a.sidebarStatus(), Live: a.rec != nil,
-		Debug: a.debugLines(), DebugCores: a.debugCores(), OnDebug: func() { a.go_(pageDebug) },
+		Debug: a.debugLines(), DebugCores: a.debugCores(), DebugGPU: gpu, DebugGPUShown: gpuShown, OnDebug: func() { a.go_(pageDebug) },
 		Update: a.updateBadge(), OnUpdate: func() { a.go_(pageUpdate) }}
 	if a.uninstallAsk && a.page == pageSettings {
 		f.Modal = a.uninstallPopover()
 	}
 	// A recording's player is docked at the bottom, always in reach.
 	if id, ok := strings.CutPrefix(a.page, pageSession); ok {
-		if s := a.sessionByID(id); s != nil && a.hasAudio(s) {
+		if s := a.sessionByID(id); s != nil && a.hasAudio(s) && !a.isRecording(s) { // nothing to play while it records
 			f.Dock, f.DockID = a.playerBar(s), "player:"+id
 		}
 	}
@@ -190,6 +222,9 @@ func (a *App) sessionByID(id string) *session.Session {
 func (a *App) sidebarStatus() string {
 	if a.rec != nil {
 		return "Recording " + ui.Clock(time.Since(a.rec.started))
+	}
+	if r := a.sumRun; r != nil && a.working == nil {
+		return fmt.Sprintf("Summarising %d%%", int(r.value()*100))
 	}
 	return a.statusLine()
 }
@@ -291,6 +326,13 @@ func sessionTitle(s *session.Session) string {
 	return defaultTitle(s)
 }
 
+func keepAudioDetail() string {
+	if m4a.Available() {
+		return "Both tracks stay in the session's folder, about 70 MB per hour"
+	}
+	return "Both tracks stay in the session's folder, about 230 MB per hour"
+}
+
 // defaultTitle is a recording's name without one given.
 func defaultTitle(s *session.Session) string {
 	if s.Meta.Provider != "" {
@@ -328,24 +370,6 @@ func (a *App) languageControl(id string) ui.Node {
 	return ui.Segmented{ID: id, Options: names, Selected: sel, OnSelect: func(i int) { a.setLanguage(languages[i].code) }}
 }
 
-func (a *App) modelLine() string {
-	m, ok := models.ByID(a.cfg.Model)
-	if a.cfg.Model == "" || !ok {
-		m, ok = models.Default(models.RoleASR, a.cfg.Language)
-	}
-	if !ok {
-		return "none for this language"
-	}
-	state := "downloaded"
-	if st, err := os.Stat(m.Path(modelsDir(a.dataDir))); err != nil || st.Size() != m.Size {
-		state = "downloads when needed"
-		if strings.HasPrefix(a.status, "Downloading") {
-			state = "downloading"
-		}
-	}
-	return fmt.Sprintf("%s · %d MB · %s", m.Name, m.Size/1_000_000, state)
-}
-
 func (a *App) settingsPage() ui.Node {
 	var apps []ui.Node
 	for _, p := range detect.Providers {
@@ -366,11 +390,11 @@ func (a *App) settingsPage() ui.Node {
 		ui.Card{Gap: 2, Items: []ui.Node{
 			ui.SettingRow{Label: "Meeting language", Detail: "Transcripts are best when this is set before the meeting", Control: a.languageControl("set:lang")},
 			ui.Divider{},
-			ui.SettingRow{Label: "Speech model", Detail: a.modelLine()},
-			ui.Divider{},
 			ui.Group(a.liveSettings()),
 			ui.Divider{},
 			ui.Group(a.finalSettings()),
+			ui.Divider{},
+			ui.Group(a.transcribeGPUSettings()),
 			ui.Divider{},
 			ui.Toggle{ID: "set:speakers", Label: "Tell speakers apart", Detail: "Labels up to four people on the meeting's side as Speaker 1, 2, … (adds a 139 MB model)", On: a.cfg.Speakers,
 				OnChange: func(on bool) {
@@ -392,10 +416,12 @@ func (a *App) settingsPage() ui.Node {
 		ui.Group(a.calendarSettings()),
 		ui.Caption("Recordings"),
 		ui.Card{Gap: 4, Items: []ui.Node{
-			ui.Toggle{ID: "set:keep", Label: "Keep recordings after transcription", Detail: "Both tracks stay in the session's folder, about 115 MB per hour", On: a.cfg.KeepAudio,
+			ui.Toggle{ID: "set:keep", Label: "Keep recordings after transcription", Detail: keepAudioDetail(), On: a.cfg.KeepAudio,
 				OnChange: func(on bool) { a.cfg.KeepAudio = on; a.save(); a.invalidate() }},
 			ui.HStack{Items: []ui.Node{ui.Link{ID: "set:recfolder", Glyph: ui.GlyphFolder, Label: "Open recordings folder", OnClick: func() { openFolder(session.Root(a.dataDir)) }}}},
 		}},
+		ui.Caption("Summaries"),
+		ui.Card{Gap: 2, Items: a.summarySettings()},
 		ui.Caption("App"),
 		ui.Card{Gap: 4, Items: []ui.Node{
 			ui.Toggle{ID: "set:autostart", Label: "Start with Windows", Detail: "flit needs to run to notice meetings", On: install.AutoStartEnabled(), OnChange: func(on bool) {
@@ -425,12 +451,16 @@ func (a *App) welcomePage() ui.Node {
 		ui.Para{Text: "flit waits in the tray. When a meeting app starts using your microphone, it offers to record the meeting, then transcribes your voice and the others' separately, on this PC. Nothing leaves your computer.", Muted: true},
 		ui.Space(4),
 		ui.Card{Gap: 2, Items: []ui.Node{
+			ui.SettingRow{Label: "What's your name?", Detail: "Helps flit transcribe your name and spot your tasks", Control: a.nameFields("welcome:name")},
+			ui.Divider{},
 			ui.SettingRow{Label: "Your meetings are mostly in", Control: a.languageControl("welcome:lang")},
 			ui.Divider{},
 			ui.Toggle{ID: "welcome:autostart", Label: "Start with Windows", Detail: "Recommended: flit can only notice meetings while it runs", On: install.AutoStartEnabled(), OnChange: func(on bool) {
 				_ = install.SetAutoStart(on)
 				a.invalidate()
 			}},
+			ui.Divider{},
+			a.welcomeGPURow(),
 		}},
 		ui.Space(4),
 		ui.Caption("Speech models"),

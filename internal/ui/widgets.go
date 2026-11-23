@@ -55,6 +55,17 @@ const (
 	glyphPauseLine = "player-pause"
 	GlyphDown      = "chevron-down"
 	GlyphUpdate    = "download"
+	GlyphNotes     = "notes"
+	GlyphTask      = "square"
+	GlyphTaskDone  = "square-check"
+	GlyphBold      = "bold"
+	GlyphItalic    = "italic"
+	GlyphList      = "list"
+	GlyphNumbered  = "list-numbers"
+	GlyphH2        = "h-2"
+	GlyphH3        = "h-3"
+	GlyphAt        = "at"
+	GlyphPin       = "pin"
 	glyphMinimize  = "minus"
 	glyphClose     = "x"
 )
@@ -255,6 +266,10 @@ func (p Para) Layout(c *Ctx, x, y, w float32) float32 {
 type Card struct {
 	Items []Node
 	Gap   float32
+	// ID and OnClick, when set, make the whole card clickable (under its
+	// own buttons), lighter while hovered: Home's recording card.
+	ID      string
+	OnClick func()
 }
 
 func (k Card) Layout(c *Ctx, x, y, w float32) float32 {
@@ -262,10 +277,25 @@ func (k Card) Layout(c *Ctx, x, y, w float32) float32 {
 	// Draw the background first, sized after laying out the content.
 	idx := len(c.ops)
 	c.Draw(nil)
+	hits := len(c.hits)
 	h := VStack{Gap: k.Gap, Items: k.Items}.Layout(c, x+pad, y+pad, w-2*pad) + 2*pad
 	r := RectF{x, y, x + w, y + h}
 	radius := c.Px(10)
-	c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, col(ColCard)) }
+	bg := col(ColCard)
+	if k.OnClick != nil {
+		if c.Hover == k.ID {
+			bg = col(ColCardHover)
+		}
+		hr := r
+		if len(c.clips) > 0 {
+			hr = r.Intersect(c.clips[len(c.clips)-1])
+		}
+		if hr.W() > 0 && hr.H() > 0 {
+			// Under the content's own targets, which stay on top.
+			c.hits = append(c.hits[:hits], append([]Hit{{ID: k.ID, R: hr, OnClick: k.OnClick}}, c.hits[hits:]...)...)
+		}
+	}
+	c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, bg) }
 	return h
 }
 
@@ -291,6 +321,7 @@ type Button struct {
 	Primary  bool
 	Disabled bool
 	Large    bool // a page's main action: taller, larger text
+	Small    bool // a chip: as low as the sidebar's update pill
 	Danger   bool // destructive: red text (red fill while hovered)
 	// HoverDanger stays neutral until hovered, then turns red (Quit).
 	HoverDanger bool
@@ -299,28 +330,57 @@ type Button struct {
 
 func (b Button) font() Font {
 	f := fontBodySemi
-	if b.Large {
+	switch {
+	case b.Large:
 		f.Size = 14
+	case b.Small:
+		f.Size = 12
 	}
 	return f
 }
 
 func (b Button) Width(c *Ctx) float32 {
+	if b.iconOnly() {
+		return b.height(c) // round
+	}
 	pad := c.Px(16)
-	if b.Large {
+	switch {
+	case b.Large:
 		pad = c.Px(22)
+	case b.Small:
+		pad = c.Px(11)
 	}
 	w := c.M.TextWidth(b.Label, c.F(b.font())) + 2*pad
 	if b.Glyph != "" {
 		w += c.Px(22)
+		if b.Small {
+			w -= c.Px(4)
+		}
 	}
 	return w
 }
 
+// iconOnly: a glyph without a label makes a round button.
+func (b Button) iconOnly() bool { return b.Label == "" && b.Glyph != "" }
+
+func (b Button) height(c *Ctx) float32 {
+	switch {
+	case b.Large:
+		return c.Px(40)
+	case b.Small:
+		return c.Px(smallButtonH)
+	}
+	return c.Px(32)
+}
+
+// smallButtonH is a chip's height (logical pixels), a little above the
+// sidebar's update pill.
+const smallButtonH = 22
+
 func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
-	h := c.Px(32)
-	if b.Large {
-		h = c.Px(40)
+	h := b.height(c)
+	if b.iconOnly() {
+		w = h
 	}
 	r := RectF{x, y, x + w, y + h}
 	fill, text := col(ColControl), col(ColText)
@@ -343,23 +403,38 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	}
 	gr := RectF{}
 	tr := RectF{r.L, r.T, r.R, r.B}
-	if b.Glyph != "" {
+	if b.iconOnly() {
+		gr = r
+	} else if b.Glyph != "" {
 		gx := r.L + c.Px(14)
-		if b.Large {
+		switch {
+		case b.Large:
 			gx = r.L + c.Px(18)
+		case b.Small:
+			gx = r.L + c.Px(9)
 		}
-		gr = RectF{gx, r.T, gx + c.Px(16), r.B}
-		tr.L = gr.R + c.Px(6)
-		tr.R = r.R - c.Px(14)
+		gw := c.Px(16)
+		if b.Small {
+			gw = c.Px(13)
+		}
+		gr = RectF{gx, r.T, gx + gw, r.B}
+		tr.L = gr.R + c.Px(5)
+		tr.R = r.R - c.Px(10)
 	}
 	label := c.F(b.font())
 	label.Center = b.Glyph == ""
 	c.Draw(func(cv Canvas) {
 		cv.RoundRect(r, r.H()/2, fill)
 		if b.Glyph != "" {
-			DrawIcon(cv, b.Glyph, gr, c.Px(16), text)
+			size := c.Px(16)
+			if b.Small {
+				size = c.Px(13)
+			}
+			DrawIcon(cv, b.Glyph, gr, size, text)
 		}
-		cv.Text(b.Label, tr, label, text)
+		if b.Label != "" {
+			cv.Text(b.Label, tr, label, text)
+		}
 	})
 	if !b.Disabled && b.OnClick != nil {
 		c.Click(b.ID, r, b.OnClick)

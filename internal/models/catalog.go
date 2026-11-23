@@ -1,4 +1,4 @@
-// Package models lists the speech models flit can use, pinned to exact
+// Package models lists the speech and language models flit can use, pinned to exact
 // files (Hugging Face repository, revision, SHA-256), and where they live
 // on disk. The entries come from the transcribe.cpp model catalog (as
 // bundled with Handy); see docs/research/models.md for why these.
@@ -16,6 +16,7 @@ const (
 	RoleASR     Role = "asr"
 	RoleVAD     Role = "vad"
 	RoleDiarize Role = "diarize"
+	RoleLLM     Role = "llm" // writes summaries
 )
 
 // Model is one downloadable model file.
@@ -86,6 +87,45 @@ var Catalog = []Model{
 		File: "diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf", Size: 139310336,
 		SHA256:  "a5dacdc650790266c7a362e54e6bf51952015487edaa606c4e11632bc32442a9",
 		License: "NVIDIA Open Model License",
+	},
+
+	// Language models for summaries, lightest first; candidates under
+	// measurement (docs/research/local-summaries.md#models). Text only: the
+	// vision projectors these repositories also hold are not needed.
+	{
+		ID: "qwen3.5-2b", Name: "Qwen3.5 2B", Role: RoleLLM,
+		Repo: "unsloth/Qwen3.5-2B-GGUF", Revision: "f6d5376be1edb4d416d56da11e5397a961aca8ae",
+		File: "Qwen3.5-2B-Q4_K_M.gguf", Size: 1280835840,
+		SHA256:  "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+		License: "Apache-2.0",
+	},
+	{
+		ID: "granite-4.0-h-micro", Name: "Granite 4.0 H Micro", Role: RoleLLM,
+		Repo: "ibm-granite/granite-4.0-h-micro-GGUF", Revision: "4a3531463f3d8d2294ee6f629e2f691f15f8f5c3",
+		File: "granite-4.0-h-micro-Q4_K_M.gguf", Size: 1942564512,
+		SHA256:  "bcc78b9b25450101d1ad90d4b9a264e1bac892f534dfb76066f4eec792fdf023",
+		License: "Apache-2.0",
+	},
+	{
+		ID: "qwen3.5-4b", Name: "Qwen3.5 4B", Role: RoleLLM,
+		Repo: "unsloth/Qwen3.5-4B-GGUF", Revision: "e87f176479d0855a907a41277aca2f8ee7a09523",
+		File: "Qwen3.5-4B-Q4_K_M.gguf", Size: 2740937888,
+		SHA256:  "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+		License: "Apache-2.0",
+	},
+	{
+		ID: "gemma-4-e2b", Name: "Gemma 4 E2B", Role: RoleLLM,
+		Repo: "ggml-org/gemma-4-E2B-it-GGUF", Revision: "2a8538c2e2d4687953a86c422c7c623cfd022880",
+		File: "gemma-4-E2B-it-Q4_0.gguf", Size: 2841481184,
+		SHA256:  "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52",
+		License: "Apache-2.0",
+	},
+	{
+		ID: "gemma-4-e4b", Name: "Gemma 4 E4B", Role: RoleLLM,
+		Repo: "google/gemma-4-E4B-it-qat-q4_0-gguf", Revision: "4b4a2c1d584be7264f87aac328a1bc739ce81b6c",
+		File: "gemma-4-E4B_q4_0-it.gguf", Size: 5154941280,
+		SHA256:  "676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee",
+		License: "Apache-2.0",
 	},
 
 	// Small models for tests only.

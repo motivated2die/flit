@@ -34,7 +34,17 @@ func (fakeBackend) Load(spec LoadSpec) (Info, error) {
 	if spec.ASRModel == "missing" {
 		return Info{}, errors.New("no such model")
 	}
-	return Info{Version: "fake", Languages: []string{"de", "en"}}, nil
+	if spec.ASRModel == "gpu-load-fail" && !spec.CPUOnly {
+		return Info{}, statusErr{errors.New("vulkan device lost"), statusBackend}
+	}
+	if spec.ASRModel == "gpu-load-crash" && !spec.CPUOnly {
+		os.Exit(4)
+	}
+	backend := "vulkan"
+	if spec.CPUOnly {
+		backend = "cpu"
+	}
+	return Info{Version: "fake", Languages: []string{"de", "en"}, Backend: backend, DeviceDesc: "Fake " + backend}, nil
 }
 
 func (fakeBackend) VAD(pcm []float32) ([]float32, int, error) {
@@ -55,6 +65,8 @@ func (fakeBackend) Transcribe(pcm []float32, opt pipeline.Options) ([]pipeline.S
 		time.Sleep(time.Minute)
 	case "bad":
 		return nil, statusErr{errors.New("unsupported language"), 10}
+	case "gpu-err":
+		return nil, statusErr{errors.New("vulkan queue submit failed"), statusBackend}
 	}
 	var sum float32
 	for _, v := range pcm {
@@ -214,5 +226,45 @@ func TestSupervisorCPULimit(t *testing.T) {
 	}
 	if pc, err := windows.GetPriorityClass(h); err != nil || pc != windows.BELOW_NORMAL_PRIORITY_CLASS {
 		t.Fatalf("priority %#x %v", pc, err)
+	}
+}
+
+func TestSupervisorGPUFallbackOnLoad(t *testing.T) {
+	for _, model := range []string{"gpu-load-fail", "gpu-load-crash"} {
+		t.Run(model, func(t *testing.T) {
+			s := newSupervisor(t)
+			s.Spec.ASRModel = model
+			s.Spec.CPUOnly = false
+			segs, err := s.Transcribe(context.Background(), []float32{2}, pipeline.Options{Language: "de"})
+			if err != nil {
+				t.Fatalf("expected CPU fallback, got %v", err)
+			}
+			if len(segs) != 1 || segs[0].Text != "xx " {
+				t.Fatalf("segments %+v", segs)
+			}
+			info := s.Info()
+			if info.Backend != "cpu" || info.OnGPU() || info.FallbackReason == "" {
+				t.Fatalf("expected cpu fallback info, got %+v", info)
+			}
+		})
+	}
+}
+
+func TestSupervisorGPUFallbackOnBackendError(t *testing.T) {
+	s := newSupervisor(t)
+	s.Spec.CPUOnly = false
+	if _, err := s.Transcribe(context.Background(), []float32{1}, pipeline.Options{Language: "de"}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Info().OnGPU() {
+		t.Fatalf("expected GPU first, got %+v", s.Info())
+	}
+	// A backend error triggers fallback to a CPU-only worker and retries.
+	// In fakeBackend, "gpu-err" always errors, so it retries once on CPU and returns the error.
+	if _, err := s.Transcribe(context.Background(), []float32{1}, pipeline.Options{Language: "gpu-err"}); err == nil {
+		t.Fatal("expected error from always-failing fake op")
+	}
+	if s.Info().Backend != "cpu" || s.Info().OnGPU() || s.Info().FallbackReason == "" {
+		t.Fatalf("expected fallback to CPU after backend error, got %+v", s.Info())
 	}
 }

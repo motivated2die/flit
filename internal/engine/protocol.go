@@ -62,10 +62,22 @@ type Response struct {
 
 // Info describes the loaded engine.
 type Info struct {
-	Version    string   `json:"version"`
-	Languages  []string `json:"languages,omitempty"`
-	Vocabulary bool     `json:"vocabulary"`
-	MaxAudioMS int64    `json:"maxAudioMs,omitempty"`
+	Version        string   `json:"version"`
+	Languages      []string `json:"languages,omitempty"`
+	Vocabulary     bool     `json:"vocabulary"`
+	MaxAudioMS     int64    `json:"maxAudioMs,omitempty"`
+	Backend        string   `json:"backend,omitempty"`        // "vulkan", "cpu", ...
+	DeviceName     string   `json:"deviceName,omitempty"`     // "Vulkan0", "CPU"
+	DeviceDesc     string   `json:"deviceDesc,omitempty"`     // e.g. "AMD Radeon RX 7800 XT"
+	DeviceType     string   `json:"deviceType,omitempty"`     // "gpu", "igpu", "cpu"
+	DiarBackend    string   `json:"diarBackend,omitempty"`    // resolved backend for Sortformer
+	DiarDeviceDesc string   `json:"diarDeviceDesc,omitempty"` // resolved device for Sortformer
+	FallbackReason string   `json:"fallbackReason,omitempty"` // set when GPU failed and fell back to CPU
+}
+
+// OnGPU reports whether the loaded ASR or diarization model runs on a GPU.
+func (i Info) OnGPU() bool {
+	return (i.Backend != "" && i.Backend != "cpu") || (i.DiarBackend != "" && i.DiarBackend != "cpu")
 }
 
 const maxHeader = 64 << 20 // VAD probabilities of hours of audio stay well below

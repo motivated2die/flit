@@ -3,19 +3,24 @@ package playback
 import (
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 
+	"github.com/motivated2die/flit/internal/audio/dsp"
+	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/audio/wav"
 )
 
-// The device is the waveOut API (winmm): 16 kHz mono 16-bit PCM to the
-// default output, converted by Windows. A few short buffers live in memory
-// Windows can keep pointers to (VirtualAlloc); a goroutine refills them as
-// the device hands them back (an event per finished buffer). Every waveOut
-// call and all state are under one mutex.
+// The device is the waveOut API (winmm): 48 kHz stereo 16-bit PCM to the
+// default output, matching Windows' native mix rate so 48 kHz recordings play
+// without legacy 16->48 kHz upsampling and meeting tracks keep their stereo
+// image. A few short buffers live in memory Windows can keep pointers to
+// (VirtualAlloc); a goroutine refills them as the device hands them back (an
+// event per finished buffer). Every waveOut call and all state are under one
+// mutex.
 
 var (
 	winmm                = windows.NewLazySystemDLL("winmm.dll")
@@ -34,7 +39,9 @@ const (
 	whdrDone      = 0x00000001
 	timeSamples   = 0x0002
 	nBufs         = 4
-	bufSamples    = Rate / 10 // 100 ms
+	outChannels   = 2
+	bufFrames     = Rate / 10 // 100 ms (4800 stereo frames)
+	bufSamples    = bufFrames * outChannels
 )
 
 type waveFormatEx struct {
@@ -64,14 +71,15 @@ type mmTime struct {
 	_     uint32
 }
 
-// Player plays one session's tracks. Methods are safe from any goroutine.
+// Player plays one session's tracks (.m4a, .aac, or legacy .wav). Methods are
+// safe from any goroutine.
 type Player struct {
 	// OnChange is called (on the player's goroutine) when playback stops
 	// by itself at the end.
 	OnChange func()
 
-	tracks []*wav.File
-	frames int64
+	tracks []track.File
+	frames int64 // timeline length in Rate (48 kHz) frames
 
 	mu      sync.Mutex
 	hwo     uintptr
@@ -90,28 +98,35 @@ type Player struct {
 	exited  chan struct{}
 }
 
-// Open opens a session's tracks (missing files are left out; all must be
-// 16 kHz). The device opens on the first Play.
+// Open opens a session's tracks (.m4a, .aac, or legacy .wav at any sample
+// rate). The device opens on the first Play.
 func Open(paths ...string) (*Player, error) {
 	p := &Player{exited: make(chan struct{})}
 	for _, path := range paths {
-		f, err := wav.Open(path)
+		f, err := track.Open(path)
 		if err != nil {
 			p.closeFiles()
 			return nil, err
 		}
-		if f.Format.SampleRate != Rate {
+		if f.SampleRate() <= 0 || f.Channels() <= 0 {
 			f.Close()
 			p.closeFiles()
-			return nil, fmt.Errorf("%s: %d Hz, want %d", path, f.Format.SampleRate, Rate)
+			return nil, fmt.Errorf("%s: invalid audio format", path)
 		}
 		p.tracks = append(p.tracks, f)
-		p.frames = max(p.frames, f.Frames())
+		p.frames = max(p.frames, trackFrames(f))
 	}
 	if len(p.tracks) == 0 {
 		return nil, errors.New("no recording to play")
 	}
 	return p, nil
+}
+
+func trackFrames(f track.File) int64 {
+	if f.SampleRate() == Rate {
+		return f.Frames()
+	}
+	return f.Frames() * Rate / int64(f.SampleRate())
 }
 
 func (p *Player) closeFiles() {
@@ -120,7 +135,7 @@ func (p *Player) closeFiles() {
 	}
 }
 
-// Length is the timeline's length in samples.
+// Length is the timeline's length in frames (at Rate = 48 kHz).
 func (p *Player) Length() int64 { return p.frames }
 
 // Tracks is how many tracks were opened.
@@ -150,7 +165,7 @@ func (p *Player) Play(ranges []Range, which []bool) error {
 	return nil
 }
 
-// PlayFrom plays all tracks from timeline sample at to the end.
+// PlayFrom plays all tracks from timeline frame at to the end.
 func (p *Player) PlayFrom(at int64) error { return p.Play([]Range{{at, p.frames}}, nil) }
 
 // Pause stops playing and remembers where; Resume goes on from there.
@@ -177,7 +192,7 @@ func (p *Player) Resume() error {
 	return p.PlayFrom(pos)
 }
 
-// MoveTo moves to timeline sample at, playing on if it was playing.
+// MoveTo moves to timeline frame at, playing on if it was playing.
 func (p *Player) MoveTo(at int64) error {
 	p.mu.Lock()
 	playing := p.playing
@@ -205,7 +220,7 @@ func (p *Player) Solo() []bool {
 	return p.which
 }
 
-// Position is the timeline sample now audible.
+// Position is the timeline frame now audible.
 func (p *Player) Position() int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -245,7 +260,7 @@ func (p *Player) Close() {
 	p.closeFiles()
 }
 
-// openDevice opens waveOut and starts the feeding goroutine (mu held).
+// openDevice opens waveOut (48 kHz stereo 16-bit) and starts the feeding goroutine (mu held).
 func (p *Player) openDevice() error {
 	if p.hwo != 0 {
 		return nil
@@ -258,7 +273,8 @@ func (p *Player) openDevice() error {
 		windows.CloseHandle(p.done)
 		return err
 	}
-	wf := waveFormatEx{FormatTag: 1, Channels: 1, SamplesPerSec: Rate, AvgBytesPerSec: 2 * Rate, BlockAlign: 2, BitsPerSample: 16}
+	const blockAlign = outChannels * 2
+	wf := waveFormatEx{FormatTag: 1, Channels: outChannels, SamplesPerSec: Rate, AvgBytesPerSec: blockAlign * Rate, BlockAlign: blockAlign, BitsPerSample: 16}
 	var hwo uintptr
 	if r, _, _ := procWaveOutOpen.Call(uintptr(unsafe.Pointer(&hwo)), waveMapper, uintptr(unsafe.Pointer(&wf)), uintptr(p.done), 0, callbackEvent); r != 0 {
 		windows.CloseHandle(p.done)
@@ -332,7 +348,7 @@ func (p *Player) feed() {
 					p.queued[i] = false
 					continue
 				}
-				p.hdrs[i].BufferLength = uint32(2 * n)
+				p.hdrs[i].BufferLength = uint32(outChannels * 2 * n)
 				p.hdrs[i].Flags &^= whdrDone
 				procWaveOutWrite.Call(p.hwo, uintptr(unsafe.Pointer(p.hdrs[i])), unsafe.Sizeof(waveHdr{}))
 				p.queued[i] = true
@@ -353,16 +369,17 @@ func (p *Player) feed() {
 	}
 }
 
-// fill puts the next piece into buffer i and returns its samples (mu held).
+// fill puts the next piece into buffer i and returns its frame count (mu held).
 func (p *Player) fill(i int, scratch [][]float32, mixed []float32) int {
 	if p.cur == nil {
 		return 0
 	}
-	tl, n, silent := p.cur.next(bufSamples)
+	tl, n, silent := p.cur.next(bufFrames)
 	if n == 0 {
 		return 0
 	}
-	out := p.data[i][:n]
+	nSamples := int(n) * outChannels
+	out := p.data[i][:nSamples]
 	if silent {
 		clear(out)
 	} else {
@@ -371,17 +388,96 @@ func (p *Player) fill(i int, scratch [][]float32, mixed []float32) int {
 			if p.which != nil && (t >= len(p.which) || !p.which[t]) {
 				continue
 			}
-			got, _ := f.ReadFrames(scratch[t][:n], tl)
-			clear(scratch[t][got:n])
-			srcs = append(srcs, scratch[t][:n])
+			got := readStereoAt(f, scratch[t][:nSamples], tl)
+			clear(scratch[t][got*outChannels : nSamples])
+			srcs = append(srcs, scratch[t][:nSamples])
 		}
-		mix(mixed[:n], srcs)
-		for k := int64(0); k < n; k++ {
+		mix(mixed[:nSamples], srcs)
+		for k := range nSamples {
 			out[k] = wav.FloatToInt16(mixed[k])
 		}
 	}
 	p.tl.add(tl, n, silent)
 	return int(n)
+}
+
+// readStereoAt reads up to len(dst)/2 stereo frames at Rate (48 kHz) starting
+// at timeline frame tl. Native 48 kHz tracks pass through with zero resampling;
+// legacy 16 kHz WAV tracks are upsampled cleanly with Kaiser-sinc warmup.
+func readStereoAt(f track.File, dst []float32, tl int64) int {
+	want := len(dst) / outChannels
+	if want <= 0 {
+		return 0
+	}
+	inRate := f.SampleRate()
+	ch := f.Channels()
+	if inRate == Rate {
+		if ch == 2 {
+			got, _ := f.ReadInterleaved(dst, tl)
+			return got
+		}
+		mono := make([]float32, want)
+		got, _ := f.ReadFrames(mono, tl)
+		for i := range got {
+			dst[2*i], dst[2*i+1] = mono[i], mono[i]
+		}
+		return got
+	}
+
+	// Resample from inRate (e.g. legacy 16 kHz WAV) to 48 kHz stereo.
+	totalOut := trackFrames(f)
+	if tl < 0 || tl >= totalOut {
+		return 0
+	}
+	want64 := min(int64(want), totalOut-tl)
+	const marginOut = 128
+	startOut := max(int64(0), tl-marginOut)
+	endOut := min(totalOut, tl+want64+marginOut)
+
+	inStart := startOut * int64(inRate) / Rate
+	inEnd := (endOut*int64(inRate) + Rate - 1) / Rate
+	inEnd = min(f.Frames(), inEnd+8)
+	inCount := inEnd - inStart
+	if inCount <= 0 {
+		return 0
+	}
+	raw := make([]float32, int(inCount)*ch)
+	got, err := f.ReadInterleaved(raw, inStart)
+	if (err != nil && err != io.EOF) || got == 0 {
+		return 0
+	}
+	skip := int(tl - startOut)
+	if ch == 1 {
+		rs := dsp.NewResampler(inRate, Rate)
+		out := append(rs.Process(raw[:got]), rs.Flush()...)
+		if skip < 0 || skip >= len(out) {
+			return 0
+		}
+		n := min(int(want64), len(out)-skip)
+		for i := range n {
+			v := out[skip+i]
+			dst[2*i], dst[2*i+1] = v, v
+		}
+		return n
+	}
+	lIn := make([]float32, got)
+	rIn := make([]float32, got)
+	for i := range got {
+		lIn[i], rIn[i] = raw[i*ch], raw[i*ch+1]
+	}
+	rsL := dsp.NewResampler(inRate, Rate)
+	rsR := dsp.NewResampler(inRate, Rate)
+	lOut := append(rsL.Process(lIn), rsL.Flush()...)
+	rOut := append(rsR.Process(rIn), rsR.Flush()...)
+	avail := min(len(lOut), len(rOut))
+	if skip < 0 || skip >= avail {
+		return 0
+	}
+	n := min(int(want64), avail-skip)
+	for i := range n {
+		dst[2*i], dst[2*i+1] = lOut[skip+i], rOut[skip+i]
+	}
+	return n
 }
 
 // ptr turns an address of memory Windows allocated into a pointer.

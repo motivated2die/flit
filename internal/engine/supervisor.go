@@ -34,10 +34,12 @@ type Supervisor struct {
 	CPULimit   int
 	Background bool
 
-	mu     sync.Mutex
-	w      *worker
-	nextID uint64
-	idle   *time.Timer
+	mu             sync.Mutex
+	w              *worker
+	nextID         uint64
+	idle           *time.Timer
+	gpuFailed      bool
+	fallbackReason string
 
 	// Readable while a request holds mu (the debug view polls them).
 	pid  atomic.Int64
@@ -87,8 +89,39 @@ func (s *Supervisor) Diarize(ctx context.Context, pcm []float32) ([]pipeline.Spe
 	return resp.Turns, nil
 }
 
+// Engine status codes that indicate a GPU backend or memory failure
+// recoverable by restarting on the CPU (matching tcpp.StatusOOM/StatusBackend).
+const (
+	statusOOM     = 7
+	statusBackend = 8
+)
+
+func isGPUFallbackError(err error) bool {
+	if errors.Is(err, ErrWorkerGone) {
+		return true
+	}
+	var ee *ErrEngine
+	return errors.As(err, &ee) && (ee.Status == statusBackend || ee.Status == statusOOM)
+}
+
+func (s *Supervisor) effectiveSpec() LoadSpec {
+	spec := s.Spec
+	if s.gpuFailed {
+		spec.CPUOnly = true
+	}
+	return spec
+}
+
+func (s *Supervisor) storeInfo(info Info) {
+	if s.gpuFailed && info.FallbackReason == "" {
+		info.FallbackReason = s.fallbackReason
+	}
+	s.info.Store(&info)
+}
+
 // do sends one request, starting the worker if needed; a crash is retried
-// once in a fresh worker.
+// once in a fresh worker. When a GPU worker fails to load, crashes, or hits
+// a backend/OOM error, it falls back to a CPU-only worker for this supervisor.
 func (s *Supervisor) do(ctx context.Context, req Request, pcm []float32) (Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,6 +137,18 @@ func (s *Supervisor) do(ctx context.Context, req Request, pcm []float32) (Respon
 			return Response{}, err
 		}
 		resp, err := s.roundTrip(ctx, req, pcm)
+		if err == nil {
+			if resp.Info != nil {
+				s.storeInfo(*resp.Info)
+			}
+			return resp, nil
+		}
+		if !s.effectiveSpec().CPUOnly && isGPUFallbackError(err) {
+			s.logf("engine: the graphics processor failed during %s (%v); falling back to the processor", req.Op, err)
+			s.stopLocked()
+			s.gpuFailed, s.fallbackReason = true, err.Error()
+			continue
+		}
 		if errors.Is(err, ErrWorkerGone) && attempt == 0 {
 			s.logf("engine worker died during %s; restarting", req.Op)
 			continue
@@ -186,7 +231,7 @@ func (s *Supervisor) ensure() error {
 	}
 	w := &worker{cmd: cmd, in: in, out: bufio.NewReaderSize(out, 1<<20), done: make(chan struct{}), release: func() {}}
 	if s.CPULimit > 0 || s.Background {
-		rel, err := limitProcess(cmd.Process.Pid, s.CPULimit, s.Background)
+		rel, err := LimitProcess(cmd.Process.Pid, s.CPULimit, s.Background)
 		if err != nil {
 			s.logf("engine worker: limiting its CPU: %v", err)
 		}
@@ -197,6 +242,9 @@ func (s *Supervisor) ensure() error {
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
 		for sc.Scan() {
 			s.logf("engine: %s", sc.Text())
+		}
+		if err := sc.Err(); err != nil {
+			s.logf("engine stderr: %v", err)
 		}
 	}()
 	go func() {
@@ -212,15 +260,19 @@ func (s *Supervisor) ensure() error {
 	s.pid.Store(int64(cmd.Process.Pid))
 	s.logf("engine worker started (pid %d)", cmd.Process.Pid)
 
-	spec := s.Spec
+	spec := s.effectiveSpec()
 	resp, err := s.roundTrip(context.Background(), Request{Op: OpLoad, Load: &spec}, nil)
 	if err != nil {
 		s.stopLocked()
+		if !spec.CPUOnly {
+			s.logf("engine: the graphics processor failed while loading (%v); falling back to the processor", err)
+			s.gpuFailed, s.fallbackReason = true, err.Error()
+			return s.ensure()
+		}
 		return fmt.Errorf("loading the engine: %w", err)
 	}
 	if resp.Info != nil {
-		info := *resp.Info
-		s.info.Store(&info)
+		s.storeInfo(*resp.Info)
 	}
 	return nil
 }
@@ -289,7 +341,7 @@ func WorkerCommand(exe string) func() *exec.Cmd {
 	return func() *exec.Cmd {
 		cmd := exec.Command(exe, WorkerFlag)
 		cmd.Env = append(os.Environ(), "VK_LOADER_LAYERS_DISABLE=~implicit~")
-		hideWindow(cmd)
+		HideWindow(cmd)
 		return cmd
 	}
 }

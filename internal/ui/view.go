@@ -27,6 +27,10 @@ type Canvas interface {
 	// MarkedParagraph is Paragraph with parts in other colours (search
 	// results); marks change no metrics, so it wraps as Paragraph does.
 	MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []TextMark)
+	// StyledParagraph is Paragraph with ranges in bold, italics,
+	// strikethrough or their own colour (the notes editor); it wraps as
+	// StyledLines measures.
+	StyledParagraph(s string, r RectF, f Font, c ColorF, styles []TextStyle)
 	Polygons(polys [][]PointF, c ColorF)
 	PushClip(r RectF)
 	PopClip()
@@ -42,6 +46,19 @@ type TextMark struct {
 	From, To  int
 	Color     ColorF
 	Underline bool
+}
+
+// TextStyle styles bytes [From, To) of a styled paragraph; Color nil keeps
+// the paragraph's colour.
+type TextStyle struct {
+	From, To             int
+	Bold, Italic, Strike bool
+	Color                *ColorF
+}
+
+// StyledMetrics lays out styled paragraphs (DirectWrite does).
+type StyledMetrics interface {
+	StyledLines(s string, f Font, width float32, styles []TextStyle) *TextLines
 }
 
 // Metrics measures text in pixels.
@@ -74,6 +91,9 @@ type Hit struct {
 	// text marks selectable text (Ctx.Selectable): the window selects
 	// with the pointer there, under an I-beam.
 	text bool
+	// editor marks a multi-line editor (Ctx.Editor): a click focuses it
+	// and goes to its Press, under an I-beam.
+	editor bool
 }
 
 // clickable reports whether the hit does something on a click (a hover
@@ -124,7 +144,81 @@ type Ctx struct {
 	Edit      *Editing
 	StartEdit func(id, value string, maxLen int)
 	inputs    []input
+	wantEdit  *input // a field asking to be edited as it is shown
+
+	// Focus is the multi-line editor that has the keyboard (its ID), kept
+	// by the window; editors are this pass's (Ctx.Editor).
+	Focus   string
+	editors []EditorTarget
+	// keepView is a range (window pixels) a node wants visible: the
+	// caret being typed at; the Frame scrolls as little as needed.
+	keepView *[2]float32
 }
+
+// Mods are the modifier keys held with a key.
+type Mods struct{ Ctrl, Shift, Alt bool }
+
+// EditorEnv is what a focused editor's keys may use from the window.
+type EditorEnv struct {
+	SetClipboard func(text, html string) // text, and HTML for rich paste ("" for none)
+	Clipboard    func() string
+	Blur         func() // let go of the keyboard
+	// GoalX is where Up and Down aim, kept between them (negative: none,
+	// the caret's own x).
+	GoalX *float32
+}
+
+// EditorTarget is a multi-line editor in a pass: where it is, and what
+// the window calls while it has the keyboard.
+type EditorTarget struct {
+	ID string
+	R  RectF
+	// Press: the button went down at (x, y), the nth click in a row;
+	// Drag: the pointer moved there while held.
+	Press func(x, y float32, shift bool, clicks int)
+	Drag  func(x, y float32)
+	// Key: a key went down (true: handled); Char: a character was typed.
+	Key  func(vk uintptr, m Mods, env *EditorEnv) bool
+	Char func(r rune, env *EditorEnv)
+	// WantFocus asks for the keyboard (once, when shown on request).
+	WantFocus bool
+	// ExpandTop is the height (device pixels) this editor adds above its
+	// text when focused (ToolbarOnFocus), so the host adjusts scroll by
+	// +ExpandTop on focus and -ExpandTop on blur, extending the container
+	// upward while keeping the text below completely still.
+	ExpandTop float32
+}
+
+// Editor registers a multi-line editor: a click inside it focuses it.
+// Hits registered after it with IDs starting with its ID and ":" (its
+// checkboxes) count as part of it.
+func (c *Ctx) Editor(t EditorTarget) {
+	c.editors = append(c.editors, t)
+	r := t.R
+	if len(c.clips) > 0 {
+		r = r.Intersect(c.clips[len(c.clips)-1])
+	}
+	if r.W() > 0 && r.H() > 0 {
+		c.hits = append(c.hits, Hit{ID: t.ID, R: r, editor: true})
+	}
+}
+
+// EditorTarget is editor id of this pass (tests drive it like the window).
+func (c *Ctx) EditorTarget(id string) (EditorTarget, bool) { return c.editorByID(id) }
+
+// editorByID is editor id of this pass.
+func (c *Ctx) editorByID(id string) (EditorTarget, bool) {
+	for _, t := range c.editors {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return EditorTarget{}, false
+}
+
+// KeepInView asks for the page to scroll, as little as it takes, so that
+// [top, bottom] (window pixels) is visible: the caret while typing.
+func (c *Ctx) KeepInView(top, bottom float32) { c.keepView = &[2]float32{top, bottom} }
 
 // NewCtx starts a pass.
 func NewCtx(scale float32, m Metrics, now time.Time, hover, pressed string, scroll map[string]float32) *Ctx {

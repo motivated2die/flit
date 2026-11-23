@@ -33,10 +33,16 @@ This app is for one person's workflow: be in a meeting, get an accurate, well-fo
 - Progressive transcription during the meeting, so the transcript is ready moments after it ends.
 - Echo handling when the user has no headset (the mic picks up the remote side).
 - A searchable list of past sessions to copy again.
+- **Names of the meeting's speakers from the call app** (Teams, Zoom, Meet show who is in the call and often who talks), voted onto the voices flit already tells apart; never a name on a guess. Proposed: [research/call-app-names.md](research/call-app-names.md), [ADR 0012](decisions/0012-speaker-names-from-the-call-app.md).
+
+### Exploring (on request)
+
+- **Notes** (built): a small editor on each recording (headings 2 and 3, nested and numbered lists, tasks, bold, italics), during and after the meeting, opened from the notch or Home while recording; `@flit` mentions point flit at a moment; Markdown in, Markdown or plain text out. [research/notes-editor.md](research/notes-editor.md), [ADR 0013](decisions/0013-own-markdown-notes-editor.md).
+- **Summaries**: topics, decisions, tasks with owners and open questions, written from the transcript and the user's notes by a small local LLM, **only when the user asks for it on a recording**, after the meeting, using the GPU where that is faster, with a model chosen for the PC that errs on the light side. Proposed: [research/summary-pipeline.md](research/summary-pipeline.md), [research/local-summaries.md](research/local-summaries.md), [ADR 0011](decisions/0011-meeting-notes-with-llama-server.md). Without a model: copy the transcript and notes with a ready prompt for the user's own assistant.
 
 ### Explicitly not (for now)
 
-- Summaries, action items, notes generation, any LLM pass.
+- Summaries or any LLM pass **automatically**, or during a meeting (see Exploring above: on request only).
 - Live captions.
 - Calendar integration, accounts, cloud anything.
 - Screen recording.

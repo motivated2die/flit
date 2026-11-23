@@ -78,3 +78,42 @@ func ClipboardText(owner uintptr) string {
 	defer procGlobalUnlock.Call(h)
 	return windows.UTF16PtrToString((*uint16)(*(*unsafe.Pointer)(unsafe.Pointer(&p)))) // memory Windows owns
 }
+
+var procRegisterClipboardFormatW = user32.NewProc("RegisterClipboardFormatW")
+
+// SetClipboardRich puts text on the clipboard as Unicode text and, when
+// fragment isn't empty, also as HTML ("HTML Format"), so apps that take
+// formatting (Outlook, OneNote, Word) paste headings and lists.
+func SetClipboardRich(owner uintptr, text, fragment string) error {
+	if fragment == "" {
+		return SetClipboard(owner, text)
+	}
+	if err := SetClipboard(owner, text); err != nil {
+		return err
+	}
+	name, _ := windows.UTF16PtrFromString("HTML Format")
+	cf, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+	if cf == 0 {
+		return nil // the text is there
+	}
+	if r, _, _ := procOpenClipboard.Call(owner); r == 0 {
+		return nil
+	}
+	defer procCloseClipboard.Call()
+	b := []byte(cfHTML(fragment))
+	h, _, _ := procGlobalAlloc.Call(0x0002, uintptr(len(b)+1))
+	if h == 0 {
+		return nil
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		procGlobalFree.Call(h)
+		return nil
+	}
+	copy(unsafe.Slice((*byte)(*(*unsafe.Pointer)(unsafe.Pointer(&p))), len(b)+1), append(b, 0))
+	procGlobalUnlock.Call(h)
+	if r, _, _ := procSetClipboardData.Call(cf, h); r == 0 {
+		procGlobalFree.Call(h)
+	}
+	return nil
+}

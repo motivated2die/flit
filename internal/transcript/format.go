@@ -96,10 +96,10 @@ func Format(h Header, segs []Segment, names Names, style Style) string {
 	var b strings.Builder
 	if line := headerLine(h); line != "" {
 		if style == Markdown {
-			b.WriteString("### " + line + "\n\n")
-		} else {
-			b.WriteString(line + "\n\n")
+			b.WriteString("### ")
 		}
+		b.WriteString(line)
+		b.WriteString("\n\n")
 	}
 	paras := Paragraphs(segs, names, 3*time.Second)
 	for i, p := range paras {

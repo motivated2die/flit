@@ -11,6 +11,7 @@ import (
 
 	"github.com/motivated2die/flit/internal/download"
 	"github.com/motivated2die/flit/internal/engine"
+	"github.com/motivated2die/flit/internal/engine/native"
 	"github.com/motivated2die/flit/internal/install"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/models"
@@ -38,6 +39,8 @@ type jobs struct {
 	// set from the UI thread; a worker started with another is replaced.
 	limit     atomic.Int32
 	limitUsed int32
+	gpuFinal  atomic.Bool
+	gpuUsed   bool
 
 	mu   sync.Mutex
 	sup  *engine.Supervisor
@@ -92,12 +95,13 @@ func (j *jobs) enqueue(jb job) {
 	}
 }
 
-// prepare downloads the current language's model in the background, so the
-// first meeting doesn't wait for it.
+// prepare downloads the current language's model (and the optional Vulkan
+// backend when GPU transcription is enabled) in the background, so the
+// first meeting doesn't wait for them.
 func (j *jobs) prepare() {
-	lang, model, speakers := j.a.cfg.Language, j.a.cfg.Model, j.a.cfg.Speakers
+	lang, model, speakers, wantVK := j.a.cfg.Language, j.a.cfg.Model, j.a.cfg.Speakers, j.a.wantVulkan()
 	go func() {
-		if _, _, _, err := j.models(lang, model, speakers); err != nil && j.ctx.Err() == nil {
+		if _, _, _, err := j.models(lang, model, speakers, wantVK); err != nil && j.ctx.Err() == nil {
 			logx.Printf("model download: %v", err)
 		}
 	}()
@@ -141,7 +145,7 @@ func (j *jobs) run() {
 
 func (j *jobs) transcribe(s *session.Session) error {
 	speakers := j.a.cfg.Speakers
-	asr, vad, diar, err := j.models(s.Meta.Language, s.Meta.Model, speakers)
+	asr, vad, diar, err := j.models(s.Meta.Language, s.Meta.Model, speakers, j.gpuFinal.Load())
 	if err != nil {
 		return err
 	}
@@ -149,7 +153,7 @@ func (j *jobs) transcribe(s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: j.a.cfg.Vocabulary, Speakers: diar.ID != ""}
+	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: j.a.vocabulary(), Speakers: diar.ID != ""}
 	start := time.Now()
 	last := time.Time{}
 	err = s.Transcribe(j.ctx, sup, opt, "", func(p float64) {
@@ -165,7 +169,7 @@ func (j *jobs) transcribe(s *session.Session) error {
 
 // findSpeakers tells the speakers of a transcribed session apart again.
 func (j *jobs) findSpeakers(s *session.Session) error {
-	asr, vad, diar, err := j.models(s.Meta.Language, s.Meta.Model, true)
+	asr, vad, diar, err := j.models(s.Meta.Language, s.Meta.Model, true, j.gpuFinal.Load())
 	if err != nil {
 		return err
 	}
@@ -183,10 +187,11 @@ func (j *jobs) findSpeakers(s *session.Session) error {
 }
 
 // models makes sure the ASR model for lang (or the chosen one), the VAD
-// model and, with speakers, the diarization model are on disk, downloading
-// them with progress in the tray. A failed diarization download leaves
-// diar empty (transcripts go on without speakers) rather than failing.
-func (j *jobs) models(lang, chosen string, speakers bool) (asr, vad, diar models.Model, err error) {
+// model, with speakers the diarization model, and with wantVulkan the
+// Vulkan engine module are on disk, downloading them with progress in the
+// tray. Failed diarization or Vulkan downloads are non-fatal (transcription
+// goes on without speakers / on the CPU).
+func (j *jobs) models(lang, chosen string, speakers, wantVulkan bool) (asr, vad, diar models.Model, err error) {
 	asr, ok := models.ByID(chosen)
 	if chosen == "" || !ok {
 		if asr, ok = models.Default(models.RoleASR, lang); !ok {
@@ -202,9 +207,13 @@ func (j *jobs) models(lang, chosen string, speakers bool) (asr, vad, diar models
 	}
 	// All at once: a slow server for one doesn't hold up the others.
 	errs := make([]error, len(need))
+	var vkErr error
 	var wg sync.WaitGroup
 	for i, m := range need {
 		wg.Go(func() { errs[i] = j.fetch(m) })
+	}
+	if wantVulkan {
+		wg.Go(func() { vkErr = j.fetchVulkan() })
 	}
 	wg.Wait()
 	for i := range 2 {
@@ -219,7 +228,42 @@ func (j *jobs) models(lang, chosen string, speakers bool) (asr, vad, diar models
 			diar = need[2]
 		}
 	}
+	if vkErr != nil && j.ctx.Err() == nil {
+		logx.Printf("graphics engine off for now: %v", vkErr)
+	}
 	return asr, vad, diar, nil
+}
+
+// fetchVulkan downloads and extracts transcribe.cpp's ggml-vulkan.dll unless
+// it is already present for this engine version.
+func (j *jobs) fetchVulkan() error {
+	j.fetchMu.Lock()
+	if j.fetchLocks == nil {
+		j.fetchLocks = map[string]*sync.Mutex{}
+	}
+	lock := j.fetchLocks[vulkanEngineItem.ID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		j.fetchLocks[vulkanEngineItem.ID] = lock
+	}
+	j.fetchMu.Unlock()
+	lock.Lock()
+	defer lock.Unlock()
+	if native.HasVulkan(j.a.dataDir) {
+		return nil
+	}
+	logx.Printf("downloading %s (%d MB)", vulkanEngineItem.ID, vulkanEngineItem.Size/1e6)
+	j.post(func() { j.a.downloadProgress(vulkanEngineItem, 0, vulkanEngineItem.Size) })
+	last := time.Time{}
+	err := native.EnsureVulkan(j.ctx, j.a.dataDir, func(done, total int64) {
+		if time.Since(last) < 250*time.Millisecond {
+			return
+		}
+		last = time.Now()
+		j.post(func() { j.a.downloadProgress(vulkanEngineItem, done, total) })
+	})
+	j.post(func() { j.a.downloadEnded(vulkanEngineItem, err) })
+	return err
 }
 
 // fetch downloads a model unless it is on disk.
@@ -264,7 +308,8 @@ func (j *jobs) supervisor(asr, vad, diar models.Model) (*engine.Supervisor, erro
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	dir := modelsDir(j.a.dataDir)
-	spec := engine.LoadSpec{ASRModel: asr.Path(dir), VADModel: vad.Path(dir), CPUOnly: true}
+	useGPU := j.gpuFinal.Load() && native.HasVulkan(j.a.dataDir)
+	spec := engine.LoadSpec{ASRModel: asr.Path(dir), VADModel: vad.Path(dir), CPUOnly: !useGPU}
 	if diar.ID != "" {
 		spec.DiarModel = diar.Path(dir)
 	}
@@ -272,7 +317,7 @@ func (j *jobs) supervisor(asr, vad, diar models.Model) (*engine.Supervisor, erro
 	if limit > 0 {
 		spec.Threads = capThreads(int(limit))
 	}
-	if j.sup != nil && j.spec.ASRModel == spec.ASRModel && j.spec.VADModel == spec.VADModel && j.spec.DiarModel == spec.DiarModel && j.limitUsed == limit {
+	if j.sup != nil && j.spec.ASRModel == spec.ASRModel && j.spec.VADModel == spec.VADModel && j.spec.DiarModel == spec.DiarModel && j.limitUsed == limit && j.gpuUsed == useGPU {
 		return j.sup, nil
 	}
 	if j.sup != nil {
@@ -289,7 +334,7 @@ func (j *jobs) supervisor(asr, vad, diar models.Model) (*engine.Supervisor, erro
 	}
 	spec.EngineDir = engineDir
 	j.spec, j.asr, j.vad, j.diar = spec, asr, vad, diar
-	j.limitUsed = limit
+	j.limitUsed, j.gpuUsed = limit, useGPU
 	j.sup = &engine.Supervisor{
 		Command:     engine.WorkerCommand(exe),
 		Spec:        spec,
@@ -341,7 +386,7 @@ func (a *App) onTranscribed(s *session.Session, err error) {
 	a.lastReady = s
 	a.forget(s)
 	if !a.cfg.KeepAudio {
-		for _, f := range []string{session.MeFile, session.ThemFile} {
+		for _, f := range s.AudioFiles() {
 			if err := os.Remove(s.Path(f)); err != nil && !os.IsNotExist(err) {
 				logx.Printf("removing %s of %s: %v", f, s.Meta.ID, err)
 			}

@@ -41,11 +41,11 @@ func (a *App) openPlayer(s *session.Session) (*appPlayer, error) {
 	var paths []string
 	var tracks []transcript.Track
 	for _, t := range []struct {
-		file  string
+		side  string
 		track transcript.Track
-	}{{session.MeFile, transcript.Me}, {session.ThemFile, transcript.Them}} {
-		if s.Has(t.file) {
-			paths = append(paths, s.Path(t.file))
+	}{{"me", transcript.Me}, {"them", transcript.Them}} {
+		if f := s.TrackFile(t.side); f != "" {
+			paths = append(paths, s.Path(f))
 			tracks = append(tracks, t.track)
 		}
 	}

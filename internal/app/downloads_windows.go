@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/motivated2die/flit/internal/engine/native"
 	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/sysinfo"
 	"github.com/motivated2die/flit/internal/ui"
@@ -100,6 +101,9 @@ func (a *App) neededModels() []models.Model {
 			out = append(out, d)
 		}
 	}
+	if a.wantVulkan() {
+		out = append(out, vulkanEngineItem)
+	}
 	return out
 }
 
@@ -109,6 +113,9 @@ func (a *App) modelCards(active bool) []ui.Node {
 	var out []ui.Node
 	for _, m := range a.neededModels() {
 		role := map[models.Role]string{models.RoleASR: "Speech model", models.RoleVAD: "Voice detection", models.RoleDiarize: "Telling speakers apart"}[m.Role]
+		if m.ID == vulkanEngineItem.ID {
+			role = "Graphics support"
+		}
 		size := sysinfo.Bytes(uint64(m.Size))
 		c := ui.ProgressCard{ID: "dl:" + m.ID, Title: m.Name}
 		switch d, err := a.downloads[m.ID], a.downloadErr[m.ID]; {
@@ -130,8 +137,11 @@ func (a *App) modelCards(active bool) []ui.Node {
 	return out
 }
 
-// onDisk reports whether a model is downloaded whole.
+// onDisk reports whether a model (or optional runtime) is downloaded whole.
 func (a *App) onDisk(m models.Model) bool {
+	if m.ID == vulkanEngineItem.ID {
+		return native.HasVulkan(a.dataDir)
+	}
 	st, err := os.Stat(m.Path(modelsDir(a.dataDir)))
 	return err == nil && st.Size() == m.Size
 }

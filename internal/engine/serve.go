@@ -86,6 +86,10 @@ func handle(b Backend, req Request, pcm []float32) (resp Response) {
 			return fail(err)
 		}
 		resp.Turns = turns
+		if ip, ok := b.(interface{ CurrentInfo() Info }); ok {
+			info := ip.CurrentInfo()
+			resp.Info = &info
+		}
 	default:
 		return fail(errors.New("unknown op " + req.Op))
 	}

@@ -29,11 +29,18 @@ flit is past research and being built (see the package table in [architecture/ov
    - [research/speaker-identity.md](research/speaker-identity.md): recognising the same person across recordings
    - [research/meeting-detection.md](research/meeting-detection.md): noticing a meeting start and end
    - [research/audio-capture.md](research/audio-capture.md): recording mic and meeting audio on Windows
+   - [research/audio-storage-and-quality.md](research/audio-storage-and-quality.md): why 16 kHz WAV sounded muffled, 7.1 downmix fix, and 48 kHz M4A (Windows MF AAC) benchmarks
    - [research/window-rendering.md](research/window-rendering.md): what a frame of the window costs, and whether smooth scrolling fits
    - [research/voice-meter-bands.md](research/voice-meter-bands.md): where the voice meter's bands sit, measured on speech and noise
    - [research/engine-cores.md](research/engine-cores.md): how many cores the engine uses, and what limiting it costs
+   - [research/gpu-transcription.md](research/gpu-transcription.md): GPU-assisted transcription and diarization via Vulkan (runtime reuse, RX 7800 XT and Ryzen 5 5500U iGPU benchmarks, hardware check)
    - [research/dependencies.md](research/dependencies.md): every library, tool and engine flit relies on, their versions and known vulnerabilities
-5. The reference analyses: [Resound](references/resound.md), [Handy](references/handy.md), [AutoDoc](references/autodoc.md), [transcribe.cpp](references/transcribe-cpp.md)
+   - [research/local-summaries.md](research/local-summaries.md): a local LLM on Windows laptops: cost, models, accelerators (Vulkan, iGPU), picking a model for the PC (proposed)
+   - [research/summary-pipeline.md](research/summary-pipeline.md): from transcript and the user's notes to notes: approaches, context, attention cues, prompts, evaluation (proposed)
+   - [research/notes-editor.md](research/notes-editor.md): a small Markdown notes editor in flit's own UI (proposed)
+   - [research/call-app-names.md](research/call-app-names.md): naming speakers from what Teams, Zoom and Meet show (proposed)
+5. The reference analyses: [Resound](references/resound.md), [Handy](references/handy.md), [AutoDoc](references/autodoc.md), [transcribe.cpp](references/transcribe-cpp.md), [Yogurt](references/yogurt.md), [anarlog](references/anarlog.md)
+6. Proposed designs, not built: [architecture/summaries.md](architecture/summaries.md), [architecture/speaker-names.md](architecture/speaker-names.md)
 
 ## Conventions
 

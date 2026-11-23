@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/motivated2die/flit/internal/audio/wav"
+	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/pipeline"
 	"github.com/motivated2die/flit/internal/transcript"
 )
@@ -73,10 +73,10 @@ func (s *Session) LiveProgress() time.Duration {
 	}
 	done := int64(-1)
 	for _, t := range []struct {
-		file string
+		side string
 		p    pipeline.Progressive
-	}{{MeFile, l.Me}, {ThemFile, l.Them}} {
-		if s.Has(t.file) && (done < 0 || t.p.Done < done) {
+	}{{"me", l.Me}, {"them", l.Them}} {
+		if s.HasTrack(t.side) && (done < 0 || t.p.Done < done) {
 			done = t.p.Done
 		}
 	}
@@ -98,13 +98,14 @@ func (s *Session) TranscribeLive(ctx context.Context, e pipeline.Engine, opt pip
 	l := s.loadLive(opt.Language)
 	total := 0
 	for _, t := range []struct {
-		file  string
+		side  string
 		track transcript.Track
-	}{{MeFile, transcript.Me}, {ThemFile, transcript.Them}} {
-		if !s.Has(t.file) {
+	}{{"me", transcript.Me}, {"them", transcript.Them}} {
+		file := s.TrackFile(t.side)
+		if file == "" {
 			continue
 		}
-		f, err := wav.Open(s.Path(t.file))
+		f, err := track.OpenMono(s.Path(file), pipeline.Rate)
 		if err != nil {
 			continue // not written far enough yet
 		}
@@ -112,7 +113,7 @@ func (s *Session) TranscribeLive(ctx context.Context, e pipeline.Engine, opt pip
 		f.Close()
 		total += n
 		if err != nil {
-			return total, fmt.Errorf("%s: %w", t.file, err)
+			return total, fmt.Errorf("%s: %w", file, err)
 		}
 	}
 	return total, nil

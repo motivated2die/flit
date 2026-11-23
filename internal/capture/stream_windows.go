@@ -296,7 +296,9 @@ func (s *Stream) session(al *Aligner, started func(device string)) error {
 	started(device)
 
 	lastPacket := time.Now()
-	var mono []float32
+	ss, stereo := s.track.(StereoSink)
+	stereo = stereo && ss.Channels() == 2
+	var buf []float32
 	for {
 		select {
 		case <-s.stop:
@@ -330,23 +332,35 @@ func (s *Stream) session(al *Aligner, started func(device string)) error {
 				return describe("GetBuffer", err)
 			}
 			if frames > 0 {
-				mono = mono[:0]
-				if bflags&wca.AUDCLNT_BUFFERFLAGS_SILENT != 0 || data == nil {
-					mono = append(mono, make([]float32, frames)...)
-				} else {
-					mono = ToMono(mono, unsafe.Slice(data, int(frames)*f.BlockAlign), f)
+				buf = buf[:0]
+				chOut := 1
+				if stereo {
+					chOut = 2
 				}
+				if bflags&wca.AUDCLNT_BUFFERFLAGS_SILENT != 0 || data == nil {
+					buf = append(buf, make([]float32, int(frames)*chOut)...)
+				} else if stereo {
+					buf = ToStereo(buf, unsafe.Slice(data, int(frames)*f.BlockAlign), f)
+				} else {
+					buf = ToMono(buf, unsafe.Slice(data, int(frames)*f.BlockAlign), f)
+				}
+				nFrames := len(buf) / chOut
 				if e := s.endAt.Load(); e != 0 {
 					// Stopping: keep only what was captured before the end.
 					keep := (e - int64(qpc)) * int64(f.Rate) / 10_000_000
-					mono = mono[:max(0, min(int64(len(mono)), keep))]
+					nFrames = int(max(0, min(int64(nFrames), keep)))
+					buf = buf[:nFrames*chOut]
 				}
-				silence, skip := al.Place(int64(qpc), len(mono))
+				silence, skip := al.Place(int64(qpc), nFrames)
 				if silence > 0 {
 					s.track.Write(f.Rate, make([]float32, silence))
 				}
-				if skip < len(mono) {
-					s.track.Write(f.Rate, append([]float32(nil), mono[skip:]...))
+				if skip < nFrames {
+					if stereo {
+						ss.WriteInterleaved(f.Rate, append([]float32(nil), buf[skip*2:]...))
+					} else {
+						s.track.Write(f.Rate, append([]float32(nil), buf[skip:]...))
+					}
 				}
 				lastPacket = time.Now()
 			}

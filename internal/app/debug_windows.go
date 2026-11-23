@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/motivated2die/flit/internal/llm"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/sysinfo"
@@ -46,11 +47,62 @@ type debugState struct {
 	threads   int
 	coreMeter sysinfo.CoreMeter
 	reading   bool
+
+	// A summary's language model server, while one runs: its memory and
+	// CPU, and how busy it keeps the graphics processor (the meter is
+	// read on the cores' goroutine, one reading at a time).
+	sumSt    sysinfo.Stats
+	sumCPU   float64
+	sumErr   error
+	sumMeter sysinfo.CPUMeter
+	gpu      float64
+	gpuOK    bool // a reading has come
+	gpuMeter sysinfo.GPUMeter
 }
 
 // transcribing reports whether transcription puts load on the machine now:
 // after a meeting, finding speakers, or as it goes during one.
 func (a *App) transcribing() bool { return a.working != nil || a.finding != nil || a.live != nil }
+
+// busy reports whether flit's heavy work runs now: transcription, or a
+// summary's model (the core squares show either).
+func (a *App) busy() bool { return a.transcribing() || a.summarizing() }
+
+// transcribeOnGPU reports whether the active speech worker runs on a GPU
+// (or is configured to, before its first Load info arrives).
+func (a *App) transcribeOnGPU(d *debugState) bool {
+	if d.loaded {
+		for _, e := range d.engines {
+			if e.Info.OnGPU() {
+				return true
+			}
+		}
+		return false
+	}
+	return a.gpuForFinal()
+}
+
+// gpuPIDs returns the process IDs of active workers running on a GPU
+// (llama-server for summaries and/or speech engine workers on Vulkan while
+// transcribing or finding speakers).
+func (a *App) gpuPIDs(d *debugState) []uint32 {
+	var pids []uint32
+	if a.summarizing() && a.sumRun.device != llm.CPU {
+		pids = append(pids, uint32(a.sumRun.pid))
+	}
+	if a.transcribing() {
+		for _, e := range d.engines {
+			if e.PID != 0 && e.Info.OnGPU() {
+				pids = append(pids, uint32(e.PID))
+			}
+		}
+	}
+	return pids
+}
+
+// onGPU reports whether any active heavy work (transcription, diarization
+// or summary) runs on the graphics processor.
+func (a *App) onGPU() bool { return len(a.gpuPIDs(&a.dbg)) > 0 }
 
 func (a *App) sampleDebug() *debugState {
 	d := &a.dbg
@@ -101,6 +153,19 @@ func (a *App) sampleDebug() *debugState {
 		d.engineCPU += m.Percent(st.CPU, now)
 	}
 	d.engineMeters = meters
+	d.sumSt, d.sumCPU, d.sumErr = sysinfo.Stats{}, 0, nil
+	if a.summarizing() {
+		run := a.sumRun
+		pids = append(pids, uint32(run.pid))
+		d.threads = max(d.threads, run.threads)
+		if st, err := sysinfo.Process(uint32(run.pid)); err != nil {
+			d.sumErr = err
+		} else {
+			d.sumSt, d.sumCPU = st, d.sumMeter.Percent(st.CPU, now)
+		}
+	} else {
+		d.sumMeter = sysinfo.CPUMeter{}
+	}
 	a.sampleCores(pids)
 	if st, err := sysinfo.Process(0); err == nil {
 		d.self, d.selfCPU = st, d.selfMeter.Percent(st.CPU, now)
@@ -116,7 +181,11 @@ func (a *App) sampleDebug() *debugState {
 // transcribing; the result arrives on the UI thread.
 func (a *App) sampleCores(pids []uint32) {
 	d := &a.dbg
-	if !a.transcribing() || len(pids) == 0 {
+	if !a.onGPU() && !d.reading {
+		d.gpu, d.gpuOK = 0, false
+		d.gpuMeter.Close()
+	}
+	if !a.busy() || len(pids) == 0 {
 		d.cores, d.coreMeter = nil, sysinfo.CoreMeter{}
 		return
 	}
@@ -124,15 +193,26 @@ func (a *App) sampleCores(pids []uint32) {
 		return
 	}
 	d.reading = true
+	gpuPIDs := a.gpuPIDs(d)
 	go func() {
 		th, err := sysinfo.ReadThreads(pids...)
 		at := time.Now()
+		gpu, gpuErr := 0.0, error(nil)
+		if len(gpuPIDs) > 0 {
+			gpu, gpuErr = d.gpuMeter.Read(gpuPIDs...) // only this goroutine touches the meter while reading
+		}
 		a.tray.Post(func() {
 			d.reading = false
-			if err == nil && a.transcribing() {
-				d.cores = d.coreMeter.Cores(th, at)
-				a.invalidate()
+			if !a.busy() {
+				return
 			}
+			if err == nil {
+				d.cores = d.coreMeter.Cores(th, at)
+			}
+			if len(gpuPIDs) > 0 && gpuErr == nil {
+				d.gpu, d.gpuOK = gpu, true
+			}
+			a.invalidate()
 		})
 	}()
 }
@@ -142,7 +222,7 @@ func (a *App) sampleCores(pids []uint32) {
 // chunks), at most 8; nil when nothing is being transcribed.
 func (a *App) debugCores() []float32 {
 	d := &a.dbg
-	if !a.transcribing() || !d.loaded {
+	if !(a.transcribing() && d.loaded) && !a.summarizing() {
 		return nil
 	}
 	n := min(8, max(len(d.cores), d.threads))
@@ -154,6 +234,16 @@ func (a *App) debugCores() []float32 {
 		out[i] = float32(d.cores[i])
 	}
 	return out
+}
+
+// debugGPU is the sidebar's GPU square: how busy the summary's model keeps
+// the graphics processor, shown while it runs there (empty until the first
+// reading).
+func (a *App) debugGPU() (float32, bool) {
+	if !a.onGPU() {
+		return 0, false
+	}
+	return float32(a.dbg.gpu), true
 }
 
 // repaintSoon repaints the window after every, as long as it stays open.
@@ -182,22 +272,69 @@ func (a *App) shownModel(d *debugState) (models.Model, bool) {
 	return m, ok
 }
 
+// dominantLoad formats whichever processing unit is busier right now: the
+// GPU when active work runs on one and its utilisation exceeds the CPU's,
+// otherwise the CPU.
+func dominantLoad(cpu float64, onGPU bool, gpu float64, gpuOK bool) string {
+	if pct := gpu * 100; onGPU && gpuOK && pct >= 0.5 && pct > cpu {
+		return fmt.Sprintf("%.0f%% GPU", pct)
+	}
+	return fmt.Sprintf("%.0f%% CPU", cpu)
+}
+
+// activeDiarModel is the loaded speaker model, or the default one.
+func (a *App) activeDiarModel(d *debugState) (models.Model, bool) {
+	if d.engine.Diar.ID != "" {
+		return d.engine.Diar, true
+	}
+	return models.Default(models.RoleDiarize, "")
+}
+
+// activeSpeechModel returns the name of the model currently running for
+// speech tasks (speaker diarization, live transcription, or ASR), falling
+// back to the configured ASR model when idle.
+func (a *App) activeSpeechModel(d *debugState) string {
+	if a.finding != nil || (a.working != nil && a.cfg.Speakers && a.progress >= 0.799) {
+		if m, ok := a.activeDiarModel(d); ok {
+			return m.Name
+		}
+	}
+	if a.live != nil && a.working == nil && a.live.asr.ID != "" {
+		return a.live.asr.Name
+	}
+	if m, ok := a.shownModel(d); ok {
+		return m.Name
+	}
+	return "No speech model"
+}
+
 // debugLines are the sidebar's two lines.
 func (a *App) debugLines() []string {
 	d := a.sampleDebug()
 	every := 2 * time.Second
-	if a.transcribing() {
+	if a.busy() {
 		every = time.Second // the core squares follow the load
 	}
 	a.repaintSoon(every)
-	name := "No speech model"
-	if m, ok := a.shownModel(d); ok {
-		name = m.Name
+	if a.sumRun != nil {
+		// The summary's model, from download/load through generation: the
+		// speech worker has made way for it.
+		usage := "Loading…"
+		switch {
+		case a.summarizing() && d.sumErr == nil:
+			usage = fmt.Sprintf("%s · %s", sysinfo.Bytes(d.sumSt.WorkingSet), dominantLoad(d.sumCPU, a.onGPU(), d.gpu, d.gpuOK))
+		case a.summarizing():
+			usage = "Loaded"
+		case a.sumRun.step == "download":
+			usage = "Downloading…"
+		}
+		return []string{a.sumRun.model.Name, usage}
 	}
+	name := a.activeSpeechModel(d)
 	usage := "Not loaded"
 	switch {
 	case d.loaded && d.engineErr == nil:
-		usage = fmt.Sprintf("%s · %.0f%% CPU", sysinfo.Bytes(d.engineSt.Private), d.engineCPU)
+		usage = fmt.Sprintf("%s · %s", sysinfo.Bytes(d.engineSt.Private), dominantLoad(d.engineCPU, a.onGPU(), d.gpu, d.gpuOK))
 	case d.loaded:
 		usage = "Loaded"
 	}
@@ -219,6 +356,18 @@ func (a *App) debugPage() ui.Node {
 			} else if a.live != nil && a.live.sup != nil && a.live.sup.PID() == d.engine.PID {
 				state = fmt.Sprintf("loaded in the live transcription's worker (pid %d)", d.engine.PID)
 			}
+			if d.engine.Info.OnGPU() {
+				if desc := d.engine.Info.DeviceDesc; desc != "" {
+					state += ", on " + desc
+				} else {
+					state += ", on the graphics processor"
+				}
+			} else if d.engine.Info.Backend != "" {
+				state += ", on the processor"
+			}
+			if d.engine.Info.FallbackReason != "" {
+				state += " (GPU fell back to processor)"
+			}
 		}
 		engine = append(engine, ui.SettingRow{Label: m.Name, Detail: state, Control: value(fmt.Sprintf("%d MB on disk", m.Size/1_000_000))})
 	} else {
@@ -235,6 +384,16 @@ func (a *App) debugPage() ui.Node {
 			ui.Divider{},
 			ui.SettingRow{Label: "CPU", Detail: "Share of all cores", Control: value(fmt.Sprintf("%.1f%%", d.engineCPU))},
 		)
+		if engineOnGPU(d) {
+			gpu := "0%"
+			if a.transcribing() {
+				gpu = "measuring"
+				if d.gpuOK {
+					gpu = fmt.Sprintf("%.0f%%", d.gpu*100)
+				}
+			}
+			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Graphics processor", Detail: "The busiest of its engines, for this worker", Control: value(gpu)})
+		}
 		if cores := a.debugCores(); cores != nil {
 			busy := 0
 			for _, c := range d.cores {
@@ -245,19 +404,39 @@ func (a *App) debugPage() ui.Node {
 			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Cores engaged", Detail: "Threads of the worker using a core", Control: value(fmt.Sprint(busy))})
 		}
 		if d.engine.Diar.ID != "" {
-			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Speakers", Detail: "Loaded on first use", Control: value(d.engine.Diar.Name)})
+			diarDetail := "Loaded on first use"
+			if d.engine.Info.DiarBackend == "vulkan" {
+				diarDetail = "On the graphics processor"
+			} else if d.engine.Info.DiarBackend != "" {
+				diarDetail = "On the processor"
+			}
+			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Speakers", Detail: diarDetail, Control: value(d.engine.Diar.Name)})
 		}
 		if d.engine.VAD.ID != "" {
-			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Voice detection", Control: value(d.engine.VAD.Name)})
+			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Voice detection", Detail: "Always on the processor", Control: value(d.engine.VAD.Name)})
 		}
 		if v := d.engine.Info.Version; v != "" {
 			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "transcribe.cpp", Control: value(v)})
 		}
 	}
+	if !d.loaded && a.cfg.Speakers {
+		if diar, ok := models.Default(models.RoleDiarize, ""); ok {
+			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Speakers", Detail: "Not loaded; loads when telling speakers apart", Control: value(diar.Name)})
+		}
+	}
+	if a.gpu.Best.Name != "" || a.gpu.Reason != "" {
+		gpuDetail := "Vulkan ready · transcription mode: " + gpuModeLabel(a.transcribeGPU())
+		if !a.gpu.Ready {
+			gpuDetail = "Not ready for Vulkan: " + a.gpu.Reason
+		}
+		engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Graphics hardware", Detail: gpuDetail, Control: value(a.gpu.Summary())})
+	}
 	job := "Idle"
 	switch {
 	case a.working != nil:
 		job = fmt.Sprintf("Transcribing %s, %d%%", a.working.Meta.ID, int(a.progress*100))
+	case a.finding != nil:
+		job = fmt.Sprintf("Finding speakers in %s", a.finding.Meta.ID)
 	case a.rec != nil && a.live != nil:
 		job = "Recording, transcribing as it goes"
 	case a.rec != nil:
@@ -282,12 +461,14 @@ func (a *App) debugPage() ui.Node {
 	if logText == "" {
 		logText = "Nothing logged yet."
 	}
-	return ui.VStack{Gap: 12, Items: []ui.Node{
-		ui.Title("Debug"),
-		ui.Space(4),
+	head := []ui.Node{ui.Title("Debug"), ui.Space(4)}
+	if a.summarizing() {
+		head = append(head, ui.Caption("Summary model"), ui.Card{Gap: 2, Items: a.summaryDebug(d, value)})
+	}
+	return ui.VStack{Gap: 12, Items: append(head,
 		ui.Caption("Speech engine"),
 		ui.Card{Gap: 2, Items: engine},
-		ui.Caption("flit " + Version),
+		ui.Caption("flit "+Version),
 		ui.Card{Gap: 2, Items: self},
 		ui.Caption("Log, latest lines"),
 		ui.Card{Gap: 8, Items: []ui.Node{
@@ -297,7 +478,47 @@ func (a *App) debugPage() ui.Node {
 				ui.Link{ID: "dbg:data", Glyph: ui.GlyphFolder, Label: "Open data folder", OnClick: func() { openFolder(a.dataDir) }},
 			}},
 		}},
-	}}
+	)}
+}
+
+// summaryDebug is the Debug page's card for a running summary's model.
+func (a *App) summaryDebug(d *debugState, value func(string) ui.Node) []ui.Node {
+	run := a.sumRun
+	where := "on the processor"
+	if run.device == llm.GPUPrefill {
+		where = "weights in memory, the graphics processor reads the prompt"
+	} else if run.device == llm.GPU {
+		where = "on the graphics processor"
+	}
+	mem := "unavailable"
+	if d.sumErr == nil {
+		mem = sysinfo.Bytes(d.sumSt.Private) + " private · " + sysinfo.Bytes(d.sumSt.WorkingSet) + " in RAM"
+	}
+	rows := []ui.Node{
+		ui.SettingRow{Label: run.model.Name, Detail: fmt.Sprintf("llama-server (pid %d), %s", run.pid, where), Control: value("llama.cpp " + llm.RuntimeVersion)},
+		ui.Divider{},
+		ui.SettingRow{Label: "Memory", Control: value(mem)},
+		ui.Divider{},
+		ui.SettingRow{Label: "CPU", Detail: "Share of all cores", Control: value(fmt.Sprintf("%.1f%%", d.sumCPU))},
+	}
+	if a.onGPU() {
+		gpu := "measuring"
+		if d.gpuOK {
+			gpu = fmt.Sprintf("%.0f%%", d.gpu*100)
+		}
+		rows = append(rows, ui.Divider{}, ui.SettingRow{Label: "Graphics processor", Detail: "The busiest of its engines, for this process", Control: value(gpu)})
+	}
+	return append(rows, ui.Divider{}, ui.SettingRow{Label: "Job", Control: value(fmt.Sprintf("%s, %d%%", run.text(), int(run.value()*100)))})
+}
+
+// engineOnGPU reports whether any running speech worker uses the GPU.
+func engineOnGPU(d *debugState) bool {
+	for _, e := range d.engines {
+		if e.PID != 0 && e.Info.OnGPU() {
+			return true
+		}
+	}
+	return false
 }
 
 // roughDuration is 2 h 05 min, 4 min, 12 s.

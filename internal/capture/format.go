@@ -15,11 +15,12 @@ import (
 
 // Format is a device's sample format.
 type Format struct {
-	Rate       int
-	Channels   int
-	Bits       int
-	Float      bool
-	BlockAlign int
+	Rate        int
+	Channels    int
+	Bits        int
+	Float       bool
+	BlockAlign  int
+	ChannelMask uint32
 }
 
 const (
@@ -48,6 +49,7 @@ func ParseWaveFormat(b []byte) (Format, error) {
 		if len(b) < 40 {
 			return Format{}, fmt.Errorf("%w: short WAVEFORMATEXTENSIBLE", ErrFormat)
 		}
+		f.ChannelMask = binary.LittleEndian.Uint32(b[20:])
 		tag = binary.LittleEndian.Uint16(b[24:]) // SubFormat GUID's first two bytes
 	}
 	f.Float = tag == tagFloat
@@ -60,19 +62,99 @@ func ParseWaveFormat(b []byte) (Format, error) {
 	return Format{}, fmt.Errorf("%w: tag %d, %d bits", ErrFormat, tag, f.Bits)
 }
 
-// ToMono decodes interleaved device samples and averages the channels,
-// appending to dst.
+const invSqrt2 = 0.70710678
+
+// ToMono decodes interleaved device samples to mono, appending to dst.
+// Multi-channel surround formats (5.1/7.1, e.g. virtual gaming headsets) use
+// ITU-R BS.775 fold-down skipping LFE instead of dividing by channel count,
+// avoiding a -12 dB drop when stereo speech plays on an 8-channel endpoint.
 func ToMono(dst []float32, data []byte, f Format) []float32 {
 	frames := len(data) / f.BlockAlign
 	bps := f.Bits / 8
-	scale := 1 / float32(f.Channels)
+	ch := f.Channels
 	for i := 0; i < frames; i++ {
-		var sum float32
-		for c := 0; c < f.Channels; c++ {
-			o := i*f.BlockAlign + c*bps
-			sum += sample(data[o:o+bps], f)
+		base := i * f.BlockAlign
+		switch ch {
+		case 1:
+			dst = append(dst, sample(data[base:base+bps], f))
+		case 2:
+			l := sample(data[base:base+bps], f)
+			r := sample(data[base+bps:base+2*bps], f)
+			dst = append(dst, (l+r)*0.5)
+		default:
+			fl := sample(data[base:base+bps], f)
+			fr := sample(data[base+bps:base+2*bps], f)
+			var sum float32
+			if ch == 4 {
+				// Quad: FL, FR, BL, BR
+				bl := sample(data[base+2*bps:base+3*bps], f)
+				br := sample(data[base+3*bps:base+4*bps], f)
+				sum = 0.5*(fl+fr) + 0.5*invSqrt2*(bl+br)
+			} else if ch >= 6 {
+				// 5.1 / 7.1: FL, FR, FC, LFE (skip), BL, BR, [SL, SR]
+				fc := sample(data[base+2*bps:base+3*bps], f)
+				sum = 0.5*(fl+fr) + invSqrt2*fc
+				for c := 4; c < ch; c++ {
+					sum += 0.5 * invSqrt2 * sample(data[base+c*bps:base+(c+1)*bps], f)
+				}
+			} else {
+				for c := 0; c < ch; c++ {
+					sum += sample(data[base+c*bps:base+(c+1)*bps], f)
+				}
+				sum /= float32(ch)
+			}
+			dst = append(dst, max(-1, min(1, sum)))
 		}
-		dst = append(dst, sum*scale)
+	}
+	return dst
+}
+
+// ToStereo decodes interleaved device samples to interleaved stereo (L, R),
+// appending to dst. Stereo passes through untouched; mono duplicates to L and
+// R; surround formats (5.1/7.1) fold down per ITU-R BS.775 skipping LFE so
+// stereo speech on an 8-channel endpoint stays at unity gain.
+func ToStereo(dst []float32, data []byte, f Format) []float32 {
+	frames := len(data) / f.BlockAlign
+	bps := f.Bits / 8
+	ch := f.Channels
+	for i := 0; i < frames; i++ {
+		base := i * f.BlockAlign
+		switch ch {
+		case 1:
+			v := sample(data[base:base+bps], f)
+			dst = append(dst, v, v)
+		case 2:
+			l := sample(data[base:base+bps], f)
+			r := sample(data[base+bps:base+2*bps], f)
+			dst = append(dst, l, r)
+		case 4:
+			fl := sample(data[base:base+bps], f)
+			fr := sample(data[base+bps:base+2*bps], f)
+			bl := sample(data[base+2*bps:base+3*bps], f)
+			br := sample(data[base+3*bps:base+4*bps], f)
+			dst = append(dst, max(-1, min(1, fl+invSqrt2*bl)), max(-1, min(1, fr+invSqrt2*br)))
+		default:
+			if ch >= 6 {
+				// 5.1 / 7.1: FL, FR, FC, LFE (skip), BL, BR, [SL, SR]
+				fl := sample(data[base:base+bps], f)
+				fr := sample(data[base+bps:base+2*bps], f)
+				fc := sample(data[base+2*bps:base+3*bps], f)
+				l := fl + invSqrt2*fc
+				r := fr + invSqrt2*fc
+				for c := 4; c+1 < ch; c += 2 {
+					l += invSqrt2 * sample(data[base+c*bps:base+(c+1)*bps], f)
+					r += invSqrt2 * sample(data[base+(c+1)*bps:base+(c+2)*bps], f)
+				}
+				dst = append(dst, max(-1, min(1, l)), max(-1, min(1, r)))
+			} else {
+				var sum float32
+				for c := 0; c < ch; c++ {
+					sum += sample(data[base+c*bps:base+(c+1)*bps], f)
+				}
+				v := sum / float32(ch)
+				dst = append(dst, v, v)
+			}
+		}
 	}
 	return dst
 }

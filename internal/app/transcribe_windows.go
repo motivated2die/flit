@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/motivated2die/flit/internal/audio/dsp"
+	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/audio/wav"
 	"github.com/motivated2die/flit/internal/config"
 	"github.com/motivated2die/flit/internal/download"
@@ -47,6 +49,7 @@ func runTranscribe(args []string) int {
 	realtime := fs.Bool("realtime", false, "with --live-step: feed both tracks at the meeting's own pace, logging how far behind and the engine's CPU")
 	liveStep := fs.Int("live-step", 0, "simulate transcribing during the meeting: feed each track in slices of this many seconds")
 	cpuLimit := fs.Int("cpu-limit", 0, "cap the engine worker at this percent of all processors, at low priority (as during a meeting)")
+	save := fs.String("save", "", "write the meeting track's segments (with words and speakers) as JSON to this file, for experiments")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -207,6 +210,9 @@ func runTranscribe(args []string) int {
 			themPCM = pcm
 		}
 	}
+	if info := sup.Info(); info.Backend != "" {
+		fmt.Fprintf(os.Stderr, "engine: %s (%s)\n", info.Backend, info.DeviceDesc)
+	}
 	var turns []transcript.Turn
 	if *speakers && themPCM != nil {
 		start := time.Now()
@@ -223,6 +229,16 @@ func runTranscribe(args []string) int {
 			n[s.Speaker] = true
 		}
 		fmt.Fprintf(os.Stderr, "speakers: %d turns, %d speakers after cleanup, %.0f s in %.1f s (%.1f× real time)\n", len(raw), len(n), secs, time.Since(start).Seconds(), secs/time.Since(start).Seconds())
+	}
+	if *save != "" {
+		b, err := json.MarshalIndent(themSegs, "", " ")
+		if err == nil {
+			err = os.WriteFile(*save, b, 0o644)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "save:", err)
+			return 1
+		}
 	}
 	if len(meSegs) > 0 && len(themSegs) > 0 {
 		before := countWords(meSegs)
@@ -253,13 +269,15 @@ func printScores(ref eval.Manifest, me, them []transcript.Segment) {
 	for _, s := range ref.Segments {
 		b := refText[ref.TrackOf(s.Speaker)]
 		if b != nil {
-			b.WriteString(s.Text + " ")
+			b.WriteString(s.Text)
+			b.WriteByte(' ')
 		}
 	}
 	hyp := func(segs []transcript.Segment) string {
 		var b strings.Builder
 		for _, s := range segs {
-			b.WriteString(s.Text + " ")
+			b.WriteString(s.Text)
+			b.WriteByte(' ')
 		}
 		return b.String()
 	}
@@ -331,8 +349,15 @@ func countWords(segs []transcript.Segment) int {
 	return n
 }
 
-// load16k reads a WAV file as 16 kHz mono.
+// load16k reads an audio file (.m4a, .aac, or .wav) as 16 kHz mono.
 func load16k(path string) ([]float32, float64, error) {
+	if strings.HasSuffix(strings.ToLower(path), ".m4a") || strings.HasSuffix(strings.ToLower(path), ".aac") {
+		mono, err := track.ReadAllMono(path, pipeline.Rate)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		return mono, float64(len(mono)) / pipeline.Rate, nil
+	}
 	a, err := wav.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s: %w", filepath.Base(path), err)

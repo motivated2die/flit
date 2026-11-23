@@ -3,6 +3,7 @@ package capture
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -26,11 +27,11 @@ type Recording struct {
 // process loopback to the whole output.
 func Record(dir, meFile, themFile string, mic, them Source, onEvent func(Event)) (*Recording, error) {
 	origin := QPC()
-	meT, err := NewTrack(filepath.Join(dir, meFile))
+	meT, err := openTrackFor(filepath.Join(dir, meFile), 1, 64000)
 	if err != nil {
 		return nil, err
 	}
-	themT, err := NewTrack(filepath.Join(dir, themFile))
+	themT, err := openTrackFor(filepath.Join(dir, themFile), 2, 96000)
 	if err != nil {
 		meT.Close()
 		return nil, err
@@ -112,4 +113,13 @@ func (r *Recording) Stop() error {
 		err = err2
 	}
 	return err
+}
+
+// openTrackFor opens an M4A track at 48 kHz (mono for mic, stereo for meeting)
+// or a legacy 16 kHz mono WAV track when the filename ends in .wav.
+func openTrackFor(path string, channels, bitrate int) (*Track, error) {
+	if strings.HasSuffix(strings.ToLower(path), ".m4a") {
+		return NewTrackFormat(path, StoreRate, channels, bitrate)
+	}
+	return NewTrack(path)
 }

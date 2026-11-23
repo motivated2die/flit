@@ -84,8 +84,13 @@ func (a *App) onSpeakersFound(s *session.Session, err error) {
 func (a *App) speakersCard(s *session.Session) ui.Node {
 	names := s.Names()
 	audio := a.hasAudio(s)
+	sps := a.speakers(s)
+	ids := make([]string, len(sps))
+	for i, sp := range sps {
+		ids[i] = fmt.Sprintf("speaker:%s:%s:%d", s.Meta.ID, sp.Track, sp.Speaker)
+	}
 	var rows []ui.Node
-	for i, sp := range a.speakers(s) {
+	for i, sp := range sps {
 		sp := sp
 		if i > 0 {
 			rows = append(rows, ui.Divider{})
@@ -107,9 +112,17 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 		if sp.Quote == "" {
 			quote = "(nothing said)"
 		}
-		id := fmt.Sprintf("speaker:%s:%s:%d", s.Meta.ID, sp.Track, sp.Speaker)
+		id := ids[i]
+		prevID, nextID := "", ""
+		if i > 0 {
+			prevID = ids[i-1]
+		}
+		if i+1 < len(ids) {
+			nextID = ids[i+1]
+		}
 		row := ui.Node(ui.SettingRow{Label: quote, Detail: detail, Control: ui.TextField{
 			ID: id, Value: value, Placeholder: placeholder, W: 200, MaxLen: 40,
+			TabPrev: prevID, TabNext: nextID,
 			OnCommit: func(name string) { a.rename(s, sp.Track, sp.Speaker, name) },
 		}})
 		if audio {
@@ -134,10 +147,14 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 	}
 	switch {
 	case a.finding != nil && a.finding.Dir == s.Dir:
-		hint = "Analyzing the audio for speakers…"
+		if a.transcribeOnGPU(a.sampleDebug()) {
+			hint = "Analyzing the audio for speakers on the graphics processor…"
+		} else {
+			hint = "Analyzing the audio for speakers…"
+		}
 	case s.Meta.SpeakersError != "":
 		hint = "Telling the speakers apart failed: " + s.Meta.SpeakersError
-	case s.Meta.Speakers == 0 && s.Has(session.ThemFile):
+	case s.Meta.Speakers == 0 && s.HasTrack("them"):
 		hint = "Everyone on the meeting's side is one speaker here. Analyzing the audio again tells up to four people apart (about 2 minutes per hour of meeting)."
 	}
 	items = append(items, ui.Para{Text: hint, Muted: true, Small: true})
@@ -148,7 +165,7 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 // Speakers caption; nil when there is no audio or it is busy.
 func (a *App) analyzeLink(s *session.Session) ui.Node {
 	busy := a.finding != nil || (a.working != nil && a.working.Dir == s.Dir)
-	if !s.Has(session.ThemFile) || busy {
+	if !s.HasTrack("them") || busy {
 		return nil
 	}
 	label := "Analyze speakers"

@@ -54,7 +54,8 @@ func runRecord(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	r, err := capture.Record(s.Dir, session.MeFile, session.ThemFile, capture.Source{Kind: capture.Mic, DeviceID: cfg.MicID}, them,
+	meFile, themFile := session.RecordFileNames()
+	r, err := capture.Record(s.Dir, meFile, themFile, capture.Source{Kind: capture.Mic, DeviceID: cfg.MicID}, them,
 		func(ev capture.Event) { fmt.Fprintf(os.Stderr, "capture %s: %s %v\n", ev.Source, ev.Device, ev.Err) })
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

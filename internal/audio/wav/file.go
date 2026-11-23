@@ -84,6 +84,29 @@ func openFile(f *os.File) (*File, error) {
 // Frames is the file's length in frames.
 func (w *File) Frames() int64 { return w.frames }
 
+// ReadInterleaved reads up to len(dst)/Channels frames starting at frame into
+// dst (interleaved float32), returning the number of frames read.
+func (w *File) ReadInterleaved(dst []float32, frame int64) (int, error) {
+	if frame >= w.frames || frame < 0 {
+		return 0, io.EOF
+	}
+	ch := w.Format.Channels
+	n := min(int64(len(dst)/ch), w.frames-frame)
+	if n <= 0 {
+		return 0, nil
+	}
+	buf := make([]byte, n*int64(2*ch))
+	got, err := w.f.ReadAt(buf, w.data+frame*int64(2*ch))
+	n = int64(got / (2 * ch))
+	for i := int64(0); i < n*int64(ch); i++ {
+		dst[i] = float32(int16(binary.LittleEndian.Uint16(buf[i*2:]))) / 32768
+	}
+	if err == io.EOF && n > 0 {
+		err = nil
+	}
+	return int(n), err
+}
+
 // ReadFrames reads mono samples (channels averaged) from frame on into dst
 // and returns how many it read (fewer at the end of the file).
 func (w *File) ReadFrames(dst []float32, frame int64) (int, error) {

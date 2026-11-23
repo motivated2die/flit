@@ -44,6 +44,7 @@ func (p proc) call(args ...uintptr) uintptr {
 type procs struct {
 	version, statusString, abiStructSize, logSet                                  proc
 	backendInitParamsInit, initBackendsEx                                         proc
+	deviceInfoInit, deviceGetInfo, modelDevice                                    proc
 	modelLoadParamsInit, modelLoadFile, modelFree, capabilitiesInit, modelGetCaps proc
 	modelSupports                                                                 proc
 	sessionParamsInit, sessionInit, sessionFree, setAbortCallback                 proc
@@ -113,6 +114,9 @@ func (l *Lib) bind() error {
 	p.logSet = get("transcribe_log_set")
 	p.backendInitParamsInit = get("transcribe_backend_init_params_init")
 	p.initBackendsEx = get("transcribe_init_backends_ex")
+	p.deviceInfoInit = get("transcribe_device_info_init")
+	p.deviceGetInfo = get("transcribe_device_get_info")
+	p.modelDevice = get("transcribe_model_device")
 	p.modelLoadParamsInit = get("transcribe_model_load_params_init")
 	p.modelLoadFile = get("transcribe_model_load_file")
 	p.modelFree = get("transcribe_model_free")

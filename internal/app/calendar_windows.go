@@ -24,12 +24,14 @@ const pageCalendar = "calendar"
 
 // calendarState is the app's side of the calendar.
 type calendarState struct {
-	svc    *calendar.Service
-	cancel context.CancelFunc
-	status calendar.Status // the last snapshot, taken on the UI thread
-	test   string          // the result of Settings' Test
-	testOK bool
-	busy   bool // a test is running
+	svc      *calendar.Service
+	cancel   context.CancelFunc
+	status   calendar.Status // the last snapshot, taken on the UI thread
+	test     string          // the result of Settings' Test
+	testOK   bool
+	busy     bool // a test is running
+	draft    string
+	draftSet bool
 }
 
 func (a *App) startCalendar() {
@@ -69,8 +71,12 @@ func (a *App) meetings() []calendar.Meeting {
 
 // setCalendarURL keeps a new link and loads it.
 func (a *App) setCalendarURL(u string) {
+	if a.cal != nil {
+		a.cal.draft, a.cal.draftSet = "", false
+	}
 	u = calendar.Normalize(u)
 	if u == a.cfg.CalendarURL {
+		a.invalidate()
 		return
 	}
 	a.cfg.CalendarURL = u
@@ -431,10 +437,26 @@ func (a *App) calendarSettings() []ui.Node {
 			result = fmt.Sprintf("Last loaded %s: %s in the next 7 days.", st.Updated.Local().Format("Mon 15:04"), plural(len(st.Meetings), "meeting"))
 		}
 	}
+	urlVal := a.cfg.CalendarURL
+	if a.cal.draftSet {
+		urlVal = a.cal.draft
+	}
+	dirty := a.cal.draftSet && calendar.Normalize(a.cal.draft) != a.cfg.CalendarURL
 	card := []ui.Node{
 		ui.Label{Text: "Calendar subscription link"},
 		ui.Para{Text: "An ICS link: Outlook “Publish calendar” (ICS), Google “Secret address in iCal format”, or any webcal:// link. It opens your calendar, so it stays on this PC and is never written to the log.", Muted: true, Small: true},
-		ui.TextField{ID: "set:calurl", Value: a.cfg.CalendarURL, Placeholder: "https://…/calendar.ics", MaxLen: 2048, OnCommit: a.setCalendarURL},
+		ui.HStack{Gap: 8, Items: []ui.Node{
+			ui.VStack{Items: []ui.Node{ui.TextField{ID: "set:calurl", Value: urlVal, Placeholder: "https://…/calendar.ics", MaxLen: 2048,
+				OnChange: func(t string) { a.cal.draft, a.cal.draftSet = t, true },
+				OnCommit: a.setCalendarURL}}},
+			ui.Button{ID: "set:calapply", Glyph: ui.GlyphCheck, Primary: dirty, OnClick: func() {
+				u := a.cfg.CalendarURL
+				if a.cal.draftSet {
+					u = a.cal.draft
+				}
+				a.setCalendarURL(u)
+			}},
+		}},
 	}
 	if len(actions) > 0 || result != "" {
 		row := append([]ui.Node{}, actions...)

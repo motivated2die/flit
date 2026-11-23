@@ -36,7 +36,8 @@ func main() {
 	args := os.Args[2:]
 	switch os.Args[1] {
 	case "engine":
-		err = fetchEngine(ctx, root)
+		withVulkan := len(args) > 0 && (args[0] == "-vulkan" || args[0] == "--vulkan")
+		err = fetchEngine(ctx, root, withVulkan)
 	case "models":
 		err = fetchModels(ctx, root, args)
 	case "testdata":
@@ -45,6 +46,12 @@ func main() {
 		err = makeIcon(root)
 	case "release-server":
 		err = releaseServer(ctx, args)
+	case "llm":
+		err = fetchLLM(ctx, root, args)
+	case "summary":
+		err = summaryCmd(ctx, root, args)
+	case "callnames-sim":
+		err = callnamesSim(args)
 	default:
 		usage()
 	}
@@ -54,7 +61,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flitdev engine | models [ids…] | testdata | icon | release-server -exe <flit.exe> -version <x.y.z>")
+	fmt.Fprintln(os.Stderr, "usage: flitdev engine | models [ids…] | testdata | icon | release-server -exe <flit.exe> -version <x.y.z> | callnames-sim -meeting <dir> -segments <file>")
 	os.Exit(2)
 }
 

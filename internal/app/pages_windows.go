@@ -25,8 +25,15 @@ const homeRecent = 4 // recordings on Home
 
 func (a *App) homePage() ui.Node {
 	status := []ui.Node{ui.Para{Text: a.homeStatus(), Muted: true}}
+	head := ui.Node(ui.Title("Home"))
+	if name := a.cfg.GreetingName(); name != "" {
+		head = ui.VStack{Gap: 2, Items: []ui.Node{
+			ui.Title("Home"),
+			ui.Label{Text: "Welcome, " + name, Muted: true},
+		}}
+	}
 	items := []ui.Node{
-		ui.Title("Home"),
+		head,
 		ui.HStack{Gap: 12, Items: append(status, a.homeActions()...)},
 	}
 	if card := a.liveCard(); card != nil {
@@ -56,9 +63,25 @@ func (a *App) homePage() ui.Node {
 func (a *App) homeActions() []ui.Node {
 	switch {
 	case a.rec != nil:
+		rec := a.rec.sess
+		// Cancel and Notes as round icons; Cancel asks again in words.
+		cancel := ui.Node(ui.Button{ID: "home:cancel", Glyph: ui.GlyphDelete, Large: true, OnClick: func() {
+			a.confirm, a.confirmAt = "home:cancel", time.Now()
+			a.invalidate()
+			if a.tray != nil { // none in tests
+				time.AfterFunc(5*time.Second, func() { a.tray.Post(a.invalidate) })
+			}
+		}})
+		if a.confirm == "home:cancel" && time.Since(a.confirmAt) < 5*time.Second {
+			cancel = ui.Button{ID: "home:cancel", Label: "Discard recording", Glyph: ui.GlyphDelete, Danger: true, Large: true, OnClick: func() {
+				a.confirm = ""
+				a.cancelRecording()
+			}}
+		}
 		return []ui.Node{
-			a.confirmButton("home:cancel", "Cancel", true, a.cancelRecording),
-			ui.Button{ID: "home:stop", Label: "Stop and transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
+			cancel,
+			ui.Button{ID: "home:notes", Glyph: ui.GlyphNotes, Large: true, OnClick: func() { a.openNotes(rec) }},
+			ui.Button{ID: "home:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
 		}
 	case a.detected != nil:
 		c := *a.detected
@@ -85,6 +108,8 @@ func (a *App) homeStatus() string {
 		return providerName(a.detected.Provider) + " is using your microphone. flit can record the meeting and transcribe both sides when it ends."
 	case a.working != nil:
 		return "Transcribing the last meeting. You can close this window meanwhile."
+	case a.sumRun != nil:
+		return "Writing a summary on this PC. You can close this window meanwhile."
 	}
 	return "Waiting for a meeting. Flit notices when Teams, Zoom, Webex, Slack or Google Meet start using your microphone and offers to transcribe it; or start a recording yourself."
 }
@@ -110,7 +135,9 @@ func (a *App) liveCard() ui.Node {
 		}
 		// The voice meter stacked on the right; in a narrow window, wide
 		// under the text.
-		return ui.Card{Items: []ui.Node{ui.Aside{
+		// A click on the card opens the recording, its notes ready to type in.
+		rec := a.rec.sess
+		return ui.Card{ID: "home:live", OnClick: func() { a.openNotes(rec) }, Items: []ui.Node{ui.Aside{
 			Main: ui.VStack{Gap: 10, Items: []ui.Node{
 				ui.LiveTitle{Text: title, Detail: ui.Clock(time.Since(a.rec.started))},
 				ui.Para{Text: source, Muted: true, Small: true},
@@ -120,16 +147,35 @@ func (a *App) liveCard() ui.Node {
 	case len(a.downloads) > 0: // models first (a transcription waits for them)
 		return ui.VStack{Gap: 8, Items: a.modelCards(true)}
 	case a.working != nil:
-		// The transcription after a meeting, on the same card as a
-		// download: its background fills up as it goes.
-		detail := sessionWhen(a.working)
-		if limit := a.finalLimit(); limit > 0 {
-			detail += fmt.Sprintf(" · at most %d%% of the processor", limit)
-		}
-		return ui.ProgressCard{ID: "home:working", Title: "Transcribing " + sessionTitle(a.working), Detail: detail,
-			Trailing: fmt.Sprintf("%d%%", int(a.progress*100)), Value: a.progress}
+		return a.transcribeCard(a.working, "home:working", "Transcribing "+sessionTitle(a.working))
+	case a.sumRun != nil:
+		return a.summaryCard(a.sumRun, "home:summary", "Summarising "+a.sumRun.title)
 	}
 	return nil
+}
+
+// transcribeCard is a running transcription on the card downloads and
+// summaries use: its background fills up as it goes, showing where the
+// speech model runs and any processor cap.
+func (a *App) transcribeCard(s *session.Session, id, title string) ui.Node {
+	d := a.sampleDebug()
+	where := ""
+	if m, ok := a.shownModel(d); ok {
+		if a.transcribeOnGPU(d) {
+			where = m.Name + " on the graphics processor"
+		} else {
+			where = m.Name + " on the processor"
+		}
+	}
+	detail := sessionWhen(s)
+	if where != "" {
+		detail += " · " + where
+	}
+	if limit := a.finalLimit(); limit > 0 && !a.transcribeOnGPU(d) {
+		detail += fmt.Sprintf(" · at most %d%% of the processor", limit)
+	}
+	return ui.ProgressCard{ID: id, Title: title, Detail: detail,
+		Trailing: fmt.Sprintf("%d%%", int(a.progress*100)), Value: a.progress}
 }
 
 // --- recordings -----------------------------------------------------------
@@ -323,7 +369,13 @@ func (a *App) recordingRows(list []*session.Session, scope string, snippets map[
 		rows = append(rows, ui.RecordingRow{
 			ID: scope + ":" + s.Meta.ID, Live: a.rec != nil && a.rec.sess.Dir == s.Dir,
 			Title: sessionTitle(s), Facts: a.facts(s), Snippet: snippet, Trailing: a.stateText(s),
-			OnClick: func() { a.go_(pageSession + s.Meta.ID) },
+			OnClick: func() {
+				if a.isRecording(s) {
+					a.openNotes(s) // the running meeting: straight to its title or notes
+					return
+				}
+				a.go_(pageSession + s.Meta.ID)
+			},
 		})
 	}
 	return ui.Card{Gap: 0, Items: rows}
@@ -380,25 +432,58 @@ func plural(n int, what string) string {
 
 func (a *App) sessionPage(id string) ui.Node {
 	s := a.sessionByID(id)
-	back := ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Recordings", OnClick: func() { a.go_(pageRecordings) }}}}
+	back := ui.Node(ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Recordings", OnClick: func() { a.go_(pageRecordings) }}}})
 	if s == nil {
 		return ui.VStack{Gap: 8, Items: []ui.Node{back, ui.Para{Text: "This recording is gone.", Muted: true}}}
 	}
+	live := a.isRecording(s)
+	if live {
+		// The running meeting is not in Recordings yet: back goes Home; a
+		// small button on the right ends it.
+		back = ui.HStack{Items: []ui.Node{
+			ui.VStack{Items: []ui.Node{ui.HStack{Items: []ui.Node{ui.Link{ID: "session:back", Glyph: ui.GlyphBack, Label: "Home", OnClick: func() { a.go_(pageHome) }}}}}},
+			ui.Button{ID: "session:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, Small: true, OnClick: a.stopRecording},
+		}}
+	}
 	ready := s.Meta.State == session.Ready
+	focusTitle := a.focusTitle == id
+	if focusTitle {
+		a.focusTitle = "" // asked for once
+	}
 	title := ui.TextField{ID: "session:title", Title: true, Value: s.Meta.Title, Placeholder: defaultTitle(s), MaxLen: 80,
-		OnCommit: func(t string) { a.renameSession(s, t) }}
+		OnCommit: func(t string) { a.renameSession(s, t) }, Focus: focusTitle, Next: "notes:" + id}
 	items := []ui.Node{back, title,
 		ui.Label{Text: a.facts(s) + " · " + a.stateText(s), Muted: true}}
 	if card := a.meetingCard(s); card != nil {
 		items = append(items, card)
 	}
+	if a.working != nil && a.working.Dir == s.Dir {
+		items = append(items, a.transcribeCard(s, "session:working", "Transcribing"))
+	}
 	if s.Meta.State == session.Failed && s.Meta.Error != "" {
-		items = append(items, ui.Card{Items: []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}})
+		failItems := []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}
+		busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
+		if !busy && a.hasAudio(s) {
+			failItems = append(failItems, ui.HStack{Items: []ui.Node{
+				ui.Button{ID: "session:again", Label: "Transcribe again", Glyph: ui.GlyphRefresh, OnClick: func() { a.retranscribe(s) }},
+			}})
+		}
+		items = append(items, ui.Card{Gap: 8, Items: failItems})
+	}
+	if live {
+		// While it records: the notes, with room to write.
+		items = append(items, ui.Space(4))
+		items = append(items, a.notesSection(s, false)...)
+		return ui.VStack{Gap: 10, Items: items}
 	}
 	items = append(items, a.sessionActions(s)) // the player is docked below the page (frame)
+	items = append(items, ui.Space(8))
+	items = append(items, a.notesSection(s, true)...)
 	if ready {
+		items = append(items, ui.Space(8))
+		items = append(items, a.summarySection(s)...)
 		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Speakers", Right: a.analyzeLink(s)}, a.speakersCard(s))
-		items = append(items, ui.Space(8), ui.Caption("Transcript"), a.transcriptBlocks(s))
+		items = append(items, ui.Space(8), ui.CaptionRow{Text: "Transcript", Right: a.transcriptLinks(s)}, a.transcriptBlocks(s))
 	}
 	if files := a.filesCard(s); files != nil {
 		items = append(items, ui.Space(8), ui.Caption("Files"), files)
@@ -414,12 +499,7 @@ func (a *App) filesCard(s *session.Session) ui.Node {
 	}
 	var rows []ui.Node
 	if a.hasAudio(s) {
-		var size int64
-		for _, f := range []string{session.MeFile, session.ThemFile} {
-			if st, err := os.Stat(s.Path(f)); err == nil {
-				size += st.Size()
-			}
-		}
+		size := audioSize(s)
 		detail := "Both tracks, " + sysinfo.Bytes(uint64(size)) + "; needed to listen and to transcribe again"
 		rows = append(rows, ui.SettingRow{Label: "Audio", Detail: detail, Control: a.confirmButton("session:delaudio", "Delete audio", false, func() { a.deleteAudio(s) })}, ui.Divider{})
 	}
@@ -427,22 +507,44 @@ func (a *App) filesCard(s *session.Session) ui.Node {
 	return ui.Card{Gap: 2, Items: rows}
 }
 
-// sessionActions are a recording's smaller actions.
+// sessionActions are a recording's top actions: Copy (the summary) and Open folder.
 func (a *App) sessionActions(s *session.Session) ui.Node {
 	var btns []ui.Node
 	if s.Meta.State == session.Ready {
-		btns = append(btns,
-			ui.Button{ID: "session:copy", Label: "Copy", Glyph: ui.GlyphCopy, Primary: true, OnClick: func() { a.copyTranscript(s, false) }},
-			ui.Button{ID: "session:md", Label: "Copy as Markdown", OnClick: func() { a.copyTranscript(s, true) }})
+		id := s.Meta.ID
+		hasSummary := a.summaryFor(s) != nil
+		label := "Copy"
+		if a.copied == "session:copy:"+id && time.Since(a.copiedAt) < copiedFor {
+			label = "Copied"
+		}
+		btns = append(btns, ui.Button{ID: "session:copy", Label: label, Glyph: ui.GlyphCopy, Primary: hasSummary, Disabled: !hasSummary,
+			OnClick: func() { a.copySummary(id, true, "session:copy:"+id) }})
 	}
 	btns = append(btns, ui.Button{ID: "session:folder", Label: "Open folder", Glyph: ui.GlyphFolder, OnClick: func() { openFolder(s.Dir) }})
-	busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
-	if !busy {
-		if (s.Meta.State == session.Failed || s.Meta.State == session.Ready || s.Meta.State == session.Recorded) && a.hasAudio(s) {
-			btns = append(btns, ui.Button{ID: "session:again", Label: "Transcribe again", Glyph: ui.GlyphRefresh, OnClick: func() { a.retranscribe(s) }})
-		}
-	}
 	return ui.HStack{Gap: 8, Items: btns}
+}
+
+// transcriptLinks are the actions beside the Transcript caption: Transcribe
+// again (when audio is kept and idle), Copy as Markdown, and Copy.
+func (a *App) transcriptLinks(s *session.Session) ui.Node {
+	id := s.Meta.ID
+	var links []ui.Node
+	busy := (a.working != nil && a.working.Dir == s.Dir) || (a.rec != nil && a.rec.sess.Dir == s.Dir) || (a.finding != nil && a.finding.Dir == s.Dir)
+	if !busy && a.hasAudio(s) {
+		links = append(links, ui.Link{ID: "session:again", Glyph: ui.GlyphRefresh, Label: "Transcribe again", OnClick: func() { a.retranscribe(s) }})
+	}
+	mdLabel, copyLabel := "Copy as Markdown", "Copy"
+	if a.copied == "transcript:md:"+id && time.Since(a.copiedAt) < copiedFor {
+		mdLabel = "Copied"
+	}
+	if a.copied == "transcript:copy:"+id && time.Since(a.copiedAt) < copiedFor {
+		copyLabel = "Copied"
+	}
+	links = append(links,
+		ui.Link{ID: "transcript:md:" + id, Label: mdLabel, OnClick: func() { a.copyTranscriptAs(s, true, "transcript:md:"+id) }},
+		ui.Link{ID: "transcript:copy:" + id, Glyph: ui.GlyphCopy, Label: copyLabel, OnClick: func() { a.copyTranscriptAs(s, false, "transcript:copy:"+id) }},
+	)
+	return ui.HStack{Gap: 14, Right: true, Items: links}
 }
 
 // confirmButton is a destructive button that asks for a second click
@@ -468,14 +570,12 @@ func (a *App) confirmButtonAs(id, label, again string, large bool, act func()) u
 	}}
 }
 
-func (a *App) hasAudio(s *session.Session) bool {
-	return s.Has(session.MeFile) || s.Has(session.ThemFile)
-}
+func (a *App) hasAudio(s *session.Session) bool { return s.HasAudio() }
 
 // deleteAudio removes a recording's tracks and keeps its transcript.
 func (a *App) deleteAudio(s *session.Session) {
 	a.stopPlayer(s)
-	for _, f := range []string{session.MeFile, session.ThemFile} {
+	for _, f := range s.AudioFiles() {
 		if err := os.Remove(s.Path(f)); err != nil && !os.IsNotExist(err) {
 			logx.Printf("deleting %s of %s: %v", f, s.Meta.ID, err)
 		}
@@ -495,6 +595,11 @@ func (a *App) deleteRecording(s *session.Session) {
 func (a *App) renameSession(s *session.Session, title string) {
 	if err := s.SetTitle(title); err != nil {
 		logx.Printf("renaming %s: %v", s.Meta.ID, err)
+	}
+	// The running recording keeps its own copy of the session, saved again
+	// when it ends: it must carry the new name, or the name would be lost.
+	if a.rec != nil && a.rec.sess != s && a.rec.sess.Dir == s.Dir {
+		a.rec.sess.Meta.Title, a.rec.sess.Meta.TitleByUser = s.Meta.Title, s.Meta.TitleByUser
 	}
 	a.forget(s)
 	a.invalidate()

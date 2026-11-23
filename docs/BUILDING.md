@@ -14,7 +14,7 @@ No C compiler: flit is pure Go and calls the engine's prebuilt DLLs ([decisions/
 ## First-time setup
 
 ```powershell
-go run ./cmd/flitdev engine     # transcribe.cpp DLLs (18 MB download) → internal/engine/native/files
+go run ./cmd/flitdev engine     # transcribe.cpp CPU DLLs (18 MB download) → internal/engine/native/files (add -vulkan to also extract ggml-vulkan.dll for dev)
 go run ./cmd/flitdev models     # test models: whisper-tiny, parakeet 110M, Silero VAD, Sortformer (~320 MB) → models/
 go run ./cmd/flitdev testdata   # test meetings (~160 MB download) → testdata/meetings/
 go run ./cmd/flitdev icon       # assets/flit.ico from assets/logo.png (also done by the release script)
@@ -40,7 +40,30 @@ A build is **portable** (doesn't install itself) when a `go.mod` is next to it o
 .\flit-debug.exe transcribe --models models --model parakeet-ultra --meeting testdata\meetings\ami-IS1009a-5min --bleed
 ```
 
-`--meeting` transcribes a test meeting's Me and Them tracks in a real engine worker and prints the WER of each against the reference (on stderr; the transcript goes to stdout). Other flags: `--lang`, `--vocab a,b,c`, `--markdown`, `--threads`. `FLIT_ENGINE_LOG=1` shows the engine's log. A missing model is downloaded into the models folder.
+`--meeting` transcribes a test meeting's Me and Them tracks in a real engine worker and prints the WER of each against the reference (on stderr; the transcript goes to stdout). Other flags: `--lang`, `--vocab a,b,c`, `--markdown`, `--threads`, `--cpu=false` (use Vulkan GPU when `ggml-vulkan.dll` is present in the engine folder). `FLIT_ENGINE_LOG=1` shows the engine's log. A missing model is downloaded into the models folder.
+
+## Speaker names from the call app (experiments)
+
+```powershell
+.\flit-debug.exe transcribe --models models --model parakeet-ultra --speakers --meeting testdata\meetings\ami-IS1009a --save $env:TEMP\them.json
+go run ./cmd/flitdev callnames-sim -meeting testdata/meetings/ami-IS1009a -segments $env:TEMP\them.json
+.\scripts\uia-probe.ps1 -Process ms-teams            # during a real call: what the window exposes (texts redacted)
+.\scripts\uia-probe.ps1 -Process Zoom -Every 1 -Seconds 30 -Tree -Out probe.txt
+```
+
+`--save` writes the meeting track's segments with words and speakers. `callnames-sim` makes call-app evidence (active-speaker marks, captions, roster) from the meeting's reference turns under several conditions and scores per-line naming against `internal/callnames`' per-voice matching; `-v N` prints the votes per voice for condition N. The probe reads a process's windows through UI Automation and prints counts, timings and the signals that matter; `-Names` shows the texts (participants' names: keep the output on the PC). Results: [research/call-app-names.md](research/call-app-names.md).
+
+## Summaries
+
+```powershell
+go run ./cmd/flitdev llm                     # llama.cpp b12633 (Vulkan + CPU) → .cache\llama-b12633, candidate models → models\
+go run ./cmd/flitdev llm gemma-4-e4b         # a further candidate by ID (internal/models)
+go run ./cmd/flitdev summary -session testdata\private\<recording> -model qwen3.5-2b,qwen3.5-4b -device cpu -approach single,extract -me Moritz
+go run ./cmd/flitdev summary -meeting testdata\meetings\ami-IS1009a -notes testdata\notes\ami-IS1009a.md -model qwen3.5-4b -device cpu
+go run ./cmd/flitdev summary -session … -model qwen3.5-4b -device gpu,cpu -threads 4 -speed   # reading and writing speed only
+```
+
+`-session` reads a flit recording's folder (copy one from `%LOCALAPPDATA%\flit\sessions` into `testdata\private\`, which git ignores); `-meeting` a test meeting's reference transcript, with `-notes` as its notes (times from the `.json` beside it). Each model × device × approach starts its own server and prints tokens and speeds per call, the total and the peak memory; the summary, every prompt and the figures go to `.cache\summaries\` (`-out`). `-device gpu` falls back to the CPU when Vulkan fails. `-limit 10m` uses only the start of a meeting, `-instruction "…"` adds the user's instruction, `-nocues` leaves out the note and name marks, `-cpulimit 50` runs under the job object the app uses. Results: [research/summary-experiments.md](research/summary-experiments.md).
 
 ## Recording by hand
 

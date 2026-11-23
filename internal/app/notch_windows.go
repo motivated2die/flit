@@ -43,6 +43,10 @@ func (a *App) onNotchButton(id string) {
 		a.refresh()
 	case "stop":
 		a.stopRecording()
+	case "notes":
+		if a.rec != nil {
+			a.openNotes(a.rec.sess)
+		}
 	case "copy":
 		a.copyTranscript(a.lastReady, false) // "Transcript copied" replaces it
 	case "open":
@@ -95,7 +99,7 @@ func (a *App) showRecording() {
 		return
 	}
 	a.notch.Show(ui.NotchView{Mode: ui.NotchRecording, Title: "Recording", Since: a.rec.started, Collapsible: true,
-		Buttons: []ui.NotchButton{{ID: "stop", Label: "Stop"}}})
+		Buttons: []ui.NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}}})
 }
 
 // showWorking shows the transcription after a meeting (start) and keeps

@@ -20,6 +20,7 @@ import (
 	"github.com/motivated2die/flit/internal/instance"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/session"
+	"github.com/motivated2die/flit/internal/sysinfo"
 	"github.com/motivated2die/flit/internal/transcript"
 	"github.com/motivated2die/flit/internal/ui"
 )
@@ -56,13 +57,14 @@ func Run(args []string) int {
 
 // App is the tray app. Its fields belong to the UI thread unless noted.
 type App struct {
-	dataDir  string
-	cfg      config.Config
-	portable bool // a development build: never installs or updates itself
-	tray     *ui.Tray
-	notch    *ui.Notch // nil: notifications instead
-	win      *ui.Window
-	panel    *ui.Panel // nil: the native menu instead
+	dataDir    string
+	cfg        config.Config
+	portable   bool // a development build: never installs or updates itself
+	tray       *ui.Tray
+	notch      *ui.Notch // nil: notifications instead
+	win        *ui.Window
+	panel      *ui.Panel       // nil: the native menu instead
+	notesFloat *ui.FloatWindow // always-on-top popped-out notes panel
 
 	// The Audio page's devices and level meters.
 	devs        devices
@@ -78,6 +80,7 @@ type App struct {
 	// voiceSmooth keeps the voice meter's bars between frames.
 	voiceSmooth ui.MeterSmoother
 	dbg         debugState
+	gpu         sysinfo.GPUInfo // detected once at start-up (DXGI + vulkan-1.dll)
 
 	watcher   *detect.Watcher
 	detected  *detect.Candidate // a meeting going on that isn't recorded
@@ -124,6 +127,18 @@ type App struct {
 	autoToken int
 	confirmAt time.Time
 	paraCache map[string][]transcript.Paragraph
+	// notes are the recordings' notes being edited (notes_windows.go);
+	// focusNotes asks the next layout to give that recording's editor the
+	// keyboard.
+	notes       map[string]*notesState
+	summaries   map[string]*notesState // nil entry: none written
+	sumRun      *summaryRun            // the summary being written
+	sumErr      map[string]string      // why a recording's last summary failed
+	sumInstr    map[string]string      // the extra instruction typed, per recording
+	focusNotes  string
+	focusTitle  string // the same for a recording's title field
+	pinnedNotes string // session ID shown in notesFloat ("" when not pinned)
+	focusFloat  bool   // ask notesFloat's editor for keyboard focus once
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
@@ -176,6 +191,7 @@ func runTray(args []string) int {
 	if a.cfg, err = config.Load(dataDir); err != nil {
 		logx.Printf("config: %v", err)
 	}
+	a.initGPU()
 	a.syncProviders()
 	a.tray, err = ui.NewTray("flit")
 	if err != nil {
@@ -203,6 +219,7 @@ func runTray(args []string) int {
 
 	a.jobs = startJobs(a)
 	a.applyFinalLimit()
+	a.applyGPU()
 	a.startCalendar()
 	for _, s := range session.Recover(dataDir) {
 		logx.Printf("session %s: picked up again (%s)", s.Meta.ID, s.Meta.State)
@@ -358,6 +375,28 @@ func (a *App) copyTranscript(s *session.Session, markdown bool) {
 	a.refresh()
 }
 
+// copyTranscriptAs copies the transcript from a section link and briefly shows
+// "Copied" on key.
+func (a *App) copyTranscriptAs(s *session.Session, markdown bool, key string) {
+	if s == nil || a.tray == nil {
+		return
+	}
+	text, err := s.Transcript(markdown)
+	if err == nil {
+		err = ui.SetClipboard(a.tray.Hwnd(), text)
+	}
+	if err != nil {
+		logx.Printf("copy: %v", err)
+		return
+	}
+	if a.lastReady == s {
+		a.lastReady = nil
+	}
+	a.copied, a.copiedAt = key, time.Now()
+	a.refresh()
+	time.AfterFunc(copiedFor, func() { a.tray.Post(a.invalidate) })
+}
+
 func (a *App) save() {
 	a.syncProviders()
 	if err := config.Save(a.dataDir, a.cfg); err != nil {
@@ -367,6 +406,11 @@ func (a *App) save() {
 
 func (a *App) quit() {
 	logx.Printf("quit")
+	if a.notesFloat != nil {
+		a.notesFloat.Hide()
+	}
+	a.saveAllNotes()
+	a.cancelSummary() // the server is in a job that also ends with flit
 	a.shutdown()
 	a.tray.Quit()
 }

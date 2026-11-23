@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/motivated2die/flit/internal/audio/m4a"
 	"github.com/motivated2die/flit/internal/audio/wav"
 )
 
@@ -54,6 +55,60 @@ func TestToMono(t *testing.T) {
 	got = ToMono(nil, b24, Format{Rate: 48000, Channels: 2, Bits: 24, BlockAlign: 6})
 	if math.Abs(float64(got[0])-0.5) > 1e-6 {
 		t.Fatalf("int24: %v", got)
+	}
+
+	// 8-channel (7.1 surround, e.g. SteelSeries Sonar) with stereo audio in FL+FR
+	// and silence in surround channels + rumble in LFE: must preserve unity gain
+	// instead of dividing by 8 (-12 dB) and skip LFE.
+	b8 := make([]byte, 8*4)
+	ch8 := []float32{0.6, 0.4, 0, 0.9, 0, 0, 0, 0} // FL=0.6, FR=0.4, LFE=0.9 (skipped)
+	for i, v := range ch8 {
+		binary.LittleEndian.PutUint32(b8[4*i:], math.Float32bits(v))
+	}
+	f8 := Format{Rate: 96000, Channels: 8, Bits: 32, Float: true, BlockAlign: 32}
+	got = ToMono(nil, b8, f8)
+	if len(got) != 1 || math.Abs(float64(got[0])-0.5) > 1e-5 {
+		t.Fatalf("7.1 ToMono = %v, want 0.5", got)
+	}
+	st := ToStereo(nil, b8, f8)
+	if len(st) != 2 || math.Abs(float64(st[0])-0.6) > 1e-5 || math.Abs(float64(st[1])-0.4) > 1e-5 {
+		t.Fatalf("7.1 ToStereo = %v, want [0.6 0.4]", st)
+	}
+}
+
+func TestTrack48kStereoM4A(t *testing.T) {
+	if !m4a.Available() {
+		t.Skip("Media Foundation AAC unavailable")
+	}
+	path := filepath.Join(t.TempDir(), "them.m4a")
+	tr, err := NewTrackFormat(path, StoreRate, 2, 96000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tapped int
+	tr.Tap = func(p []float32) { tapped += len(p) }
+	// Feed 1 second of 48 kHz stereo (440 Hz on L, 880 Hz on R).
+	blk := make([]float32, 4800*2)
+	for i := range 4800 {
+		blk[2*i] = float32(0.5 * math.Sin(2*math.Pi*440*float64(i)/48000))
+		blk[2*i+1] = float32(0.4 * math.Sin(2*math.Pi*880*float64(i)/48000))
+	}
+	for range 10 {
+		tr.WriteInterleaved(48000, blk)
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if abs(tapped-16000) > 8 {
+		t.Errorf("16 kHz Tap got %d samples, want ~16000", tapped)
+	}
+	f, err := m4a.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if f.Format.SampleRate != 48000 || f.Format.Channels != 2 || f.Frames() != 48000 {
+		t.Fatalf("m4a format=%+v frames=%d", f.Format, f.Frames())
 	}
 }
 

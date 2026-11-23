@@ -56,7 +56,7 @@ func (a *App) countUsage() {
 
 func audioSize(s *session.Session) int64 {
 	var n int64
-	for _, f := range []string{session.MeFile, session.ThemFile} {
+	for _, f := range s.AudioFiles() {
 		if st, err := os.Stat(s.Path(f)); err == nil {
 			n += st.Size()
 		}
@@ -77,7 +77,7 @@ func (a *App) deleteAudioWhere(match func(*session.Session) bool) {
 			continue
 		}
 		a.stopPlayer(s)
-		for _, f := range []string{session.MeFile, session.ThemFile} {
+		for _, f := range s.AudioFiles() {
 			if err := os.Remove(s.Path(f)); err != nil && !os.IsNotExist(err) {
 				logx.Printf("deleting %s of %s: %v", f, s.Meta.ID, err)
 			}
@@ -238,6 +238,7 @@ func (a *App) removeSession(s *session.Session) bool {
 		return false
 	}
 	a.stopPlayer(s)
+	a.dropNotes(s.Meta.ID)
 	if err := os.RemoveAll(s.Dir); err != nil {
 		logx.Printf("deleting %s: %v", s.Meta.ID, err)
 		return false

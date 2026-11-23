@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/motivated2die/flit/internal/audio/wav"
+	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/pipeline"
 	"github.com/motivated2die/flit/internal/transcript"
 )
@@ -46,9 +46,9 @@ func (s *Session) Transcribe(ctx context.Context, e pipeline.Engine, opt pipelin
 	}()
 
 	tracks := []struct {
-		file  string
+		side  string
 		track transcript.Track
-	}{{MeFile, transcript.Me}, {ThemFile, transcript.Them}}
+	}{{"me", transcript.Me}, {"them", transcript.Them}}
 	var results [2][]transcript.Segment
 	var themPCM []float32
 	diar, canDiarize := e.(pipeline.Diarizer)
@@ -73,16 +73,13 @@ func (s *Session) Transcribe(ctx context.Context, e pipeline.Engine, opt pipelin
 	// files, saving the state after each chunk.
 	live := s.loadLive(opt.Language)
 	for i, t := range tracks {
-		if !s.Has(t.file) {
+		file := s.TrackFile(t.side)
+		if file == "" {
 			continue
 		}
-		f, err := wav.Open(s.Path(t.file))
+		f, err := track.OpenMono(s.Path(file), pipeline.Rate)
 		if err != nil {
-			return fmt.Errorf("%s: %w", t.file, err)
-		}
-		if f.Format.SampleRate != pipeline.Rate {
-			f.Close()
-			return fmt.Errorf("%s: %d Hz", t.file, f.Format.SampleRate)
+			return fmt.Errorf("%s: %w", file, err)
 		}
 		p := live.track(t.track)
 		_, err = p.Step(ctx, e, f, true, opt, func() { _ = s.saveLive(live) }, func(done, total int64) { report(i, done, total) })
@@ -92,13 +89,13 @@ func (s *Session) Transcribe(ctx context.Context, e pipeline.Engine, opt pipelin
 		}
 		results[i] = p.Segments
 	}
-	if speakers && s.Has(ThemFile) {
+	if themFile := s.TrackFile("them"); speakers && themFile != "" {
 		// Telling speakers apart needs the meeting's track in one piece.
-		a, err := wav.ReadFile(s.Path(ThemFile))
+		pcm, err := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
 		if err != nil {
-			return fmt.Errorf("%s: %w", ThemFile, err)
+			return fmt.Errorf("%s: %w", themFile, err)
 		}
-		themPCM = a.Samples
+		themPCM = pcm
 	}
 	s.Meta.Speakers, s.Meta.SpeakersError = 0, ""
 	if speakers && len(results[1]) > 0 {
@@ -151,16 +148,17 @@ func (s *Session) assignSpeakers(ctx context.Context, d pipeline.Diarizer, pcm [
 // (its meeting track must still be there) and rewrites the transcript. The
 // words stay as they are.
 func (s *Session) FindSpeakers(ctx context.Context, d pipeline.Diarizer) error {
-	if !s.Has(ThemFile) {
+	themFile := s.TrackFile("them")
+	if themFile == "" {
 		return fmt.Errorf("the meeting's recording was not kept")
 	}
 	segs, err := s.Segments()
 	if err != nil {
 		return err
 	}
-	a, err := wav.ReadFile(s.Path(ThemFile))
+	pcm, err := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ThemFile, err)
+		return fmt.Errorf("%s: %w", themFile, err)
 	}
 	var me, them []transcript.Segment
 	for _, seg := range segs {
@@ -170,7 +168,7 @@ func (s *Session) FindSpeakers(ctx context.Context, d pipeline.Diarizer) error {
 			them = append(them, seg)
 		}
 	}
-	them, err = s.assignSpeakers(ctx, d, a.Samples, them)
+	them, err = s.assignSpeakers(ctx, d, pcm, them)
 	if err != nil {
 		s.Meta.SpeakersError = err.Error()
 		_ = s.Save()
