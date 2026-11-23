@@ -51,41 +51,48 @@ func (a *App) act(fn func()) func() {
 	}
 }
 
-func (a *App) panelContent() ui.Node {
-	footer := ui.HStack{Items: []ui.Node{
-		ui.BrandLink{ID: "panel:open", Detail: "Click to open the app", OnClick: a.act(a.openWindow)},
-		ui.Space(0),
-		ui.Inset{Top: 4, Child: ui.Button{ID: "panel:quit", Label: "Quit", Glyph: ui.GlyphPower, HoverDanger: true, OnClick: a.act(a.quit)}},
-	}}
-	if a.rec != nil {
-		// While recording, the active recording section sits in a darker top
-		// extension sliding out from behind the rounded bottom card.
-		var body []ui.Node
-		if meetings := a.panelMeetings(); len(meetings) > 1 {
-			// Skip the leading divider: the rounded card edge separates it.
-			body = append(body, meetings[1:]...)
-			body = append(body, ui.Divider{})
-		}
-		body = append(body, footer)
-		return ui.PanelSheet{
-			Top:  a.panelStatus(),
-			Body: ui.VStack{Gap: 8, Items: body},
+// panelAct runs a status-section action while keeping the panel open so it
+// transitions straight into the new state and refits its height.
+func (a *App) panelAct(fn func()) func() {
+	return func() {
+		fn()
+		if a.panel != nil {
+			a.panel.Refresh()
 		}
 	}
-	items := []ui.Node{a.panelStatus()}
-	items = append(items, a.panelMeetings()...)
-	if s := a.latestReady(); s != nil {
+}
+
+func (a *App) panelContent() ui.Node {
+	var body []ui.Node
+	if meetings := a.panelMeetings(); len(meetings) > 1 {
+		// Skip the leading divider: the rounded card edge separates it.
+		body = append(body, meetings[1:]...)
+	}
+	if s := a.latestReady(); s != nil && a.rec == nil {
+		if len(body) > 0 {
+			body = append(body, ui.Divider{})
+		}
 		facts := s.Meta.Started.Format("Mon 2 Jan · 15:04")
 		if w := len(strings.Fields(a.preview(s))); w > 0 {
 			facts += " · " + plural(w, "word")
 		}
-		items = append(items, ui.Divider{}, ui.Caption("Latest transcript"),
+		body = append(body, ui.Caption("Latest transcript"),
 			ui.RecordingRow{ID: "panel:latest", Title: sessionTitle(s), Facts: facts, NoIcon: true,
 				Actions: []ui.Node{ui.RoundButton{ID: "panel:latest:copy", Glyph: ui.GlyphCopy, OnClick: a.act(func() { a.copyTranscript(s, false) })}},
 				OnClick: a.act(func() { a.openPage(pageSession + s.Meta.ID) })})
 	}
-	items = append(items, ui.Divider{}, footer)
-	return ui.VStack{Gap: 8, Items: items}
+	if len(body) > 0 {
+		body = append(body, ui.Divider{})
+	}
+	body = append(body, ui.HStack{Items: []ui.Node{
+		ui.BrandLink{ID: "panel:open", Detail: "Click to open the app", OnClick: a.act(a.openWindow)},
+		ui.Space(0),
+		ui.Inset{Top: 4, Child: ui.Button{ID: "panel:quit", Label: "Quit", Glyph: ui.GlyphPower, HoverDanger: true, OnClick: a.act(a.quit)}},
+	}})
+	return ui.PanelSheet{
+		Top:  a.panelStatus(),
+		Body: ui.VStack{Gap: 8, Items: body},
+	}
 }
 
 // panelStatus is the panel's top: what flit is doing and the one action
@@ -100,8 +107,8 @@ func (a *App) panelStatus() ui.Node {
 		return ui.VStack{Gap: 10, Items: []ui.Node{
 			ui.LiveTitle{Text: shorten(title, 24), Detail: ui.Clock(time.Since(a.rec.started))},
 			ui.HStack{Gap: 8, Items: []ui.Node{
-				ui.Button{ID: "panel:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.act(a.stopRecording)},
-				a.confirmButtonAs("panel:cancel", "Cancel", "Click again", false, a.act(a.cancelRecording)),
+				ui.Button{ID: "panel:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.panelAct(a.stopRecording)},
+				a.confirmButtonAs("panel:cancel", "Cancel", "Click again", false, a.panelAct(a.cancelRecording)),
 			}},
 			ui.VoiceMeter{Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Flat: true},
 		}}
@@ -114,8 +121,8 @@ func (a *App) panelStatus() ui.Node {
 		return ui.VStack{Gap: 10, Items: []ui.Node{
 			ui.Label{Text: providerName(c.Provider) + " meeting detected", Large: true},
 			ui.HStack{Gap: 8, Items: []ui.Node{
-				ui.Button{ID: "panel:record", Label: record, Glyph: ui.GlyphRecord, Primary: true, OnClick: a.act(func() { a.startRecording(&c) })},
-				ui.Button{ID: "panel:dismiss", Label: cancel, OnClick: a.act(func() { a.onNotchButton("dismiss") })},
+				ui.Button{ID: "panel:record", Label: record, Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(&c) })},
+				ui.Button{ID: "panel:dismiss", Label: cancel, OnClick: a.panelAct(func() { a.onNotchButton("dismiss") })},
 			}},
 		}}
 	case a.working != nil || a.status != "":
@@ -130,6 +137,6 @@ func (a *App) panelStatus() ui.Node {
 	}
 	return ui.VStack{Gap: 10, Items: []ui.Node{
 		ui.Label{Text: "Ready and idle", Large: true},
-		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.act(func() { a.startRecording(nil) })}}},
+		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(nil) })}}},
 	}}
 }
