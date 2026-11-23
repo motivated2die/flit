@@ -97,16 +97,24 @@ func mbText(n int64) string {
 	return fmt.Sprintf("%.0f MB", float64(n)/1e6)
 }
 
-// summaryModel is the model summaries use on this PC: the lighter one
-// unless there is memory to spare (docs/research/summary-experiments.md).
-func summaryModel() models.Model {
+// summaryModelMinRAM4B is the minimum Windows-visible physical RAM for
+// Qwen3.5 4B. A 16 GB laptop with an integrated GPU carving out 1–2 GiB of
+// UMA VRAM reports ~13.8–14.8 GiB via GlobalMemoryStatusEx, whereas 8–12 GB
+// PCs stay at or below 12 GiB (docs/research/summary-experiments.md).
+const summaryModelMinRAM4B = 13 << 30
+
+func summaryModelForMemory(totalBytes uint64) models.Model {
 	id := "qwen3.5-2b"
-	if llm.TotalMemory() >= 15<<30 {
+	if totalBytes >= summaryModelMinRAM4B {
 		id = "qwen3.5-4b"
 	}
 	m, _ := models.ByID(id)
 	return m
 }
+
+// summaryModel is the model summaries use on this PC: the lighter one
+// unless there is memory to spare (docs/research/summary-experiments.md).
+func summaryModel() models.Model { return summaryModelForMemory(llm.TotalMemory()) }
 
 func llmDir(dataDir string) string { return filepath.Join(dataDir, "llm", llm.RuntimeVersion) }
 

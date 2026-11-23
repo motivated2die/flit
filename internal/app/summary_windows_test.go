@@ -217,6 +217,25 @@ func TestDebugLinesActiveTaskModel(t *testing.T) {
 	}
 }
 
+func TestSummaryModelForMemory(t *testing.T) {
+	cases := []struct {
+		name string
+		ram  uint64
+		want string
+	}{
+		{"8 GB laptop", 7800 << 20, "qwen3.5-2b"},
+		{"12 GB laptop", 12 << 30, "qwen3.5-2b"},
+		{"16 GB laptop with 2 GiB iGPU carve-out", 14100 << 20, "qwen3.5-4b"},
+		{"16 GB laptop with 1 GiB iGPU carve-out (Ryzen 5 5500U)", 15915737088, "qwen3.5-4b"},
+		{"32 GB desktop", 32 << 30, "qwen3.5-4b"},
+	}
+	for _, tc := range cases {
+		if got := summaryModelForMemory(tc.ram).ID; got != tc.want {
+			t.Errorf("%s (%d bytes): got %q, want %q", tc.name, tc.ram, got, tc.want)
+		}
+	}
+}
+
 func nodeHasField(n ui.Node, id string) bool {
 	switch v := n.(type) {
 	case ui.TextField:

@@ -56,7 +56,7 @@ The tray process never holds a model (as with transcription). The LLM process st
 - **Meters**: the sidebar's debug lines and core squares follow llama-server while it runs, as they follow the speech worker while transcribing, plus a GPU square when it runs on the graphics processor ([design.md](../design.md)); the Debug page gets a "Summary model" card.
 - A recording that starts **stops a running summary** (nothing heavy during a call); its page says to write it again afterwards.
 - Settings → Summaries: **Your name** (also added to the speech vocabulary), the model chosen for the PC, "Use the graphics processor".
-- The model: Qwen3.5 4B on PCs with 15 GB of memory or more, Qwen3.5 2B below ([why](../research/summary-experiments.md#choice)).
+- The model: Qwen3.5 4B on PCs with 13 GiB of Windows-visible physical memory or more (covering 16 GB laptops with 1–2 GiB iGPU UMA carve-outs), Qwen3.5 2B below ([why](../research/summary-experiments.md#choice)).
 - The log gets counts and times, never text: `summary of …: qwen3.5-4b, single on cpu, 4484 tokens read in 25 s, …`.
 
 ## A summary's run (as planned)

@@ -33,7 +33,9 @@ Runtime **1**, with the same client reaching a user's other local server (5, whi
 
 **First version built and measured on the desktop (2026-11-22/23, [summary-experiments.md](../research/summary-experiments.md))**, which changed the plan in three points: (1) Qwen3.5 4B is the default writer where there are 15 GB of memory (the only candidate with usable German notes; ~7 min per hour of meeting at 4 desktop CPU threads, ~20 s on the desktop's RX 7800 XT via Vulkan), Qwen3.5 2B below; Granite 4.0 H Micro is out; (2) the single pass (A) beat extract-then-write (C) on quality and time for a 14-minute meeting, so A is the default up to ~50 minutes; (3) each `@flit` question gets its own short call on its excerpt. The desktop's GPU initially failed in Vulkan (`ErrorDeviceLost`) because an implicit overlay layer (`VK_LAYER_Twitch_Overlay`) broke `vkCreateDevice`; disabling implicit layers (`VK_LOADER_LAYERS_DISABLE=~implicit~`, as the speech worker already does) fixed it, while the CPU fallback stays in place for drivers that genuinely fail.
 
-To accept: the speed and memory numbers on the author's laptop (CPU and its integrated AMD GPU), and notes quality on AMI IS1009a–d (actions and decisions found, invented, owners) and German meetings, for two or three candidates.
+**Measured on the work laptop (2026-11-23, Ryzen 5 5500U + Radeon Vega 7 iGPU, 16 GB RAM / 14.82 GiB usable):** full Vulkan offload (`-ngl 999`) beat both `-ngl 0` and CPU Balanced on both models; Qwen3.5 4B on Vulkan Balanced ran a sustained 14-minute summary in 2m46s (~10.3 min/hr estimated, 3.51 GB peak RAM vs. 4.47 GB on CPU), staying within the 15-minute ceiling. Lowered the 4B memory threshold from 15 GiB to 13 GiB so 16 GB iGPU laptops with 1–2 GiB UMA carve-outs select Qwen3.5 4B.
+
+To accept: notes quality on AMI IS1009a–d (actions and decisions found, invented, owners) and German meetings, for two or three candidates.
 
 ## Consequences
 

@@ -38,9 +38,33 @@ WER, substitution, deletion and insertion counts were identical across CPU and V
 
 Sortformer on Vulkan was **15.3× faster** than CPU Balanced on `ami-IS1009a-5min` with **bit-identical** turn count (65 turns), DER (`51.6%`: 24 s missed, 7 s false alarm, 15 s confusion), and speaker mapping (`1:FIO087 2:FIO084 3:FIO089`).
 
-### Integrated GPU reference (not yet measured on the author's laptop)
+### Measured on the work laptop (Ryzen 5 5500U + Radeon Vega 7 iGPU, 2026-11-23)
 
-`transcribe.cpp`'s published benchmark (`references/transcribe-cpp/docs/models/parakeet-ultra.md`) on an AMD Ryzen 7 PRO 4750U (Radeon iGPU) reports `parakeet-ultra-Q8_0` at **21.8× RT on Vulkan vs. 11.6× RT on CPU** (~1.9× faster). Real-call iGPU smoothness during live video calls on the author's laptop remains to be measured.
+Hardware: Lenovo ThinkPad `20YHS02900` (Windows 11 Enterprise 26200, non-admin), **AMD Ryzen 5 5500U** (6C/12T), **16 GB RAM** (14.82 GiB Windows-visible physical RAM after 1 GiB UMA carve-out), **AMD Radeon(TM) Graphics** (Vega 7, `deviceID 0x164c`, AMD proprietary driver `23.19.23.13`, Vulkan 1.3.260, `shaderFloat16 = true`, 768 MiB + 256 MiB device-local heaps + 7.16 GiB shared heap).
+
+- **`sysinfo.DetectGPU()`**: `ready=true`, `recommended=final`, `vulkan=true`, `ram=14.82 GB`, `best="AMD Radeon(TM) Graphics (integrated)"`.
+- **`sysinfo.GPUMeter`**: `\GPU Engine(*)\Utilization Percentage` PDH counters report live per-process GPU load (`TestGPUMeterReadsAProcess` passes).
+- **Model loading**: both `parakeet-ultra-Q8_0.gguf` (705.8 MiB) and `diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf` (132.8 MiB) load simultaneously into `Vulkan0` without OOM or CPU fallback; `silero-vad-v6.2-F32.gguf` (1.2 MiB) stays strictly on CPU.
+
+5-minute dual-track benchmark (two 300 s tracks = 10 min audio interleaved from `testdata/jfk.wav` and `testdata/fleurs-de.wav`, 25 turns + 300 s Sortformer diarization; Balanced cap on 12 logical processors = 50%, 6 threads):
+
+| Setup | `me` (300 s) | `them` (300 s) | Sortformer (300 s) | Total | vs. CPU Balanced |
+|---|---:|---:|---:|---:|---:|
+| CPU Balanced (50%, 6 threads) | 26.5 s (11.3× RT) | 39.8 s (7.5× RT) | 22.0 s (13.7× RT) | **88.3 s** | 1.0× |
+| CPU unlimited | 21.0 s (14.3× RT) | 32.7 s (9.2× RT) | 19.2 s (15.6× RT) | **72.9 s** | 1.21× |
+| Vulkan iGPU unlimited (cold shaders) | 12.8 s (23.4× RT) | 14.8 s (20.3× RT) | 10.3 s (29.3× RT) | **37.9 s** | 2.33× |
+| **Vulkan iGPU + Balanced (50%, 6 threads, warm)** | **10.7 s (28.0× RT)** | **14.5 s (20.6× RT)** | **8.8 s (34.2× RT)** | **34.0 s** | **2.60×** |
+
+Live-step simulation (`--live-step 15`, 25% CPU cap / 3 threads, matching Live Balanced):
+
+| Live setup | `me` (300 s) | `them` (300 s) | End-of-call tail |
+|---|---:|---:|---:|
+| CPU Live Balanced (25%, 3t) | 33.6 s (8.9× RT) | 54.9 s (5.5× RT) | 10.9 s (3.9 s + 7.0 s) |
+| Vulkan iGPU Live (25%, 3t) | 11.5 s (26.1× RT) | 15.3 s (19.6× RT) | 3.2 s (1.1 s + 2.1 s) |
+
+Takeaways:
+- **Post-meeting & speakers (`final`, default on iGPU)**: Vulkan is **2.60× faster** than CPU Balanced (`88.3 s → 34.0 s`; an hour-long meeting drops from ~17.7 min to ~6.8 min) with zero slowdown from the 50% CPU cap and matches `transcribe.cpp`'s published Ryzen 7 PRO 4750U reference (`21.8× RT` Vulkan vs. `11.6× RT` CPU).
+- **Live (`final` vs. `both`)**: CPU Live Balanced already keeps up easily in real time (5.5–8.9× RT, 10.9 s tail) while leaving the iGPU untouched for Teams/Zoom video decode/encode, confirming `"final"` as the right default on integrated GPUs while `"both"` also works cleanly for users who opt in.
 
 ## Model placement & hardware readiness checks
 

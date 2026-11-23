@@ -111,9 +111,41 @@ Writing hardly grows with the meeting (the notes are 550–700 tokens for 6 or 1
 
 Within the author's 15 minutes per hour for the 4B if the laptop's CPU is at least half the desktop's at 4 threads; the iGPU reading the prompt would shorten the larger part. Two things not yet measured: reading speed at 16k tokens of context (measured up to 3.7k: no slowdown; Qwen3.5's linear-attention layers should keep it flat, unverified), and the laptop itself.
 
+## Measured on the work laptop (Ryzen 5 5500U + Radeon Vega 7 iGPU, 2026-11-23)
+
+Hardware: Lenovo ThinkPad `20YHS02900` (Windows 11 Enterprise 26200, non-admin), AMD Ryzen 5 5500U (6C/12T, 15 W TDP), **16 GB RAM** (14.82 GiB Windows-visible physical RAM after 1 GiB UMA carve-out), AMD Radeon(TM) Graphics (Vega 7, Vulkan 1.3.260). `llama-server b12633` with `VK_LOADER_LAYERS_DISABLE=~implicit~` enumerates `Vulkan0: AMD Radeon(TM) Graphics (8357 MiB, 7939 MiB free)` and runs cleanly on `gpu` (`-ngl 999`) and `gpu-prefill` (`-ngl 0`) without device loss or CPU fallback.
+
+### Short-burst speed (`flitdev summary -speed`, ~1,000 read / 48 write tokens)
+
+| Model | Device | Unlimited (read / write / load) | Balanced `-cpulimit 50 -threads 6` (read / write / load) |
+|---|---|---|---|
+| Qwen3.5 2B | **`gpu` (`-ngl 999`)** | 109* / 16.7 t/s (6.3 s) | **172 / 18.5 t/s (3.5 s)** |
+| Qwen3.5 2B | `gpu-prefill` (`-ngl 0`) | 133 / 19.1 t/s (2.1 s) | 153 / 18.3 t/s (2.0 s) |
+| Qwen3.5 2B | `cpu` | 126 / 19.6 t/s (2.0 s) | 106 / 17.6 t/s (2.0 s) |
+| Qwen3.5 4B | **`gpu` (`-ngl 999`)** | **67 / 8.1 t/s (5.9 s)** | **66 / 8.0 t/s (6.5 s)** |
+| Qwen3.5 4B | `gpu-prefill` (`-ngl 0`) | 62 / 7.7 t/s (4.4 s) | 63 / 7.7 t/s (4.2 s) |
+| Qwen3.5 4B | `cpu` | 48 / 8.2 t/s (3.8 s) | 51 / 9.1 t/s (3.8 s) |
+
+*\*First `qwen3.5-2b · gpu` run included initial Vulkan shader cache compilation.*
+
+### Sustained full 14-minute meeting summary (`single`, `ctx 8192`, Balanced `-cpulimit 50 -threads 6`)
+
+Measured on a synthetic 13:52 English meeting fixture (84 turns, 3,607 prompt tokens, 2 `@flit` notes; AMI server was returning 503 during this run):
+
+| Model | Device | Wall | Read (3,607 tok) | Write | Peak RAM | Est. 1-hour meeting (sustained) |
+|---|---|---:|---:|---:|---:|---:|
+| Qwen3.5 2B | **`gpu` (`-ngl 999`)** | **1m04.5s** | 95 t/s (38.2 s) | 16.1 t/s (423 tok) | **1.83 GB** | **~3.8 min** (linear: 4m39s) |
+| **Qwen3.5 4B** | **`gpu` (`-ngl 999`)** | **2m46.0s** | **36 t/s (100.4 s)** | 5.5 t/s (360 tok) | **3.51 GB** | **~10.3 min** (linear: 11m58s) |
+| Qwen3.5 4B | `cpu` (Balanced 50%/6t) | 3m15.6s | 28 t/s (128.5 s) | 6.1 t/s (412 tok) | 4.47 GB | ~12.1 min (linear: 14m06s) |
+
+Lessons from the laptop:
+- **Full Vulkan offload (`gpu`, `-ngl 999`) beats both `gpu-prefill` (`-ngl 0`) and `cpu` Balanced** on this AMD iGPU: faster prefill (+62% burst on 2B; +29% burst and sustained on 4B), ~1 GB lower process RAM working set on 4B (3.51 GB vs. 4.47 GB), and offloads compute off the CPU cores.
+- **Sustained thermal throttling on 15 W laptops matters**: 4B settles from 66 → 36 read t/s and 8.0 → 5.5 write t/s over a 3-minute run, yet still lands at **~10.3 min per hour of meeting** — comfortably inside the 15-minute ceiling.
+- **16 GB iGPU RAM threshold bug fixed**: `GlobalMemoryStatusEx.TotalPhys` reported **14.82 GiB** on this 16 GB laptop because of the 1 GiB UMA carve-out, which caused the original `>= 15<<30` check in `internal/app/summary_windows.go` to downgrade it to `qwen3.5-2b` (`TestSummaryEndToEnd` ran on `qwen3.5-2b`). Lowered `summaryModelMinRAM4B` to `13<<30` (13 GiB), keeping 8–12 GB PCs on `qwen3.5-2b` while letting 16 GB iGPU laptops (even with 1–2 GiB UMA carve-out) use `qwen3.5-4b`.
+
 ## Choice
 
-- **Model**: **Qwen3.5 4B** where the PC has 15 GB of memory or more (peak 5.2 GB in use while it runs), **Qwen3.5 2B** below. The 4B is the only candidate whose German notes are worth giving to a user; the 2B is the fallback for small PCs, with the errors described. Gemma 4 E2B is a candidate for a later split (it answers questions best and fastest) but not as the writer. Granite 4.0 H Micro is out.
+- **Model**: **Qwen3.5 4B** where the PC has 13 GiB of Windows-visible physical memory or more (covering 16 GB laptops with 1–2 GiB iGPU carve-outs; peak 3.5 GB on Vulkan iGPU, 4.5–5.2 GB on CPU), **Qwen3.5 2B** below. The 4B is the only candidate whose German notes are worth giving to a user; the 2B is the fallback for small PCs, with the errors described. Gemma 4 E2B is a candidate for a later split (it answers questions best and fastest) but not as the writer. Granite 4.0 H Micro is out.
 - **Approach**: the **single pass** up to ~12,000 tokens (about 50 minutes), extract-then-write beyond, each `@flit` question in its own call.
-- **Device**: the GPU when it starts, else the CPU (`StartFallback`); full offload for now. Whether `-ngl 0` is better on the laptop's iGPU is open.
-- **Next measurements**: the work laptop (`-speed` for CPU, `gpu-prefill`, `gpu`; then one full summary of a real meeting), a meeting of 45–60 minutes, and the vocabulary's effect on the user's name.
+- **Device**: full Vulkan offload (`gpu`, `-ngl 999`) when it starts, else the CPU (`StartFallback`). Measured faster than both `-ngl 0` (`gpu-prefill`) and CPU on both the desktop RX 7800 XT and the laptop's Vega 7 iGPU.
+- **Next measurements**: a meeting of 45–60 minutes (confirming flat prefill scaling at 16k context), real-call iGPU feel when opting into `both`, and the vocabulary's effect on the user's name.
