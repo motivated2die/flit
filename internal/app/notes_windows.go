@@ -104,7 +104,8 @@ func (a *App) dropNotes(id string) {
 	}
 	if a.stashedNotes == id {
 		a.stashedNotes = ""
-		a.stashHover = false
+		a.stashDragging = false
+		a.stashReady = false
 		a.syncNotch()
 	}
 	if ns := a.notes[id]; ns != nil && ns.timer != nil {
@@ -122,7 +123,8 @@ func (a *App) pinNotes(s *session.Session) {
 	a.notesFor(s) // ensure editor exists
 	wasStashed := a.stashedNotes != ""
 	a.stashedNotes = ""
-	a.stashHover = false
+	a.stashDragging = false
+	a.stashReady = false
 	a.pinnedNotes = s.Meta.ID
 	a.focusFloat = true
 	var ax, ay int32
@@ -147,15 +149,17 @@ func (a *App) pinNotes(s *session.Session) {
 	logx.Printf("notes of %s pinned", s.Meta.ID)
 }
 
-// onFloatDragMove tracks the floating notes window while dragged, expanding
-// the notch into a "Stash the notes" drop target when near the top of the screen.
+// onFloatDragMove expands the notch into "Stash the notes" as soon as the
+// floating notes window is dragged, and highlights its background when close
+// enough to the notch to stash.
 func (a *App) onFloatDragMove(cx, cy, winTop int32) {
 	if a.notch == nil || a.pinnedNotes == "" {
 		return
 	}
 	inZone := a.notch.InStashZone(cx, cy, winTop)
-	if inZone != a.stashHover {
-		a.stashHover = inZone
+	if !a.stashDragging || inZone != a.stashReady {
+		a.stashDragging = true
+		a.stashReady = inZone
 		a.syncNotch()
 	}
 }
@@ -164,17 +168,19 @@ func (a *App) onFloatDragMove(cx, cy, winTop int32) {
 // in the top drop zone, or restores the notch otherwise.
 func (a *App) onFloatDragEnd(cx, cy, winTop int32) bool {
 	if a.notch == nil || a.pinnedNotes == "" {
-		a.stashHover = false
+		a.stashDragging = false
+		a.stashReady = false
 		return false
 	}
 	inZone := a.notch.InStashZone(cx, cy, winTop)
-	wasHover := a.stashHover
-	a.stashHover = false
+	wasDragging := a.stashDragging
+	a.stashDragging = false
+	a.stashReady = false
 	if inZone {
 		a.stashNotes(a.pinnedNotes)
 		return true
 	}
-	if wasHover {
+	if wasDragging {
 		a.syncNotch()
 	}
 	return false
@@ -213,7 +219,8 @@ func (a *App) unstashNotes(cx, cy int32, drag bool) {
 		s = a.rec.sess
 	}
 	a.stashedNotes = ""
-	a.stashHover = false
+	a.stashDragging = false
+	a.stashReady = false
 	if s == nil {
 		a.syncNotch()
 		return

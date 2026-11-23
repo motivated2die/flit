@@ -546,6 +546,65 @@ func (p *Painter) Polygons(polys [][]PointF, c ColorF) {
 	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
 }
 
+// NotchShape fills a top-attached notch blob spanning [l, r] × [t, b] with
+// rounded bottom corners of radius bottomR and concave top flares of radius
+// flareR curving smoothly outward along the top edge y = t.
+func (p *Painter) NotchShape(l, t, r, b, bottomR, flareR float32, c ColorF) {
+	w, h := r-l, b-t
+	if w <= 0 || h <= 0 {
+		return
+	}
+	br := max(0, min(bottomR, min(w/2, h)))
+	fr := max(0, min(flareR, h-br))
+	var path *comObj
+	if hr(p.g.factory.call(factoryCreatePathGeometry, uintptr(unsafe.Pointer(&path))), "CreatePathGeometry") != nil {
+		return
+	}
+	defer path.release()
+	var sink *comObj
+	if hr(path.call(pathOpen, uintptr(unsafe.Pointer(&sink))), "Open") != nil {
+		return
+	}
+	addArc := func(x, y, rad float32, clockwise bool) {
+		dir := uint32(0) // D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE
+		if clockwise {
+			dir = 1
+		}
+		seg := struct {
+			X, Y, W, H, Rot float32
+			Dir, Size       uint32
+		}{x, y, rad, rad, 0, dir, 0}
+		sink.call(sinkAddArc, uintptr(unsafe.Pointer(&seg)))
+	}
+	sink.call(sinkSetFillMode, 1) // winding
+	sink.call(sinkBeginFigure, pt(l-fr, t), 0)
+	if fr > 0 {
+		addArc(l, t+fr, fr, true) // top-left concave flare
+	}
+	if b-br > t+fr {
+		sink.call(sinkAddLine, pt(l, b-br))
+	}
+	if br > 0 {
+		addArc(l+br, b, br, false) // bottom-left convex corner
+	}
+	if r-br > l+br {
+		sink.call(sinkAddLine, pt(r-br, b))
+	}
+	if br > 0 {
+		addArc(r, b-br, br, false) // bottom-right convex corner
+	}
+	if b-br > t+fr {
+		sink.call(sinkAddLine, pt(r, t+fr))
+	}
+	if fr > 0 {
+		addArc(r+fr, t, fr, true) // top-right concave flare
+	}
+	sink.call(sinkEndFigure, 1) // closes along top edge y = t
+	sink.call(sinkClose)
+	sink.release()
+	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
+}
+
 // Arc fills a ring segment around (cx, cy) between radii inner and outer,
 // clockwise from angle a0 to a1 (radians from twelve o'clock). A full turn
 // draws a whole ring.

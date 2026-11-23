@@ -61,6 +61,9 @@ type NotchView struct {
 	// StartCollapsed opens or switches into the view directly in its
 	// collapsed state (e.g. right after stashing notes during a recording).
 	StartCollapsed bool
+	// Highlight slightly lightens the notch background (e.g. when a dragged
+	// notes window is close enough to be stashed).
+	Highlight bool
 	// CountFrom/CountFor fill the capsule from left to right over CountFor
 	// from CountFrom (a countdown, e.g. to recording automatically).
 	CountFrom time.Time
@@ -87,6 +90,7 @@ const (
 	notchLevelW    = 16
 	notchMaxW      = 560
 	notchShadow    = 14 // room for the shadow around the capsule
+	notchFlareMax  = 10 // max concave flare radius at the top edge
 )
 
 var (

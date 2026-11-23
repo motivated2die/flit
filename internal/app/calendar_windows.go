@@ -104,7 +104,7 @@ func upcomingJoinMeeting(meetings []calendar.Meeting, now time.Time, prompted ma
 // scheduled meeting starts (when idle and not already showing a higher-priority
 // prompt).
 func (a *App) checkUpcomingMeetings(now time.Time) {
-	if a.cal == nil || a.rec != nil || a.detected != nil || a.joinPrompt != nil || a.stashHover {
+	if a.cal == nil || a.rec != nil || a.detected != nil || a.joinPrompt != nil || a.stashDragging {
 		return
 	}
 	if a.joinPrompted == nil {

@@ -173,8 +173,8 @@ func (a *App) syncNotch() {
 		return
 	}
 	switch {
-	case a.stashHover:
-		a.notch.Show(ui.NotchView{Mode: ui.NotchStashDrop, Title: "Stash the notes"})
+	case a.stashDragging:
+		a.notch.Show(ui.NotchView{Mode: ui.NotchStashDrop, Title: "Stash the notes", Highlight: a.stashReady})
 	case a.detected != nil:
 		a.showPrompt(*a.detected)
 	case a.joinPrompt != nil:

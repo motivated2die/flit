@@ -30,6 +30,7 @@ type notchFrame struct {
 
 var (
 	notchFill       = RGBA(ColBase, 0.97)
+	notchFillReady  = RGBA(ColCardHover, 0.97)
 	notchEdge       = RGBA(ColEdge, 1)
 	notchTitle      = RGBA(ColText, 1)
 	notchMuted      = RGBA(ColMuted, 1)
@@ -42,10 +43,10 @@ var (
 )
 
 // notchSurfaceSize is the fixed size of the window: the widest capsule
-// plus room for the shadow below and at the sides.
+// plus room for the top-edge flares and the shadow below and at the sides.
 func notchSurfaceSize(scale float32) (int32, int32) {
 	px := func(v float32) int32 { return int32(math.Ceil(float64(v * scale))) }
-	return px(notchMaxW + 2*notchShadow), px(notchHeight + notchShadow)
+	return px(notchMaxW + 2*(notchShadow+notchFlareMax)), px(notchHeight + notchShadow)
 }
 
 // capsuleOrigin is where the capsule's top-left corner is in the surface.
@@ -63,8 +64,10 @@ func renderNotch(s *Surface, f notchFrame) error {
 	ox, oy := f.capsuleOrigin(s.W)
 	h := f.height
 	w := f.width
+	fill := notchFill
 	edge := notchEdge
-	if f.view.Mode == NotchStashDrop {
+	if f.view.Mode == NotchStashDrop && f.view.Highlight {
+		fill = notchFillReady
 		edge = RGBA(ColText, 0.35)
 	}
 	if f.collapsed && f.hoverProgress > 0 {
@@ -75,22 +78,27 @@ func renderNotch(s *Surface, f notchFrame) error {
 		ox, w, h = ox-grow, w+2*grow, h+hp*3*f.scale
 		edge = RGBA(ColText, 0.15+0.45*hp)
 	}
-	r := h / 2
-	// The capsule hangs from the top edge: its top corners sit above the
-	// surface, so only the lower ones show rounded.
-	capsule := RectF{ox, oy - r, ox + w, oy + h}
+	// The blob hangs from the top edge (clamped to y <= 0 so a downward bounce
+	// keeps the flares anchored to the top of the screen) with concave flares
+	// flowing into the edge and rounded bottom corners.
+	top := min(float32(0), oy)
+	bottom := oy + h
+	spanH := bottom - top
+	br := min(h*0.48, w/2)
+	fr := min(spanH-br, min(h*0.36, notchFlareMax*f.scale))
+	capsule := RectF{ox, top, ox + w, bottom}
 
 	// A soft shadow: a few translucent, growing outlines.
 	for i := 1; i <= 5; i++ {
 		g := float32(i) * 2 * f.scale
-		p.RoundRect(RectF{capsule.L - g, capsule.T, capsule.R + g, capsule.B + g*1.1}, r+g, ColorF{0, 0, 0, 0.055})
+		p.NotchShape(ox-g, top, ox+w+g, bottom+g*1.1, br+g, max(0, fr-g*0.35), ColorF{0, 0, 0, 0.055})
 	}
-	p.RoundRect(RectF{capsule.L - 1, capsule.T, capsule.R + 1, capsule.B + 1}, r+1, edge)
-	p.RoundRect(capsule, r, notchFill)
+	p.NotchShape(ox-1, top, ox+w+1, bottom+1, br+1, max(0, fr-1), edge)
+	p.NotchShape(ox, top, ox+w, bottom, br, fr, fill)
 	if cd := f.view.CountdownAt(f.now); cd >= 0 && !f.collapsed {
-		// The countdown fills the capsule's background from the left.
-		p.PushClip(RectF{capsule.L, capsule.T, capsule.L + w*float32(cd), capsule.B})
-		p.RoundRect(capsule, r, RGBA(ColText, 0.13*f.content))
+		// The countdown fills the notch's background from the left.
+		p.PushClip(RectF{ox - fr, top, ox - fr + (w+2*fr)*float32(cd), bottom})
+		p.NotchShape(ox, top, ox+w, bottom, br, fr, RGBA(ColText, 0.13*f.content))
 		p.PopClip()
 	}
 
