@@ -209,6 +209,9 @@ func runTranscribe(args []string) int {
 			themPCM = pcm
 		}
 	}
+	if info := sup.Info(); info.Backend != "" {
+		fmt.Fprintf(os.Stderr, "engine: %s (%s)\n", info.Backend, info.DeviceDesc)
+	}
 	var turns []transcript.Turn
 	if *speakers && themPCM != nil {
 		start := time.Now()

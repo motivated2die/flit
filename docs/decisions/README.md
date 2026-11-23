@@ -17,3 +17,4 @@ Architecture decision records: one choice per file, numbered in order. A record 
 | [0011](0011-meeting-notes-with-llama-server.md) | Summaries on request, by a small local LLM through llama-server (CPU + Vulkan), the lighter fitting model by default, extract-then-write | proposed |
 | [0012](0012-speaker-names-from-the-call-app.md) | Speaker names from the call app's window (UI Automation), voted onto Sortformer's speakers | proposed (parked) |
 | [0013](0013-own-markdown-notes-editor.md) | An own, line-based Markdown notes editor (headings, nested and numbered lists, tasks, bold, italics, @flit mentions) on flit's Direct2D framework | accepted |
+| [0014](0014-gpu-assisted-transcription.md) | Optional Vulkan GPU acceleration for transcription and diarization (on-demand 18 MB download, DXGI check, 3-mode setting, CPU fallback) | accepted |

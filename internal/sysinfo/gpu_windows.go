@@ -46,9 +46,9 @@ type pdhFmtCounterValueItem struct {
 // ErrNotReady means the meter was just primed: read again in a moment.
 var ErrNotReady = errors.New("gpu meter: primed, read again")
 
-// Read returns pid's GPU use (0..1). The first call primes the counters
-// and returns ErrNotReady.
-func (m *GPUMeter) Read(pid uint32) (float64, error) {
+// Read returns the combined GPU use (0..1) of pids (zero entries ignored).
+// The first call primes the counters and returns ErrNotReady.
+func (m *GPUMeter) Read(pids ...uint32) (float64, error) {
 	if m.query == 0 {
 		if r, _, _ := procPdhOpenQuery.Call(0, 0, uintptr(unsafe.Pointer(&m.query))); r != 0 {
 			return 0, fmt.Errorf("PdhOpenQuery: %#x", r)
@@ -66,6 +66,15 @@ func (m *GPUMeter) Read(pid uint32) (float64, error) {
 		m.primed = true
 		return 0, ErrNotReady
 	}
+	var prefixes []string
+	for _, pid := range pids {
+		if pid != 0 {
+			prefixes = append(prefixes, fmt.Sprintf("pid_%d_", pid))
+		}
+	}
+	if len(prefixes) == 0 {
+		return 0, nil
+	}
 	var size, count uint32
 	r, _, _ := procPdhGetFormattedCounterAr.Call(m.counter, pdhFmtDouble|pdhFmtNoCap, uintptr(unsafe.Pointer(&size)), uintptr(unsafe.Pointer(&count)), 0)
 	if r != pdhMoreData {
@@ -81,18 +90,26 @@ func (m *GPUMeter) Read(pid uint32) (float64, error) {
 	}
 	items := unsafe.Slice((*pdhFmtCounterValueItem)(unsafe.Pointer(&buf[0])), count)
 	byType := map[string]float64{}
-	prefix := fmt.Sprintf("pid_%d_", pid)
 	for _, it := range items {
 		if it.Status > pdhCstatusNew { // not valid data
 			continue
 		}
 		name := windows.UTF16PtrToString(it.Name)
-		if !strings.HasPrefix(name, prefix) {
+		if !hasAnyPrefix(name, prefixes) {
 			continue
 		}
 		byType[engineType(name)] += it.Value
 	}
 	return busiest(byType), nil
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // engineType is the "engtype_…" part of an instance name, such as

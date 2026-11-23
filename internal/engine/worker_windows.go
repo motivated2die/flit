@@ -72,7 +72,10 @@ type tcppBackend struct {
 	spec     LoadSpec
 	diar     *tcpp.Model
 	diarSess *tcpp.Diarizer
+	info     Info
 }
+
+func (b *tcppBackend) CurrentInfo() Info { return b.info }
 
 func (b *tcppBackend) Load(spec LoadSpec) (Info, error) {
 	if b.lib == nil {
@@ -115,7 +118,12 @@ func (b *tcppBackend) Load(spec LoadSpec) (Info, error) {
 		info.Languages = b.asr.Caps.Languages
 		info.MaxAudioMS = b.asr.Caps.MaxAudioMS
 		info.Vocabulary = b.vocab
+		info.Backend = b.asr.Device.Kind
+		info.DeviceName = b.asr.Device.Name
+		info.DeviceDesc = b.asr.Device.Description
+		info.DeviceType = b.asr.Device.Type.String()
 	}
+	b.info = info
 	return info, nil
 }
 
@@ -166,7 +174,11 @@ func (b *tcppBackend) Diarize(pcm []float32) ([]pipeline.SpeakerTurn, error) {
 		if b.spec.DiarModel == "" {
 			return nil, errors.New("no diarization model")
 		}
-		m, err := b.lib.LoadModel(b.spec.DiarModel, tcpp.BackendCPU)
+		backend := tcpp.BackendAuto
+		if b.spec.CPUOnly {
+			backend = tcpp.BackendCPU
+		}
+		m, err := b.lib.LoadModel(b.spec.DiarModel, backend)
 		if err != nil {
 			return nil, fmt.Errorf("diarization model: %w", err)
 		}
@@ -176,6 +188,8 @@ func (b *tcppBackend) Diarize(pcm []float32) ([]pipeline.SpeakerTurn, error) {
 			return nil, err
 		}
 		b.diar, b.diarSess = m, d
+		b.info.DiarBackend = m.Device.Kind
+		b.info.DiarDeviceDesc = m.Device.Description
 	}
 	turns, err := b.diarSess.Run(pcm)
 	if err != nil {

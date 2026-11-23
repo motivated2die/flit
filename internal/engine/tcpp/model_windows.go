@@ -2,6 +2,7 @@ package tcpp
 
 import (
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -28,14 +29,48 @@ const (
 	TimestampsWord    Timestamps = 3
 )
 
+// DeviceType is ggml's classification of a compute device.
+type DeviceType int32
+
+const (
+	DeviceCPU   DeviceType = 0
+	DeviceGPU   DeviceType = 1
+	DeviceIGPU  DeviceType = 2
+	DeviceAccel DeviceType = 3
+)
+
+func (t DeviceType) String() string {
+	switch t {
+	case DeviceGPU:
+		return "gpu"
+	case DeviceIGPU:
+		return "igpu"
+	case DeviceAccel:
+		return "accel"
+	}
+	return "cpu"
+}
+
+// DeviceInfo describes the compute device a loaded model runs on.
+type DeviceInfo struct {
+	Name        string
+	Description string
+	Kind        string // "cpu", "vulkan", "metal", ...
+	DeviceID    string // PCI bus id or ""
+	MemoryTotal uint64
+	MemoryFree  uint64
+	Type        DeviceType
+}
+
 // Model is a loaded GGUF model. It may be shared between goroutines, but
 // only one run may be in flight per model (transcribe.h, threading notes);
 // Model serialises runs of its sessions itself.
 type Model struct {
-	lib  *Lib
-	ptr  uintptr
-	runs sync.Mutex
-	Caps Capabilities
+	lib    *Lib
+	ptr    uintptr
+	runs   sync.Mutex
+	Caps   Capabilities
+	Device DeviceInfo
 }
 
 // Capabilities is what the loaded model supports.
@@ -63,7 +98,29 @@ func (l *Lib) LoadModel(path string, backend Backend) (*Model, error) {
 	}
 	m := &Model{lib: l, ptr: ptr}
 	m.Caps = m.capabilities()
+	m.Device = m.deviceInfo()
 	return m, nil
+}
+
+func (m *Model) deviceInfo() DeviceInfo {
+	dev := m.lib.p.modelDevice.call(m.ptr)
+	if dev == 0 {
+		return DeviceInfo{}
+	}
+	var di deviceInfo
+	m.lib.p.deviceInfoInit.call(uintptr(unsafe.Pointer(&di)))
+	if m.lib.status(m.lib.p.deviceGetInfo.call(dev, uintptr(unsafe.Pointer(&di))), "device info") != nil {
+		return DeviceInfo{}
+	}
+	return DeviceInfo{
+		Name:        windows.BytePtrToString(di.Name),
+		Description: strings.Join(strings.Fields(windows.BytePtrToString(di.Description)), " "),
+		Kind:        windows.BytePtrToString(di.Kind),
+		DeviceID:    windows.BytePtrToString(di.DeviceID),
+		MemoryTotal: di.MemoryTotal,
+		MemoryFree:  di.MemoryFree,
+		Type:        DeviceType(di.DeviceType),
+	}
 }
 
 func (m *Model) capabilities() Capabilities {

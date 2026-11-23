@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/motivated2die/flit/internal/engine"
+	"github.com/motivated2die/flit/internal/engine/native"
 	"github.com/motivated2die/flit/internal/install"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/models"
@@ -81,8 +82,12 @@ func (a *App) finalSettings() []ui.Node {
 			sel = i
 		}
 	}
+	detail := fmt.Sprintf("At most %d%% of the processor, %d of %d threads", cur.percent, capThreads(cur.percent), runtime.NumCPU())
+	if a.gpuForFinal() {
+		detail += " (for voice detection and CPU fallback)"
+	}
 	return append(nodes, ui.SettingRow{Label: "Load",
-		Detail: fmt.Sprintf("At most %d%% of the processor, %d of %d threads", cur.percent, capThreads(cur.percent), runtime.NumCPU()),
+		Detail: detail,
 		Control: ui.Segmented{ID: "set:finalload", Options: names, Selected: sel, OnSelect: func(i int) {
 			a.cfg.FinalLoad = finalLoads[i].id
 			a.save()
@@ -143,9 +148,10 @@ func (a *App) startLive(s *session.Session) {
 	}
 	percent, _ := liveLoad(a.cfg.LiveLoad)
 	dir := modelsDir(a.dataDir)
+	useGPU := a.gpuForLive() && native.HasVulkan(a.dataDir)
 	sup := &engine.Supervisor{
 		Command:     engine.WorkerCommand(exe),
-		Spec:        engine.LoadSpec{EngineDir: engineDir, ASRModel: asr.Path(dir), VADModel: vad.Path(dir), CPUOnly: true, Threads: capThreads(percent)},
+		Spec:        engine.LoadSpec{EngineDir: engineDir, ASRModel: asr.Path(dir), VADModel: vad.Path(dir), CPUOnly: !useGPU, Threads: capThreads(percent)},
 		IdleTimeout: 2 * time.Minute,
 		CPULimit:    percent,
 		Background:  true,
@@ -155,7 +161,11 @@ func (a *App) startLive(s *session.Session) {
 	job := &liveJob{sess: s, cancel: cancel, done: make(chan struct{}), sup: sup, asr: asr, vad: vad, threads: capThreads(percent)}
 	a.live = job
 	opt := pipeline.Options{Language: s.Meta.Language, Vocabulary: a.vocabulary()}
-	logx.Printf("live transcription: at most %d%% of the processor, %d thread(s)", percent, capThreads(percent))
+	if useGPU {
+		logx.Printf("live transcription: on the graphics processor (CPU cap %d%%, %d thread(s))", percent, capThreads(percent))
+	} else {
+		logx.Printf("live transcription: at most %d%% of the processor, %d thread(s)", percent, capThreads(percent))
+	}
 	go func() {
 		defer close(job.done)
 		defer sup.Close()
@@ -249,8 +259,12 @@ func (a *App) liveSettings() []ui.Node {
 			sel = i
 		}
 	}
+	detail := fmt.Sprintf("At most %d%% of the processor, at low priority", percent)
+	if a.gpuForLive() {
+		detail += " (for voice detection and CPU fallback)"
+	}
 	return append(nodes, ui.SettingRow{Label: "Background load",
-		Detail: fmt.Sprintf("At most %d%% of the processor, at low priority", percent),
+		Detail: detail,
 		Control: ui.Segmented{ID: "set:liveload", Options: names, Selected: sel, OnSelect: func(i int) {
 			a.cfg.LiveLoad = liveLoads[i].id
 			a.save()

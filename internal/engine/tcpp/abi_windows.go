@@ -14,6 +14,18 @@ type backendInitParams struct {
 	AllowedBackends uint32
 }
 
+type deviceInfo struct {
+	StructSize  uint64
+	Name        *byte
+	Description *byte
+	Kind        *byte
+	DeviceID    *byte
+	MemoryTotal uint64
+	MemoryFree  uint64
+	DeviceType  int32
+	_           uint32
+}
+
 type modelLoadParams struct {
 	StructSize uint64
 	Backend    int32 // transcribe_backend_request
@@ -160,6 +172,7 @@ const (
 	abiSegment           = 6
 	abiWord              = 7
 	abiExt               = 12
+	abiDeviceInfo        = 13
 	abiSpeakerSegment    = 14
 	abiBackendInitParams = 15
 	abiDiarizeInfo       = 16
@@ -185,6 +198,7 @@ var abiStructs = []struct {
 	{abiSegment, "transcribe_segment", unsafe.Sizeof(segment{})},
 	{abiWord, "transcribe_word", unsafe.Sizeof(word{})},
 	{abiBackendInitParams, "transcribe_backend_init_params", unsafe.Sizeof(backendInitParams{})},
+	{abiDeviceInfo, "transcribe_device_info", unsafe.Sizeof(deviceInfo{})},
 	{abiExt, "transcribe_ext", unsafe.Sizeof(ext{})},
 	{abiSpeakerSegment, "transcribe_speaker_segment", unsafe.Sizeof(speakerSegment{})},
 	{abiDiarizeInfo, "transcribe_diarize_info", unsafe.Sizeof(diarizeInfo{})},

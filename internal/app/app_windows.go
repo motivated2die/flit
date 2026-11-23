@@ -20,6 +20,7 @@ import (
 	"github.com/motivated2die/flit/internal/instance"
 	"github.com/motivated2die/flit/internal/logx"
 	"github.com/motivated2die/flit/internal/session"
+	"github.com/motivated2die/flit/internal/sysinfo"
 	"github.com/motivated2die/flit/internal/transcript"
 	"github.com/motivated2die/flit/internal/ui"
 )
@@ -78,6 +79,7 @@ type App struct {
 	// voiceSmooth keeps the voice meter's bars between frames.
 	voiceSmooth ui.MeterSmoother
 	dbg         debugState
+	gpu         sysinfo.GPUInfo // detected once at start-up (DXGI + vulkan-1.dll)
 
 	watcher   *detect.Watcher
 	detected  *detect.Candidate // a meeting going on that isn't recorded
@@ -186,6 +188,7 @@ func runTray(args []string) int {
 	if a.cfg, err = config.Load(dataDir); err != nil {
 		logx.Printf("config: %v", err)
 	}
+	a.initGPU()
 	a.syncProviders()
 	a.tray, err = ui.NewTray("flit")
 	if err != nil {
@@ -213,6 +216,7 @@ func runTray(args []string) int {
 
 	a.jobs = startJobs(a)
 	a.applyFinalLimit()
+	a.applyGPU()
 	a.startCalendar()
 	for _, s := range session.Recover(dataDir) {
 		logx.Printf("session %s: picked up again (%s)", s.Meta.ID, s.Meta.State)

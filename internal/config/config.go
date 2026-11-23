@@ -56,6 +56,11 @@ type Config struct {
 	// ("light", "balanced", "fast": 25, 50, 75% of the processor).
 	LimitFinal bool   `json:"limitFinal"`
 	FinalLoad  string `json:"finalLoad,omitempty"`
+	// TranscribeGPU controls Vulkan graphics acceleration for speech
+	// transcription and speaker diarization: "" (not yet chosen; first
+	// launch picks the hardware recommendation), "off", "final" (after
+	// meetings + speakers), or "both" (live during meetings + after).
+	TranscribeGPU string `json:"transcribeGpu,omitempty"`
 
 	// NoUpdateCheck stops the twice-daily question to GitHub whether a
 	// newer release exists (internal/update); "Check now" still works.
@@ -68,6 +73,13 @@ type Config struct {
 
 	SetupComplete bool `json:"setupComplete,omitempty"`
 }
+
+// Values of Config.TranscribeGPU.
+const (
+	GPUOff   = "off"
+	GPUFinal = "final"
+	GPUBoth  = "both"
+)
 
 // Default returns the settings of a new installation.
 func Default() Config {

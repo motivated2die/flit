@@ -14,7 +14,7 @@ No C compiler: flit is pure Go and calls the engine's prebuilt DLLs ([decisions/
 ## First-time setup
 
 ```powershell
-go run ./cmd/flitdev engine     # transcribe.cpp DLLs (18 MB download) → internal/engine/native/files
+go run ./cmd/flitdev engine     # transcribe.cpp CPU DLLs (18 MB download) → internal/engine/native/files (add -vulkan to also extract ggml-vulkan.dll for dev)
 go run ./cmd/flitdev models     # test models: whisper-tiny, parakeet 110M, Silero VAD, Sortformer (~320 MB) → models/
 go run ./cmd/flitdev testdata   # test meetings (~160 MB download) → testdata/meetings/
 go run ./cmd/flitdev icon       # assets/flit.ico from assets/logo.png (also done by the release script)
@@ -40,7 +40,7 @@ A build is **portable** (doesn't install itself) when a `go.mod` is next to it o
 .\flit-debug.exe transcribe --models models --model parakeet-ultra --meeting testdata\meetings\ami-IS1009a-5min --bleed
 ```
 
-`--meeting` transcribes a test meeting's Me and Them tracks in a real engine worker and prints the WER of each against the reference (on stderr; the transcript goes to stdout). Other flags: `--lang`, `--vocab a,b,c`, `--markdown`, `--threads`. `FLIT_ENGINE_LOG=1` shows the engine's log. A missing model is downloaded into the models folder.
+`--meeting` transcribes a test meeting's Me and Them tracks in a real engine worker and prints the WER of each against the reference (on stderr; the transcript goes to stdout). Other flags: `--lang`, `--vocab a,b,c`, `--markdown`, `--threads`, `--cpu=false` (use Vulkan GPU when `ggml-vulkan.dll` is present in the engine folder). `FLIT_ENGINE_LOG=1` shows the engine's log. A missing model is downloaded into the models folder.
 
 ## Speaker names from the call app (experiments)
 

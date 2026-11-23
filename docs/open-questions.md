@@ -20,7 +20,7 @@ Grouped by who or what can answer them. Remove a question once answered, and not
 - Local LLM on the author's laptop (CPU-only, Vulkan with `-ngl 0` and with full offload on the AMD iGPU): prompt reading and writing speed, memory with Teams running, for Qwen3.5 2B/4B and Gemma 4 E2B ([research/summary-experiments.md](research/summary-experiments.md)); `flitdev summary -speed -device cpu,gpu-prefill,gpu -threads 4` gives the first two in a minute per model. Decides whether the laptop gets the 4B and whether "Use the graphics processor" should mean full offload or `-ngl 0` there.
 - Summary quality per approach (one pass vs extract-then-write vs classify-first) on AMI IS1009a–d against AMI's human summaries, with and without the attention cues; German on FAME or own meetings ([research/summary-pipeline.md](research/summary-pipeline.md#experiment-plan)).
 - Whether boosting the user's name in the speech model's vocabulary fixes its recognition in German meetings.
-- Worker memory and real-time factor on the author's PC, CPU vs. Vulkan.
+- Worker memory and real-time factor on the author's laptop, CPU vs. Vulkan iGPU (including live transcription smoothness during a real Teams/Zoom call; desktop RX 7800 XT measured in [research/gpu-transcription.md](research/gpu-transcription.md)).
 
 ## For verification on a real PC
 

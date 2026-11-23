@@ -134,7 +134,11 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 	}
 	switch {
 	case a.finding != nil && a.finding.Dir == s.Dir:
-		hint = "Analyzing the audio for speakers…"
+		if a.transcribeOnGPU(a.sampleDebug()) {
+			hint = "Analyzing the audio for speakers on the graphics processor…"
+		} else {
+			hint = "Analyzing the audio for speakers…"
+		}
 	case s.Meta.SpeakersError != "":
 		hint = "Telling the speakers apart failed: " + s.Meta.SpeakersError
 	case s.Meta.Speakers == 0 && s.Has(session.ThemFile):

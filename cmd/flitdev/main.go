@@ -36,7 +36,8 @@ func main() {
 	args := os.Args[2:]
 	switch os.Args[1] {
 	case "engine":
-		err = fetchEngine(ctx, root)
+		withVulkan := len(args) > 0 && (args[0] == "-vulkan" || args[0] == "--vulkan")
+		err = fetchEngine(ctx, root, withVulkan)
 	case "models":
 		err = fetchModels(ctx, root, args)
 	case "testdata":

@@ -16,7 +16,7 @@ import (
 	"github.com/motivated2die/flit/internal/models"
 )
 
-func fetchEngine(ctx context.Context, root string) error {
+func fetchEngine(ctx context.Context, root string, withVulkan bool) error {
 	fmt.Printf("engine: transcribe.cpp %s\n", native.Version)
 	bundle := filepath.Join(root, ".cache", native.BundleName)
 	if err := get(ctx, download.File{URL: native.BundleURL, Dest: bundle, SHA256: native.BundleSHA256, Size: native.BundleSize}); err != nil {
@@ -26,6 +26,14 @@ func fetchEngine(ctx context.Context, root string) error {
 	n, err := extractBundle(bundle, out)
 	if err != nil {
 		return err
+	}
+	if withVulkan {
+		if err := native.ExtractVulkan(bundle, out); err != nil {
+			return err
+		}
+		n++
+	} else {
+		_ = os.Remove(filepath.Join(out, native.VulkanDLL))
 	}
 	c, err := readJSONContract(filepath.Join(out, "contract.json"))
 	if err != nil {

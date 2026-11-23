@@ -381,6 +381,8 @@ func (a *App) settingsPage() ui.Node {
 			ui.Divider{},
 			ui.Group(a.finalSettings()),
 			ui.Divider{},
+			ui.Group(a.transcribeGPUSettings()),
+			ui.Divider{},
 			ui.Toggle{ID: "set:speakers", Label: "Tell speakers apart", Detail: "Labels up to four people on the meeting's side as Speaker 1, 2, … (adds a 139 MB model)", On: a.cfg.Speakers,
 				OnChange: func(on bool) {
 					a.cfg.Speakers = on
@@ -442,6 +444,8 @@ func (a *App) welcomePage() ui.Node {
 				_ = install.SetAutoStart(on)
 				a.invalidate()
 			}},
+			ui.Divider{},
+			a.welcomeGPURow(),
 		}},
 		ui.Space(4),
 		ui.Caption("Speech models"),

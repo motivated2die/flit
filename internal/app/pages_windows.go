@@ -140,18 +140,35 @@ func (a *App) liveCard() ui.Node {
 	case len(a.downloads) > 0: // models first (a transcription waits for them)
 		return ui.VStack{Gap: 8, Items: a.modelCards(true)}
 	case a.working != nil:
-		// The transcription after a meeting, on the same card as a
-		// download: its background fills up as it goes.
-		detail := sessionWhen(a.working)
-		if limit := a.finalLimit(); limit > 0 {
-			detail += fmt.Sprintf(" · at most %d%% of the processor", limit)
-		}
-		return ui.ProgressCard{ID: "home:working", Title: "Transcribing " + sessionTitle(a.working), Detail: detail,
-			Trailing: fmt.Sprintf("%d%%", int(a.progress*100)), Value: a.progress}
+		return a.transcribeCard(a.working, "home:working", "Transcribing "+sessionTitle(a.working))
 	case a.sumRun != nil:
 		return a.summaryCard(a.sumRun, "home:summary", "Summarising "+a.sumRun.title)
 	}
 	return nil
+}
+
+// transcribeCard is a running transcription on the card downloads and
+// summaries use: its background fills up as it goes, showing where the
+// speech model runs and any processor cap.
+func (a *App) transcribeCard(s *session.Session, id, title string) ui.Node {
+	d := a.sampleDebug()
+	where := ""
+	if m, ok := a.shownModel(d); ok {
+		if a.transcribeOnGPU(d) {
+			where = m.Name + " on the graphics processor"
+		} else {
+			where = m.Name + " on the processor"
+		}
+	}
+	detail := sessionWhen(s)
+	if where != "" {
+		detail += " · " + where
+	}
+	if limit := a.finalLimit(); limit > 0 && !a.transcribeOnGPU(d) {
+		detail += fmt.Sprintf(" · at most %d%% of the processor", limit)
+	}
+	return ui.ProgressCard{ID: id, Title: title, Detail: detail,
+		Trailing: fmt.Sprintf("%d%%", int(a.progress*100)), Value: a.progress}
 }
 
 // --- recordings -----------------------------------------------------------
@@ -432,6 +449,9 @@ func (a *App) sessionPage(id string) ui.Node {
 		ui.Label{Text: a.facts(s) + " · " + a.stateText(s), Muted: true}}
 	if card := a.meetingCard(s); card != nil {
 		items = append(items, card)
+	}
+	if a.working != nil && a.working.Dir == s.Dir {
+		items = append(items, a.transcribeCard(s, "session:working", "Transcribing"))
 	}
 	if s.Meta.State == session.Failed && s.Meta.Error != "" {
 		items = append(items, ui.Card{Items: []ui.Node{ui.Para{Text: "Transcription failed: " + s.Meta.Error, Muted: true}}})
