@@ -154,8 +154,9 @@ func TestTranscriptionProgressAndGPUMeters(t *testing.T) {
 				DiarBackend: "vulkan",
 			},
 		},
-		gpu:   0.72,
-		gpuOK: true,
+		engineCPU: 8.0,
+		gpu:       0.72,
+		gpuOK:     true,
 	}
 	a.dbg.engines = []engineState{a.dbg.engine}
 
@@ -165,6 +166,21 @@ func TestTranscriptionProgressAndGPUMeters(t *testing.T) {
 	if gpu, shown := a.debugGPU(); !shown || gpu < 0.71 || gpu > 0.73 {
 		t.Fatalf("debugGPU (%v, %v), want (0.72, true)", gpu, shown)
 	}
+	// Sidebar debug line shows GPU% when GPU load exceeds CPU load.
+	if lines := a.debugLines(); !strings.Contains(lines[1], "72% GPU") {
+		t.Errorf("sidebar debug line %q, want 72%% GPU", lines[1])
+	}
+	// When CPU is busier than GPU, the sidebar switches back to CPU%.
+	a.dbg.engineCPU, a.dbg.gpu = 32.0, 0.12
+	if lines := a.debugLines(); !strings.Contains(lines[1], "32% CPU") {
+		t.Errorf("sidebar debug line %q, want 32%% CPU", lines[1])
+	}
+	// Sub-0.5% GPU load doesn't flicker "0% GPU".
+	a.dbg.engineCPU, a.dbg.gpu = 0.0, 0.003
+	if lines := a.debugLines(); !strings.Contains(lines[1], "0% CPU") {
+		t.Errorf("sidebar debug line %q, want 0%% CPU", lines[1])
+	}
+	a.dbg.engineCPU, a.dbg.gpu = 8.0, 0.72
 
 	// Progress card says "on the graphics processor" and omits the CPU cap text.
 	card := a.transcribeCard(s, "home:working", "Transcribing "+sessionTitle(s)).(ui.ProgressCard)
@@ -177,6 +193,16 @@ func TestTranscriptionProgressAndGPUMeters(t *testing.T) {
 	if _, err := ui.LayoutFrame(a.frame(), 960, 2400, 1, ""); err != nil {
 		t.Skip("no Direct2D:", err)
 	}
+
+	// Once transcription stops (warm worker idle), onGPU is false and sidebar falls back to CPU.
+	a.working = nil
+	if a.onGPU() {
+		t.Error("onGPU true while warm GPU worker is idle")
+	}
+	if lines := a.debugLines(); !strings.Contains(lines[1], "CPU") {
+		t.Errorf("idle warm worker debug line %q, want CPU", lines[1])
+	}
+	a.working = s
 
 	// When worker runs on CPU, no GPU square and CPU cap text returns.
 	a.dbg.engine.Info.Backend = "cpu"

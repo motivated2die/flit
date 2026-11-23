@@ -45,6 +45,9 @@ func TestSummaryProgressAndMeters(t *testing.T) {
 		t.Error("no GPU square on the graphics processor")
 	}
 	a.dbg.cores, a.dbg.gpu, a.dbg.gpuOK = []float64{0.9, 0.8, 0.7, 0.3}, 0.65, true
+	if lines := a.debugLines(); !strings.Contains(lines[1], "65% GPU") {
+		t.Errorf("GPU summary debug lines %q, want 65%% GPU", lines)
+	}
 
 	card := a.summaryCard(a.sumRun, "x", "Writing the summary").(ui.ProgressCard)
 	if card.Value != 0.42 || card.Trailing != "42%" || !strings.Contains(card.Detail, "part 2 of 3") || !strings.Contains(card.Detail, "graphics processor") {

@@ -83,15 +83,18 @@ func (a *App) transcribeOnGPU(d *debugState) bool {
 }
 
 // gpuPIDs returns the process IDs of active workers running on a GPU
-// (llama-server for summaries and/or speech engine workers on Vulkan).
+// (llama-server for summaries and/or speech engine workers on Vulkan while
+// transcribing or finding speakers).
 func (a *App) gpuPIDs(d *debugState) []uint32 {
 	var pids []uint32
 	if a.summarizing() && a.sumRun.device != llm.CPU {
 		pids = append(pids, uint32(a.sumRun.pid))
 	}
-	for _, e := range d.engines {
-		if e.PID != 0 && e.Info.OnGPU() {
-			pids = append(pids, uint32(e.PID))
+	if a.transcribing() {
+		for _, e := range d.engines {
+			if e.PID != 0 && e.Info.OnGPU() {
+				pids = append(pids, uint32(e.PID))
+			}
 		}
 	}
 	return pids
@@ -269,6 +272,16 @@ func (a *App) shownModel(d *debugState) (models.Model, bool) {
 	return m, ok
 }
 
+// dominantLoad formats whichever processing unit is busier right now: the
+// GPU when active work runs on one and its utilisation exceeds the CPU's,
+// otherwise the CPU.
+func dominantLoad(cpu float64, onGPU bool, gpu float64, gpuOK bool) string {
+	if pct := gpu * 100; onGPU && gpuOK && pct >= 0.5 && pct > cpu {
+		return fmt.Sprintf("%.0f%% GPU", pct)
+	}
+	return fmt.Sprintf("%.0f%% CPU", cpu)
+}
+
 // debugLines are the sidebar's two lines.
 func (a *App) debugLines() []string {
 	d := a.sampleDebug()
@@ -282,7 +295,7 @@ func (a *App) debugLines() []string {
 		// way for it.
 		usage := "Loaded"
 		if d.sumErr == nil {
-			usage = fmt.Sprintf("%s · %.0f%% CPU", sysinfo.Bytes(d.sumSt.WorkingSet), d.sumCPU) // the GPU: its square
+			usage = fmt.Sprintf("%s · %s", sysinfo.Bytes(d.sumSt.WorkingSet), dominantLoad(d.sumCPU, a.onGPU(), d.gpu, d.gpuOK))
 		}
 		return []string{a.sumRun.model.Name, usage}
 	}
@@ -293,7 +306,7 @@ func (a *App) debugLines() []string {
 	usage := "Not loaded"
 	switch {
 	case d.loaded && d.engineErr == nil:
-		usage = fmt.Sprintf("%s · %.0f%% CPU", sysinfo.Bytes(d.engineSt.Private), d.engineCPU)
+		usage = fmt.Sprintf("%s · %s", sysinfo.Bytes(d.engineSt.Private), dominantLoad(d.engineCPU, a.onGPU(), d.gpu, d.gpuOK))
 	case d.loaded:
 		usage = "Loaded"
 	}
@@ -344,9 +357,12 @@ func (a *App) debugPage() ui.Node {
 			ui.SettingRow{Label: "CPU", Detail: "Share of all cores", Control: value(fmt.Sprintf("%.1f%%", d.engineCPU))},
 		)
 		if engineOnGPU(d) {
-			gpu := "measuring"
-			if d.gpuOK {
-				gpu = fmt.Sprintf("%.0f%%", d.gpu*100)
+			gpu := "0%"
+			if a.transcribing() {
+				gpu = "measuring"
+				if d.gpuOK {
+					gpu = fmt.Sprintf("%.0f%%", d.gpu*100)
+				}
 			}
 			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Graphics processor", Detail: "The busiest of its engines, for this worker", Control: value(gpu)})
 		}
