@@ -25,8 +25,15 @@ const homeRecent = 4 // recordings on Home
 
 func (a *App) homePage() ui.Node {
 	status := []ui.Node{ui.Para{Text: a.homeStatus(), Muted: true}}
+	head := ui.Node(ui.Title("Home"))
+	if name := a.cfg.GreetingName(); name != "" {
+		head = ui.VStack{Gap: 2, Items: []ui.Node{
+			ui.Title("Home"),
+			ui.Label{Text: "Welcome, " + name, Muted: true},
+		}}
+	}
 	items := []ui.Node{
-		ui.Title("Home"),
+		head,
 		ui.HStack{Gap: 12, Items: append(status, a.homeActions()...)},
 	}
 	if card := a.liveCard(); card != nil {

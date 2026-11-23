@@ -186,3 +186,55 @@ func TestTitleThenNotes(t *testing.T) {
 		t.Errorf("after Tab: title %q, focus %q, notes %q", title, w.focus, ed.Doc.Blocks[0].Text)
 	}
 }
+
+// Tab and Shift+Tab jump forward and backward between linked TextFields
+// (such as speaker name fields), committing each field before moving.
+func TestTextFieldTabNavigation(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	w, err := NewWindow("flit tab nav test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+	names := []string{"", "", ""}
+	w.Build = func() Frame {
+		return Frame{Nav: []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}}, Selected: "home", PageID: "p",
+			Page: VStack{Gap: 8, Items: []Node{
+				TextField{ID: "sp:0", Value: names[0], TabNext: "sp:1", OnCommit: func(s string) { names[0] = s }},
+				TextField{ID: "sp:1", Value: names[1], TabPrev: "sp:0", TabNext: "sp:2", OnCommit: func(s string) { names[1] = s }},
+				TextField{ID: "sp:2", Value: names[2], TabPrev: "sp:1", OnCommit: func(s string) { names[2] = s }},
+			}}}
+	}
+	w.paint()
+	w.startEdit("sp:0", names[0], 60)
+	for _, r := range "Alice" {
+		w.handle(wmChar, uintptr(r), 0)
+	}
+	w.commitTab(false)
+	w.paint()
+	if names[0] != "Alice" || w.edit == nil || w.edit.ID != "sp:1" {
+		t.Fatalf("after Tab 0->1: names=%v edit=%+v", names, w.edit)
+	}
+	for _, r := range "Bob" {
+		w.handle(wmChar, uintptr(r), 0)
+	}
+	w.commitTab(false)
+	w.paint()
+	if names[1] != "Bob" || w.edit == nil || w.edit.ID != "sp:2" {
+		t.Fatalf("after Tab 1->2: names=%v edit=%+v", names, w.edit)
+	}
+	for _, r := range "Carol" {
+		w.handle(wmChar, uintptr(r), 0)
+	}
+	w.commitTab(true) // Shift+Tab back to sp:1
+	w.paint()
+	if names[2] != "Carol" || w.edit == nil || w.edit.ID != "sp:1" || string(w.edit.Text) != "Bob" {
+		t.Fatalf("after Shift+Tab 2->1: names=%v edit=%+v", names, w.edit)
+	}
+	w.commitTab(true) // Shift+Tab back to sp:0
+	w.paint()
+	if w.edit == nil || w.edit.ID != "sp:0" || string(w.edit.Text) != "Alice" {
+		t.Fatalf("after Shift+Tab 1->0: edit=%+v", w.edit)
+	}
+}

@@ -14,7 +14,6 @@ import (
 	"github.com/motivated2die/flit/internal/detect"
 	"github.com/motivated2die/flit/internal/install"
 	"github.com/motivated2die/flit/internal/logx"
-	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/session"
 	"github.com/motivated2die/flit/internal/ui"
 )
@@ -345,24 +344,6 @@ func (a *App) languageControl(id string) ui.Node {
 	return ui.Segmented{ID: id, Options: names, Selected: sel, OnSelect: func(i int) { a.setLanguage(languages[i].code) }}
 }
 
-func (a *App) modelLine() string {
-	m, ok := models.ByID(a.cfg.Model)
-	if a.cfg.Model == "" || !ok {
-		m, ok = models.Default(models.RoleASR, a.cfg.Language)
-	}
-	if !ok {
-		return "none for this language"
-	}
-	state := "downloaded"
-	if st, err := os.Stat(m.Path(modelsDir(a.dataDir))); err != nil || st.Size() != m.Size {
-		state = "downloads when needed"
-		if strings.HasPrefix(a.status, "Downloading") {
-			state = "downloading"
-		}
-	}
-	return fmt.Sprintf("%s · %d MB · %s", m.Name, m.Size/1_000_000, state)
-}
-
 func (a *App) settingsPage() ui.Node {
 	var apps []ui.Node
 	for _, p := range detect.Providers {
@@ -382,8 +363,6 @@ func (a *App) settingsPage() ui.Node {
 		ui.Caption("Transcription"),
 		ui.Card{Gap: 2, Items: []ui.Node{
 			ui.SettingRow{Label: "Meeting language", Detail: "Transcripts are best when this is set before the meeting", Control: a.languageControl("set:lang")},
-			ui.Divider{},
-			ui.SettingRow{Label: "Speech model", Detail: a.modelLine()},
 			ui.Divider{},
 			ui.Group(a.liveSettings()),
 			ui.Divider{},
@@ -446,6 +425,8 @@ func (a *App) welcomePage() ui.Node {
 		ui.Para{Text: "flit waits in the tray. When a meeting app starts using your microphone, it offers to record the meeting, then transcribes your voice and the others' separately, on this PC. Nothing leaves your computer.", Muted: true},
 		ui.Space(4),
 		ui.Card{Gap: 2, Items: []ui.Node{
+			ui.SettingRow{Label: "What's your name?", Detail: "Helps flit transcribe your name and spot your tasks", Control: a.nameFields("welcome:name")},
+			ui.Divider{},
 			ui.SettingRow{Label: "Your meetings are mostly in", Control: a.languageControl("welcome:lang")},
 			ui.Divider{},
 			ui.Toggle{ID: "welcome:autostart", Label: "Start with Windows", Detail: "Recommended: flit can only notice meetings while it runs", On: install.AutoStartEnabled(), OnChange: func(on bool) {

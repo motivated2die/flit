@@ -469,6 +469,71 @@ func (e *Editor) mentionAt(p Pos) (MentionRef, bool) {
 	return MentionRef{}, false
 }
 
+// mentionPrefix finds a partial or complete "@flit" token immediately before
+// the caret (starting at line start, whitespace, or '(') when not already
+// inside a mention or selection and not followed by a word character.
+// Returns the start byte offset of '@' and the remaining suffix of "flit".
+func (e *Editor) mentionPrefix() (at int, suffix string, ok bool) {
+	if e.HasSel() || e.InMention() {
+		return 0, "", false
+	}
+	b := e.Doc.Blocks[e.Caret.B]
+	head := b.Text[:e.Caret.O]
+	tail := b.Text[e.Caret.O:]
+	if tail != "" {
+		if r, _ := utf8.DecodeRuneInString(tail); wordRune(r) {
+			return 0, "", false
+		}
+	}
+	const target = "@flit"
+	for n := min(len(target), len(head)); n >= 1; n-- {
+		start := len(head) - n
+		if head[start] != '@' {
+			continue
+		}
+		if start > 0 {
+			if r, _ := utf8.DecodeLastRuneInString(head[:start]); !unicode.IsSpace(r) && r != '(' {
+				return 0, "", false
+			}
+		}
+		if strings.EqualFold(head[start:], target[:n]) {
+			return start, target[n:], true
+		}
+		return 0, "", false
+	}
+	return 0, "", false
+}
+
+// MentionSuggestion returns the ghost completion suffix (e.g. "flit" right
+// after "@", "lit" after "@f") when the caret sits at an @flit prefix.
+func (e *Editor) MentionSuggestion() (string, bool) {
+	_, suffix, ok := e.mentionPrefix()
+	return suffix, ok
+}
+
+// AcceptMentionSuggestion turns an @flit prefix before the caret ("@", "@f",
+// ..., "@flit") into an open [@flit: |] mention in one undo step.
+func (e *Editor) AcceptMentionSuggestion() bool {
+	at, _, ok := e.mentionPrefix()
+	if !ok {
+		return false
+	}
+	return e.edit("mention", func() bool {
+		b := e.block(e.Caret.B)
+		open := "[@flit: "
+		if t := e.clock(); t != Unknown {
+			open = "[@flit " + Clock(t) + ": "
+		}
+		b.Text = b.Text[:at] + open + "]" + b.Text[e.Caret.O:]
+		e.Caret.O = at + len(open)
+		e.Anchor = e.Caret
+		if b.Typed == Unknown {
+			b.Typed = e.clock()
+		}
+		return true
+	})
+}
+
 // InMention reports whether the caret is inside a mention (the widget
 // shows it as being edited; Enter confirms it).
 func (e *Editor) InMention() bool {

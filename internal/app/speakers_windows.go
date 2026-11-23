@@ -84,8 +84,13 @@ func (a *App) onSpeakersFound(s *session.Session, err error) {
 func (a *App) speakersCard(s *session.Session) ui.Node {
 	names := s.Names()
 	audio := a.hasAudio(s)
+	sps := a.speakers(s)
+	ids := make([]string, len(sps))
+	for i, sp := range sps {
+		ids[i] = fmt.Sprintf("speaker:%s:%s:%d", s.Meta.ID, sp.Track, sp.Speaker)
+	}
 	var rows []ui.Node
-	for i, sp := range a.speakers(s) {
+	for i, sp := range sps {
 		sp := sp
 		if i > 0 {
 			rows = append(rows, ui.Divider{})
@@ -107,9 +112,17 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 		if sp.Quote == "" {
 			quote = "(nothing said)"
 		}
-		id := fmt.Sprintf("speaker:%s:%s:%d", s.Meta.ID, sp.Track, sp.Speaker)
+		id := ids[i]
+		prevID, nextID := "", ""
+		if i > 0 {
+			prevID = ids[i-1]
+		}
+		if i+1 < len(ids) {
+			nextID = ids[i+1]
+		}
 		row := ui.Node(ui.SettingRow{Label: quote, Detail: detail, Control: ui.TextField{
 			ID: id, Value: value, Placeholder: placeholder, W: 200, MaxLen: 40,
+			TabPrev: prevID, TabNext: nextID,
 			OnCommit: func(name string) { a.rename(s, sp.Track, sp.Speaker, name) },
 		}})
 		if audio {

@@ -282,6 +282,32 @@ func dominantLoad(cpu float64, onGPU bool, gpu float64, gpuOK bool) string {
 	return fmt.Sprintf("%.0f%% CPU", cpu)
 }
 
+// activeDiarModel is the loaded speaker model, or the default one.
+func (a *App) activeDiarModel(d *debugState) (models.Model, bool) {
+	if d.engine.Diar.ID != "" {
+		return d.engine.Diar, true
+	}
+	return models.Default(models.RoleDiarize, "")
+}
+
+// activeSpeechModel returns the name of the model currently running for
+// speech tasks (speaker diarization, live transcription, or ASR), falling
+// back to the configured ASR model when idle.
+func (a *App) activeSpeechModel(d *debugState) string {
+	if a.finding != nil || (a.working != nil && a.cfg.Speakers && a.progress >= 0.799) {
+		if m, ok := a.activeDiarModel(d); ok {
+			return m.Name
+		}
+	}
+	if a.live != nil && a.working == nil && a.live.asr.ID != "" {
+		return a.live.asr.Name
+	}
+	if m, ok := a.shownModel(d); ok {
+		return m.Name
+	}
+	return "No speech model"
+}
+
 // debugLines are the sidebar's two lines.
 func (a *App) debugLines() []string {
 	d := a.sampleDebug()
@@ -290,19 +316,21 @@ func (a *App) debugLines() []string {
 		every = time.Second // the core squares follow the load
 	}
 	a.repaintSoon(every)
-	if a.summarizing() {
-		// The summary's model, while it runs: the speech worker has made
-		// way for it.
-		usage := "Loaded"
-		if d.sumErr == nil {
+	if a.sumRun != nil {
+		// The summary's model, from download/load through generation: the
+		// speech worker has made way for it.
+		usage := "Loading…"
+		switch {
+		case a.summarizing() && d.sumErr == nil:
 			usage = fmt.Sprintf("%s · %s", sysinfo.Bytes(d.sumSt.WorkingSet), dominantLoad(d.sumCPU, a.onGPU(), d.gpu, d.gpuOK))
+		case a.summarizing():
+			usage = "Loaded"
+		case a.sumRun.step == "download":
+			usage = "Downloading…"
 		}
 		return []string{a.sumRun.model.Name, usage}
 	}
-	name := "No speech model"
-	if m, ok := a.shownModel(d); ok {
-		name = m.Name
-	}
+	name := a.activeSpeechModel(d)
 	usage := "Not loaded"
 	switch {
 	case d.loaded && d.engineErr == nil:
@@ -391,6 +419,11 @@ func (a *App) debugPage() ui.Node {
 			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "transcribe.cpp", Control: value(v)})
 		}
 	}
+	if !d.loaded && a.cfg.Speakers {
+		if diar, ok := models.Default(models.RoleDiarize, ""); ok {
+			engine = append(engine, ui.Divider{}, ui.SettingRow{Label: "Speakers", Detail: "Not loaded; loads when telling speakers apart", Control: value(diar.Name)})
+		}
+	}
 	if a.gpu.Best.Name != "" || a.gpu.Reason != "" {
 		gpuDetail := "Vulkan ready · transcription mode: " + gpuModeLabel(a.transcribeGPU())
 		if !a.gpu.Ready {
@@ -402,6 +435,8 @@ func (a *App) debugPage() ui.Node {
 	switch {
 	case a.working != nil:
 		job = fmt.Sprintf("Transcribing %s, %d%%", a.working.Meta.ID, int(a.progress*100))
+	case a.finding != nil:
+		job = fmt.Sprintf("Finding speakers in %s", a.finding.Meta.ID)
 	case a.rec != nil && a.live != nil:
 		job = "Recording, transcribing as it goes"
 	case a.rec != nil:

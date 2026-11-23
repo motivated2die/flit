@@ -64,7 +64,9 @@ func transcriptText(ts []Turn, from, to int) string {
 		b.WriteString(": ")
 		b.WriteString(t.Text)
 		for _, m := range t.Marks {
-			b.WriteString(" [" + m + "]")
+			b.WriteString(" [")
+			b.WriteString(m)
+			b.WriteByte(']')
 		}
 		b.WriteByte('\n')
 	}

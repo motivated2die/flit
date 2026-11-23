@@ -228,7 +228,9 @@ func TestUndoGroupsWords(t *testing.T) {
 	if got := e.Doc.Blocks[0].Text; got != "hello world" {
 		t.Errorf("redo: %q", got)
 	}
-	if e.Undo(); e.Undo() && e.Undo() {
+	e.Undo()
+	e.Undo()
+	if e.Undo() {
 		t.Error("undid more than there was")
 	}
 }
@@ -347,5 +349,51 @@ func TestSetKind(t *testing.T) {
 	e.SetKind(Numbered) // all already: back to paragraphs
 	if got := kinds(e.Doc); !reflect.DeepEqual(got, []string{"p a", "p b"}) {
 		t.Errorf("toggle %q", got)
+	}
+}
+
+func TestMentionSuggestion(t *testing.T) {
+	e := newEd()
+	now := 45 * time.Second
+	e.Clock = func() time.Duration { return now }
+
+	typeKeys(e, "Ask @")
+	if suf, ok := e.MentionSuggestion(); !ok || suf != "flit" {
+		t.Fatalf("after @: got %q, %v; want flit, true", suf, ok)
+	}
+	typeKeys(e, "f")
+	if suf, ok := e.MentionSuggestion(); !ok || suf != "lit" {
+		t.Fatalf("after @f: got %q, %v; want lit, true", suf, ok)
+	}
+	typeKeys(e, "l")
+	if suf, ok := e.MentionSuggestion(); !ok || suf != "it" {
+		t.Fatalf("after @fl: got %q, %v; want it, true", suf, ok)
+	}
+	// Typing anything outside "flit" dismisses the suggestion.
+	typeKeys(e, "o")
+	if suf, ok := e.MentionSuggestion(); ok {
+		t.Fatalf("after @flo: got %q, true; want dismissed", suf)
+	}
+	// Backspace back to @fl brings it back, and AcceptMentionSuggestion opens a mention.
+	e.Backspace(false)
+	if !e.AcceptMentionSuggestion() {
+		t.Fatal("AcceptMentionSuggestion returned false")
+	}
+	if got := e.Doc.Blocks[0].Text; got != "Ask [@flit 0:45: ]" {
+		t.Fatalf("accepted: %q", got)
+	}
+	if _, ok := e.MentionSuggestion(); ok {
+		t.Fatal("suggestion stayed active inside mention")
+	}
+	// Mid-word @ does not trigger a suggestion.
+	e2 := newEd()
+	typeKeys(e2, "name@")
+	if suf, ok := e2.MentionSuggestion(); ok {
+		t.Fatalf("mid-word @: got %q, true", suf)
+	}
+	// Undo reverts the accepted mention cleanly.
+	e.Undo()
+	if got := e.Doc.Blocks[0].Text; got != "Ask @fl" {
+		t.Fatalf("after undo: %q", got)
 	}
 }

@@ -269,6 +269,9 @@ func parseSums(r io.Reader, name string) (string, bool) {
 			return sum, true
 		}
 	}
+	if sc.Err() != nil {
+		return "", false
+	}
 	return "", false
 }
 

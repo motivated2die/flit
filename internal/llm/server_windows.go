@@ -274,7 +274,9 @@ func (t *lineTail) read(r io.Reader) {
 		}
 		t.mu.Unlock()
 	}
-	io.Copy(io.Discard, r) // after an overlong line: keep the pipe from filling
+	if sc.Err() != nil {
+		io.Copy(io.Discard, r) // after an overlong line: keep the pipe from filling
+	}
 }
 
 func (t *lineTail) String() string {

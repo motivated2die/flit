@@ -133,17 +133,27 @@ func styled(s string) string {
 		t := s[sp.From:sp.To]
 		switch sp.Role {
 		case Marker:
-			sb.WriteString("[" + t + "]")
+			sb.WriteByte('[')
+			sb.WriteString(t)
+			sb.WriteByte(']')
 		case Mention, Meta, Note:
-			sb.WriteString("{" + t + "}")
+			sb.WriteByte('{')
+			sb.WriteString(t)
+			sb.WriteByte('}')
 		default:
 			switch {
 			case sp.Bold && sp.Italic:
-				sb.WriteString("BI(" + t + ")")
+				sb.WriteString("BI(")
+				sb.WriteString(t)
+				sb.WriteByte(')')
 			case sp.Bold:
-				sb.WriteString("B(" + t + ")")
+				sb.WriteString("B(")
+				sb.WriteString(t)
+				sb.WriteByte(')')
 			case sp.Italic:
-				sb.WriteString("I(" + t + ")")
+				sb.WriteString("I(")
+				sb.WriteString(t)
+				sb.WriteByte(')')
 			default:
 				sb.WriteString(t)
 			}

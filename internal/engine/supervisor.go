@@ -243,6 +243,9 @@ func (s *Supervisor) ensure() error {
 		for sc.Scan() {
 			s.logf("engine: %s", sc.Text())
 		}
+		if err := sc.Err(); err != nil {
+			s.logf("engine stderr: %v", err)
+		}
 	}()
 	go func() {
 		err := cmd.Wait()

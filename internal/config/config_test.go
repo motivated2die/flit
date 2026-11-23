@@ -59,3 +59,42 @@ func TestBrokenFileIsKept(t *testing.T) {
 		t.Fatal("backup lost the content")
 	}
 }
+
+func TestNameMigrationAndHelpers(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(Path(dir), []byte(`{"yourName":"  Moritz   Haisch "}`), 0o644)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FirstName != "Moritz" || cfg.LastName != "Haisch" || cfg.YourName != "" {
+		t.Fatalf("migrated: first=%q last=%q legacy=%q", cfg.FirstName, cfg.LastName, cfg.YourName)
+	}
+	if got := strings.Join(cfg.NameParts(), ","); got != "Moritz,Haisch" {
+		t.Errorf("NameParts: %q", got)
+	}
+	if cfg.GreetingName() != "Moritz" || cfg.MeName() != "Moritz" {
+		t.Errorf("GreetingName=%q MeName=%q", cfg.GreetingName(), cfg.MeName())
+	}
+
+	// Only last name entered.
+	onlyLast := Config{LastName: "Haisch"}
+	if onlyLast.First() != "" || onlyLast.Last() != "Haisch" || onlyLast.GreetingName() != "Haisch" {
+		t.Errorf("only last: %+v -> %q", onlyLast, onlyLast.GreetingName())
+	}
+	if got := strings.Join(onlyLast.NameParts(), ","); got != "Haisch" {
+		t.Errorf("only last parts: %q", got)
+	}
+
+	// Only first name entered.
+	onlyFirst := Config{FirstName: "Moritz"}
+	if onlyFirst.GreetingName() != "Moritz" || onlyFirst.Last() != "" {
+		t.Errorf("only first: %+v", onlyFirst)
+	}
+
+	// Legacy in-memory YourName fallback.
+	legacy := Config{YourName: "Ada Lovelace"}
+	if legacy.First() != "Ada" || legacy.Last() != "Lovelace" || strings.Join(legacy.NameParts(), ",") != "Ada,Lovelace" {
+		t.Errorf("legacy fallback: first=%q last=%q parts=%v", legacy.First(), legacy.Last(), legacy.NameParts())
+	}
+}

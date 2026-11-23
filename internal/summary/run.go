@@ -318,7 +318,10 @@ func estimate(ts []Turn) int {
 func plainText(ts []Turn, from, to int) string {
 	var b strings.Builder
 	for _, t := range ts[from:to] {
-		b.WriteString(t.Who + ": " + t.Text + "\n")
+		b.WriteString(t.Who)
+		b.WriteString(": ")
+		b.WriteString(t.Text)
+		b.WriteByte('\n')
 	}
 	return b.String()
 }

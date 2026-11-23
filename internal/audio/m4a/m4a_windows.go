@@ -500,7 +500,7 @@ func (w *Writer) Close() error {
 		for len(w.pending) < block {
 			w.pending = append(w.pending, 0)
 		}
-		if err := w.encodeBlock(w.pending[:block]); err != nil && firstErr == nil {
+		if err := w.encodeBlock(w.pending[:block]); err != nil {
 			firstErr = err
 		}
 		w.pending = w.pending[:0]

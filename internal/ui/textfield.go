@@ -101,6 +101,10 @@ type TextField struct {
 	// typing here ends with Enter or Tab: a recording's title, then its
 	// notes.
 	Next string
+	// TabNext and TabPrev are TextField (or Editor) IDs jumped to when Tab
+	// or Shift+Tab is pressed while editing this field.
+	TabNext string
+	TabPrev string
 }
 
 // Width is W, or 220 logical pixels (as a SettingRow control).
@@ -215,7 +219,7 @@ func (t TextField) Layout(c *Ctx, x, y, w float32) float32 {
 	if c.StartEdit != nil {
 		value, max_ := t.Value, t.MaxLen
 		c.Click(t.ID, r, func() { c.StartEdit(t.ID, value, max_) })
-		c.inputs = append(c.inputs, input{id: t.ID, commit: t.OnCommit, change: t.OnChange, next: t.Next})
+		c.inputs = append(c.inputs, input{id: t.ID, value: value, max: max_, commit: t.OnCommit, change: t.OnChange, next: t.Next, tabNext: t.TabNext, tabPrev: t.TabPrev})
 		if t.Focus && edit == nil {
 			c.wantEdit = &input{id: t.ID, value: value, max: max_}
 		}
@@ -227,11 +231,13 @@ func (t TextField) Layout(c *Ctx, x, y, w float32) float32 {
 }
 
 type input struct {
-	id     string
-	commit func(string)
-	change func(string)
-	next   string // the editor after Enter or Tab
-	// A field asking to be edited (wantEdit): its value and length.
+	id      string
+	commit  func(string)
+	change  func(string)
+	next    string // the editor after Enter or Tab
+	tabNext string // next field/editor on Tab
+	tabPrev string // previous field/editor on Shift+Tab
+	// A field's current value and length limit (used for wantEdit and Tab focus).
 	value string
 	max   int
 }
@@ -244,6 +250,32 @@ func (c *Ctx) nextOf(id string) string {
 		}
 	}
 	return ""
+}
+
+// tabTargetOf returns the field/editor ID to jump to on Tab (or Shift+Tab).
+func (c *Ctx) tabTargetOf(id string, shift bool) string {
+	for _, in := range c.inputs {
+		if in.id == id {
+			if shift {
+				return in.tabPrev
+			}
+			if in.tabNext != "" {
+				return in.tabNext
+			}
+			return in.next
+		}
+	}
+	return ""
+}
+
+// inputByID returns the TextField entry registered in this pass, if any.
+func (c *Ctx) inputByID(id string) (input, bool) {
+	for _, in := range c.inputs {
+		if in.id == id {
+			return in, true
+		}
+	}
+	return input{}, false
 }
 
 // changer returns the OnChange of field id in this pass.

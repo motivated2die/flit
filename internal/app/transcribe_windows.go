@@ -269,13 +269,15 @@ func printScores(ref eval.Manifest, me, them []transcript.Segment) {
 	for _, s := range ref.Segments {
 		b := refText[ref.TrackOf(s.Speaker)]
 		if b != nil {
-			b.WriteString(s.Text + " ")
+			b.WriteString(s.Text)
+			b.WriteByte(' ')
 		}
 	}
 	hyp := func(segs []transcript.Segment) string {
 		var b strings.Builder
 		for _, s := range segs {
-			b.WriteString(s.Text + " ")
+			b.WriteString(s.Text)
+			b.WriteByte(' ')
 		}
 		return b.String()
 	}

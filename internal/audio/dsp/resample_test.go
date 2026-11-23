@@ -129,7 +129,7 @@ func TestDownmix(t *testing.T) {
 func BenchmarkResample48k(b *testing.B) {
 	in := sine(48000, 440, 1, 0.5)
 	b.SetBytes(int64(len(in) * 4))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		resampleAll(in, 48000, 16000)
 	}
 }

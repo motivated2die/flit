@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/motivated2die/flit/internal/calendar"
+	"github.com/motivated2die/flit/internal/models"
 	"github.com/motivated2die/flit/internal/session"
 	"github.com/motivated2die/flit/internal/ui"
 )
@@ -81,6 +84,181 @@ func TestVocabularyHasYourName(t *testing.T) {
 	if len(a.cfg.Vocabulary) != 2 {
 		t.Error("the setting itself changed")
 	}
+
+	// Split FirstName and LastName inject separately as well.
+	a.setName("Ada", "Lovelace")
+	got = strings.Join(a.vocabulary(), ",")
+	if got != "flit,Haisch,Ada,Lovelace" {
+		t.Errorf("split name vocabulary %q", got)
+	}
+}
+
+func TestWelcomeNameHomeGreetingAndSettings(t *testing.T) {
+	a := testApp(t)
+	a.cfg.SetupComplete = false
+	a.page = pageWelcome
+	welcome := a.welcomePage()
+	if !nodeHasField(welcome, "welcome:name:first") {
+		t.Error("Welcome page missing first name field")
+	}
+	if !nodeHasField(welcome, "welcome:name:last") {
+		t.Error("Welcome page missing last name field")
+	}
+
+	// Home greeting uses first name, else last name.
+	a.cfg.SetupComplete = true
+	a.page = pageHome
+	a.setName("Moritz", "Haisch")
+	if !nodeHasText(a.homePage(), "Welcome, Moritz") {
+		t.Error("Home missing 'Welcome, Moritz'")
+	}
+	a.setName("", "Haisch")
+	if !nodeHasText(a.homePage(), "Welcome, Haisch") {
+		t.Error("Home missing 'Welcome, Haisch' fallback")
+	}
+	a.setName("", "")
+	if nodeHasText(a.homePage(), "Welcome,") {
+		t.Error("Home showed Welcome greeting with empty name")
+	}
+
+	// Settings has split name fields, no Speech model row, and a calendar confirm button.
+	ctx, cancel := context.WithCancel(context.Background())
+	svc := &calendar.Service{}
+	svc.Start(ctx, "")
+	defer func() {
+		cancel()
+		svc.Wait()
+	}()
+	a.cal = &calendarState{svc: svc, cancel: cancel}
+	a.page = pageSettings
+	page := a.settingsPage()
+	if nodeHasText(page, "Speech model") {
+		t.Error("Settings still shows Speech model row")
+	}
+	if !nodeHasField(page, "set:name:first") {
+		t.Error("Settings missing set:name:first")
+	}
+	if !nodeHasField(page, "set:name:last") {
+		t.Error("Settings missing set:name:last")
+	}
+	c, err := ui.LayoutFrame(a.frame(), 960, 2400, 1, "")
+	if err != nil {
+		t.Skip("no Direct2D:", err)
+	}
+	apply, ok := c.HitByID("set:calapply")
+	if !ok {
+		t.Fatal("Settings missing calendar confirm button set:calapply")
+	}
+	a.cal.draft, a.cal.draftSet = "https://example.com/cal.ics", true
+	apply.OnClick()
+	if a.cfg.CalendarURL != "https://example.com/cal.ics" {
+		t.Errorf("calendar confirm did not save URL: %q", a.cfg.CalendarURL)
+	}
+}
+
+func TestDebugLinesActiveTaskModel(t *testing.T) {
+	a := testApp(t)
+	// Idle: ASR model.
+	lines := a.debugLines()
+	if !strings.Contains(lines[0], "Parakeet") {
+		t.Fatalf("idle debugLines=%q", lines)
+	}
+	// Finding speakers: Sortformer diarization model.
+	a.finding = a.sessions[0]
+	a.dbg.at = time.Time{}
+	lines = a.debugLines()
+	if !strings.Contains(lines[0], "Sortformer") {
+		t.Fatalf("finding speakers debugLines=%q", lines)
+	}
+	a.finding = nil
+	// Transcribing in speaker stage (>= 80% with speakers on): Sortformer.
+	a.working = a.sessions[0]
+	a.progress = 0.80
+	a.dbg.at = time.Time{}
+	lines = a.debugLines()
+	if !strings.Contains(lines[0], "Sortformer") {
+		t.Fatalf("diarization stage debugLines=%q", lines)
+	}
+	a.working = nil
+	// Summary starting (loading/downloading): summary LLM model.
+	a.sumRun = &summaryRun{id: a.sessions[0].Meta.ID, model: models.Model{Name: "Qwen3.5 4B"}, step: "load"}
+	a.dbg.at = time.Time{}
+	lines = a.debugLines()
+	if lines[0] != "Qwen3.5 4B" || lines[1] != "Loading…" {
+		t.Fatalf("summary loading debugLines=%q", lines)
+	}
+}
+
+func nodeHasField(n ui.Node, id string) bool {
+	switch v := n.(type) {
+	case ui.TextField:
+		return v.ID == id
+	case ui.SettingRow:
+		return nodeHasField(v.Control, id)
+	case ui.VStack:
+		for _, it := range v.Items {
+			if nodeHasField(it, id) {
+				return true
+			}
+		}
+	case ui.HStack:
+		for _, it := range v.Items {
+			if nodeHasField(it, id) {
+				return true
+			}
+		}
+	case ui.Card:
+		for _, it := range v.Items {
+			if nodeHasField(it, id) {
+				return true
+			}
+		}
+	case ui.Group:
+		for _, it := range v {
+			if nodeHasField(it, id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nodeHasText(n ui.Node, sub string) bool {
+	switch v := n.(type) {
+	case ui.Title:
+		return strings.Contains(string(v), sub)
+	case ui.Label:
+		return strings.Contains(v.Text, sub)
+	case ui.Para:
+		return strings.Contains(v.Text, sub)
+	case ui.SettingRow:
+		return strings.Contains(v.Label, sub) || strings.Contains(v.Detail, sub)
+	case ui.VStack:
+		for _, it := range v.Items {
+			if nodeHasText(it, sub) {
+				return true
+			}
+		}
+	case ui.HStack:
+		for _, it := range v.Items {
+			if nodeHasText(it, sub) {
+				return true
+			}
+		}
+	case ui.Card:
+		for _, it := range v.Items {
+			if nodeHasText(it, sub) {
+				return true
+			}
+		}
+	case ui.Group:
+		for _, it := range v {
+			if nodeHasText(it, sub) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // findButton finds a button by ID in a tree of nodes.

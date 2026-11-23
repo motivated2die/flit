@@ -223,8 +223,8 @@ func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model
 		o.Device = llm.CPU
 	}
 	in := summary.Input{Title: s.Meta.Title, Segments: segs, Names: s.Names(), Notes: doc, Instruction: instruction, Language: s.Meta.Language}
-	if name := strings.Fields(a.cfg.YourName); len(name) > 0 {
-		in.Me, in.MeNames = name[0], name
+	if parts := a.cfg.NameParts(); len(parts) > 0 {
+		in.Me, in.MeNames = a.cfg.MeName(), parts
 	}
 	approach := summary.Single
 	if n := summary.EstimateTokens(in); n > summarySingleMax {
@@ -388,7 +388,7 @@ func (a *App) summarySection(s *session.Session) []ui.Node {
 	}
 	var items []ui.Node
 	if ns != nil {
-		items = append(items, ui.NotesEditor{ID: "summary:" + id, Ed: ns.ed, MinH: 80, OnChange: func() { a.summaryChanged(id) }})
+		items = append(items, ui.NotesEditor{ID: "summary:" + id, Ed: ns.ed, MinH: 80, Toolbar: true, ToolbarOnFocus: true, OnChange: func() { a.summaryChanged(id) }})
 	} else {
 		m := summaryModel()
 		text := "A small language model writes a summary from the transcript and your notes, on this PC, and answers your @flit questions."
@@ -457,15 +457,34 @@ func (a *App) copySummary(id string) {
 }
 
 // vocabulary is the speech model's custom terms: the user's own, and
-// their name.
+// their first and last name separately.
 func (a *App) vocabulary() []string {
 	v := append([]string(nil), a.cfg.Vocabulary...)
-	for _, w := range strings.Fields(a.cfg.YourName) {
+	for _, w := range a.cfg.NameParts() {
 		if !slices.Contains(v, w) {
 			v = append(v, w)
 		}
 	}
 	return v
+}
+
+func (a *App) setName(first, last string) {
+	a.cfg.FirstName = strings.Join(strings.Fields(first), " ")
+	a.cfg.LastName = strings.Join(strings.Fields(last), " ")
+	a.cfg.YourName = ""
+	a.save()
+	a.invalidate()
+}
+
+// nameFields renders separate First name and Last name inputs linked by Tab.
+func (a *App) nameFields(prefix string) ui.Node {
+	firstID, lastID := prefix+":first", prefix+":last"
+	return ui.HStack{Gap: 8, Right: true, Items: []ui.Node{
+		ui.TextField{ID: firstID, Value: a.cfg.First(), Placeholder: "First name", W: 118, MaxLen: 40, TabNext: lastID,
+			OnCommit: func(t string) { a.setName(t, a.cfg.Last()) }},
+		ui.TextField{ID: lastID, Value: a.cfg.Last(), Placeholder: "Last name", W: 118, MaxLen: 40, TabPrev: firstID,
+			OnCommit: func(t string) { a.setName(a.cfg.First(), t) }},
+	}}
 }
 
 // summarySettings are Settings → Summaries.
@@ -476,9 +495,8 @@ func (a *App) summarySettings() []ui.Node {
 		detail += "; downloads when you first ask for a summary"
 	}
 	return []ui.Node{
-		ui.SettingRow{Label: "Your name", Detail: "First and last name: the speech model spells it right, and summaries know what is yours",
-			Control: ui.TextField{ID: "set:yourname", Value: a.cfg.YourName, Placeholder: "First Last", W: 220, MaxLen: 80,
-				OnCommit: func(t string) { a.cfg.YourName = strings.Join(strings.Fields(t), " "); a.save(); a.invalidate() }}},
+		ui.SettingRow{Label: "Your name", Detail: "Added separately to transcription vocabulary and summaries",
+			Control: a.nameFields("set:name")},
 		ui.Divider{},
 		ui.SettingRow{Label: "Summary model", Detail: detail},
 		ui.Divider{},

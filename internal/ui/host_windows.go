@@ -468,7 +468,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		e := h.edit
 		if wp == vkTab {
-			h.commitToNext()
+			h.commitTab(keyDown(vkShift))
 			return 0, true
 		}
 		switch wp {
@@ -822,18 +822,40 @@ func (h *host) CommitEdit() {
 	}
 }
 
-// commitToNext saves the field (Enter, Tab) and hands the keyboard to the
-// editor that follows it, if it has one.
+// commitToNext saves the field (Enter) and hands the keyboard to the editor
+// or field that follows it, if it has one.
 func (h *host) commitToNext() {
 	next := ""
 	if h.edit != nil && h.last != nil {
 		next = h.last.nextOf(h.edit.ID)
 	}
-	h.CommitEdit()
-	if next != "" {
-		h.focus, h.goalX = next, -1
-		h.Invalidate()
+	h.focusAfterCommit(next)
+}
+
+// commitTab saves the field (Tab / Shift+Tab) and moves focus to the next or
+// previous field or editor.
+func (h *host) commitTab(shift bool) {
+	target := ""
+	if h.edit != nil && h.last != nil {
+		target = h.last.tabTargetOf(h.edit.ID, shift)
 	}
+	h.focusAfterCommit(target)
+}
+
+func (h *host) focusAfterCommit(target string) {
+	last := h.last
+	h.CommitEdit()
+	if target == "" {
+		return
+	}
+	if last != nil {
+		if in, ok := last.inputByID(target); ok {
+			h.startEdit(in.id, in.value, in.max)
+			return
+		}
+	}
+	h.focus, h.goalX = target, -1
+	h.Invalidate()
 }
 
 // CancelEdit ends typing without saving (a field that follows its text

@@ -26,6 +26,9 @@ type NotesEditor struct {
 	// Toolbar shows a row of buttons above the text: headings, lists, a
 	// task, bold, italic and @flit (the same as the Markdown shortcuts).
 	Toolbar bool
+	// ToolbarOnFocus hides the toolbar until the editor has the keyboard,
+	// extending it upward above the text so the layout below doesn't shift.
+	ToolbarOnFocus bool
 }
 
 // tool is a toolbar button.
@@ -213,8 +216,9 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	indentW, markW := c.Px(22), c.Px(22)
 	geoms := make([]blockGeom, len(doc.Blocks))
 	y0 := y
-	if n.Toolbar {
-		y += c.Px(30) + c.Px(10)
+	laneH := c.Px(38) // 30 px buttons + 4 px padding above and below
+	if n.Toolbar && !n.ToolbarOnFocus {
+		y += laneH + c.Px(10)
 	}
 	top := y
 	for i, b := range doc.Blocks {
@@ -256,11 +260,30 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	// The caret, steady (no blinking: nothing repaints while nothing
 	// changes), and kept in view while typing or moving with keys.
 	if focused {
-		cx, ct, ch := geoms[min(ed.Caret.B, len(geoms)-1)].caret(ed.Caret.O)
+		bi := min(ed.Caret.B, len(geoms)-1)
+		g := geoms[bi]
+		cx, ct, ch := g.caret(ed.Caret.O)
 		if !ed.HasSel() {
 			c.Draw(func(cv Canvas) {
 				cv.RoundRect(RectF{cx, ct + c.Px(1), cx + max(1, c.Px(1.5)), ct + ch - c.Px(1)}, 0, col(ColText))
 			})
+			if suffix, ok := ed.MentionSuggestion(); ok && suffix != "" {
+				f := c.F(blockFont(doc.Blocks[bi].Kind))
+				sw := c.M.TextWidth(suffix, f)
+				if ed.Caret.O == len(doc.Blocks[bi].Text) {
+					c.Draw(func(cv Canvas) {
+						cv.Text(suffix, RectF{cx + c.Px(2), ct, cx + c.Px(4) + sw, ct + ch}, f, col(ColFaint))
+					})
+				} else {
+					// Text follows on the same line: show a compact ghost chip above.
+					padX := c.Px(6)
+					pr := RectF{cx, ct - ch - c.Px(2), cx + sw + 2*padX, ct - c.Px(2)}
+					c.Draw(func(cv Canvas) {
+						cv.RoundRect(pr, c.Px(5), col(ColControl))
+						cv.Text(suffix, RectF{pr.L + padX, pr.T, pr.R - padX, pr.B}, f, col(ColMuted))
+					})
+				}
+			}
 		}
 		if ed.Reveal {
 			c.KeepInView(ct, ct+ch)
@@ -380,6 +403,9 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			case vk == vkReturn:
 				ed.Enter()
 			case vk == vkTab:
+				if !m.Shift && ed.AcceptMentionSuggestion() {
+					break
+				}
 				d := 1
 				if m.Shift {
 					d = -1
@@ -419,8 +445,13 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			return true
 		},
 	})
-	if n.Toolbar {
-		n.toolbar(c, x, y0, changed)
+	if n.Toolbar && (!n.ToolbarOnFocus || focused) {
+		barY := y0
+		floating := n.ToolbarOnFocus
+		if floating {
+			barY = y0 - laneH - c.Px(8)
+		}
+		n.toolbar(c, x, barY, w, laneH, floating, changed)
 	}
 	// Checkboxes, over the editor: a click ticks the task.
 	for i, b := range doc.Blocks {
@@ -439,16 +470,35 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	return height
 }
 
-// toolbar draws the buttons above the text; a click acts on the caret's
-// lines or the selection (and gives the editor the keyboard, as part of it).
-func (n NotesEditor) toolbar(c *Ctx, x, y float32, changed func(int)) {
+// toolbar draws the formatting buttons inside a full-width swim lane above the
+// text; a click acts on the caret's lines or the selection (and gives the
+// editor the keyboard, as part of it). When floating (ToolbarOnFocus), the lane
+// extends upward above the text without shifting the layout below.
+func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH float32, floating bool, changed func(int)) {
+	pad := c.Px(4)
+	lane := RectF{x, y, x + w, y + laneH}
+	rad := c.Px(10)
+	border := max(1, c.Px(1))
+	c.Draw(func(cv Canvas) {
+		if floating {
+			cv.RoundRect(RectF{lane.L - border, lane.T - border, lane.R + border, lane.B + border}, rad+border, col(ColEdge))
+		} else {
+			cv.RoundRect(RectF{lane.L - border, lane.T - border, lane.R + border, lane.B + border}, rad+border, col(ColDivider))
+		}
+		cv.RoundRect(lane, rad, col(ColSidebar))
+	})
+	// Clicking empty space in the swim lane keeps focus in the editor (and
+	// blocks click-through when the toolbar floats upward).
+	c.Click(n.ID+":bar", lane, func() {})
+
 	bw, bh := c.Px(30), c.Px(30)
+	bx, by := x+pad, y+(laneH-bh)/2
 	focused := c.Focus == n.ID
 	for _, t := range notesTools {
 		if t.gapBefore {
-			x += c.Px(10)
+			bx += c.Px(10)
 		}
-		r := RectF{x, y, x + bw, y + bh}
+		r := RectF{bx, by, bx + bw, by + bh}
 		id := n.ID + ":tool:" + t.id
 		hover := c.Hover == id
 		active := focused && t.active != nil && t.active(n.Ed)
@@ -473,7 +523,7 @@ func (n NotesEditor) toolbar(c *Ctx, x, y float32, changed func(int)) {
 			n.Ed.Reveal = true
 			changed(rev)
 		})
-		x += bw + c.Px(2)
+		bx += bw + c.Px(2)
 	}
 }
 

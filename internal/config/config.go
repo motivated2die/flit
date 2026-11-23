@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -65,9 +67,13 @@ type Config struct {
 	// NoUpdateCheck stops the twice-daily question to GitHub whether a
 	// newer release exists (internal/update); "Check now" still works.
 	NoUpdateCheck bool `json:"noUpdateCheck,omitempty"`
-	// YourName is the user's first and last name: added to the speech
-	// model's vocabulary, and how the user appears in summaries.
-	YourName string `json:"yourName,omitempty"`
+	// FirstName and LastName are added separately to the speech model's
+	// vocabulary, used in summaries to spot mentions and label the user's
+	// turns, and shown in the Home welcome greeting. YourName is the legacy
+	// combined field kept for automatic migration from older config files.
+	FirstName string `json:"firstName,omitempty"`
+	LastName  string `json:"lastName,omitempty"`
+	YourName  string `json:"yourName,omitempty"`
 	// SummaryCPU keeps summaries off the graphics processor.
 	SummaryCPU bool `json:"summaryCpu,omitempty"`
 
@@ -123,6 +129,13 @@ func Load(dir string) (Config, error) {
 	if cfg.Language == "" {
 		cfg.Language = Default().Language
 	}
+	if cfg.FirstName == "" && cfg.LastName == "" && cfg.YourName != "" {
+		if parts := strings.Fields(cfg.YourName); len(parts) > 0 {
+			cfg.FirstName = parts[0]
+			cfg.LastName = strings.Join(parts[1:], " ")
+		}
+		cfg.YourName = ""
+	}
 	return cfg, nil
 }
 
@@ -149,3 +162,56 @@ func (c Config) ProviderEnabled(id string, def bool) bool {
 	}
 	return def
 }
+
+// First is the user's first name, falling back to the legacy YourName field.
+func (c Config) First() string {
+	if s := strings.Join(strings.Fields(c.FirstName), " "); s != "" {
+		return s
+	}
+	if strings.TrimSpace(c.LastName) == "" {
+		if p := strings.Fields(c.YourName); len(p) > 0 {
+			return p[0]
+		}
+	}
+	return ""
+}
+
+// Last is the user's last name, falling back to the legacy YourName field.
+func (c Config) Last() string {
+	if s := strings.Join(strings.Fields(c.LastName), " "); s != "" {
+		return s
+	}
+	if strings.TrimSpace(c.FirstName) == "" {
+		if p := strings.Fields(c.YourName); len(p) > 1 {
+			return strings.Join(p[1:], " ")
+		}
+	}
+	return ""
+}
+
+// NameParts returns the individual words of First and Last (deduplicated,
+// preserving order), used for transcription vocabulary and summary cues.
+func (c Config) NameParts() []string {
+	var out []string
+	for _, s := range []string{c.First(), c.Last()} {
+		for _, w := range strings.Fields(s) {
+			if !slices.Contains(out, w) {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+// MeName is the label used for the user's own turns in summaries: first name
+// when set, otherwise last name.
+func (c Config) MeName() string {
+	if f := c.First(); f != "" {
+		return f
+	}
+	return c.Last()
+}
+
+// GreetingName is the name shown in the Home welcome greeting: first name
+// when set, otherwise last name.
+func (c Config) GreetingName() string { return c.MeName() }

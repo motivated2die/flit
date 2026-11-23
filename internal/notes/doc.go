@@ -202,10 +202,12 @@ func (d Doc) Markdown() string {
 		text := strings.TrimRight(b.Text, " \t") // trailing spaces would mean a line break
 		switch b.Kind {
 		case H2:
-			sb.WriteString("## " + text)
+			sb.WriteString("## ")
+			sb.WriteString(text)
 			stack = nil
 		case H3:
-			sb.WriteString("### " + text)
+			sb.WriteString("### ")
+			sb.WriteString(text)
 			stack = nil
 		case Para:
 			sb.WriteString(escapeLead(text))
@@ -213,7 +215,9 @@ func (d Doc) Markdown() string {
 		default:
 			stack = openLevel(stack, b)
 			lv := stack[len(stack)-1]
-			sb.WriteString(strings.Repeat(" ", lv.col) + marker(b, lv.n) + text)
+			sb.WriteString(strings.Repeat(" ", lv.col))
+			sb.WriteString(marker(b, lv.n))
+			sb.WriteString(text)
 		}
 	}
 	if sb.Len() > 0 {
@@ -321,15 +325,21 @@ func (d Doc) Plain() string {
 		text := PlainInline(b.Text)
 		switch b.Kind {
 		case Bullet:
-			sb.WriteString(strings.Repeat("  ", b.Indent) + "• " + text)
+			sb.WriteString(strings.Repeat("  ", b.Indent))
+			sb.WriteString("• ")
+			sb.WriteString(text)
 		case Numbered:
-			sb.WriteString(strings.Repeat("  ", b.Indent) + fmt.Sprintf("%d. ", nums[i]) + text)
+			sb.WriteString(strings.Repeat("  ", b.Indent))
+			fmt.Fprintf(&sb, "%d. ", nums[i])
+			sb.WriteString(text)
 		case Task:
 			box := "☐ "
 			if b.Done {
 				box = "☑ "
 			}
-			sb.WriteString(strings.Repeat("  ", b.Indent) + box + text)
+			sb.WriteString(strings.Repeat("  ", b.Indent))
+			sb.WriteString(box)
+			sb.WriteString(text)
 		default:
 			sb.WriteString(text)
 		}
@@ -351,7 +361,9 @@ func (d Doc) HTML() string {
 	var lists []open
 	closeTo := func(indent int) {
 		for len(lists) > 0 && lists[len(lists)-1].indent > indent {
-			sb.WriteString("</li></" + lists[len(lists)-1].tag + ">")
+			sb.WriteString("</li></")
+			sb.WriteString(lists[len(lists)-1].tag)
+			sb.WriteByte('>')
 			lists = lists[:len(lists)-1]
 		}
 	}
@@ -361,11 +373,17 @@ func (d Doc) HTML() string {
 			closeTo(-1)
 			switch b.Kind {
 			case H2:
-				sb.WriteString("<h2>" + text + "</h2>")
+				sb.WriteString("<h2>")
+				sb.WriteString(text)
+				sb.WriteString("</h2>")
 			case H3:
-				sb.WriteString("<h3>" + text + "</h3>")
+				sb.WriteString("<h3>")
+				sb.WriteString(text)
+				sb.WriteString("</h3>")
 			default:
-				sb.WriteString("<p>" + text + "</p>")
+				sb.WriteString("<p>")
+				sb.WriteString(text)
+				sb.WriteString("</p>")
 			}
 			continue
 		}
@@ -378,10 +396,16 @@ func (d Doc) HTML() string {
 		case len(lists) > 0 && lists[len(lists)-1].indent == b.Indent && lists[len(lists)-1].tag == tag:
 			sb.WriteString("</li><li>")
 		case len(lists) > 0 && lists[len(lists)-1].indent == b.Indent:
-			sb.WriteString("</li></" + lists[len(lists)-1].tag + "><" + tag + "><li>")
+			sb.WriteString("</li></")
+			sb.WriteString(lists[len(lists)-1].tag)
+			sb.WriteString("><")
+			sb.WriteString(tag)
+			sb.WriteString("><li>")
 			lists[len(lists)-1].tag = tag
 		default:
-			sb.WriteString("<" + tag + "><li>")
+			sb.WriteByte('<')
+			sb.WriteString(tag)
+			sb.WriteString("><li>")
 			lists = append(lists, open{tag, b.Indent})
 		}
 		if b.Kind == Task {
