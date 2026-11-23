@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/motivated2die/flit/internal/calendar"
 	"github.com/motivated2die/flit/internal/capture"
 	"github.com/motivated2die/flit/internal/config"
 	"github.com/motivated2die/flit/internal/detect"
@@ -130,15 +131,22 @@ type App struct {
 	// notes are the recordings' notes being edited (notes_windows.go);
 	// focusNotes asks the next layout to give that recording's editor the
 	// keyboard.
-	notes       map[string]*notesState
-	summaries   map[string]*notesState // nil entry: none written
-	sumRun      *summaryRun            // the summary being written
-	sumErr      map[string]string      // why a recording's last summary failed
-	sumInstr    map[string]string      // the extra instruction typed, per recording
-	focusNotes  string
-	focusTitle  string // the same for a recording's title field
-	pinnedNotes string // session ID shown in notesFloat ("" when not pinned)
-	focusFloat  bool   // ask notesFloat's editor for keyboard focus once
+	notes         map[string]*notesState
+	summaries     map[string]*notesState // nil entry: none written
+	sumRun        *summaryRun            // the summary being written
+	sumErr        map[string]string      // why a recording's last summary failed
+	sumInstr      map[string]string      // the extra instruction typed, per recording
+	focusNotes    string
+	focusTitle    string            // the same for a recording's title field
+	pinnedNotes   string            // session ID shown in notesFloat ("" when not pinned)
+	stashedNotes  string            // session ID stashed in the notch ("" when not stashed)
+	stashDragging bool              // notesFloat is currently being dragged
+	stashReady    bool              // dragged notesFloat is close enough to the notch to stash
+	focusFloat    bool              // ask notesFloat's editor for keyboard focus once
+	joinPrompt    *calendar.Meeting // upcoming calendar meeting currently shown in the notch
+	joinPrompted  map[string]bool   // meeting keys already shown a join prompt
+	scaleDragOn   bool              // dragging the Settings UI scale slider
+	scaleDragIdx  int               // preview stop while dragging the slider
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
@@ -164,6 +172,14 @@ func runTray(args []string) int {
 	defer closeLog()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "logging:", err)
+	}
+	if sz, mod, ok := logx.CrashInfo(dataDir); ok {
+		logx.Printf("previous crash log present: %s (%d bytes, %s)", filepath.Base(logx.CrashPath(dataDir)), sz, mod.Format("2006-01-02 15:04:05"))
+	}
+	closeCrash, err := logx.InitCrash(dataDir)
+	defer closeCrash()
+	if err != nil {
+		logx.Printf("crash logging: %v", err)
 	}
 	ui.InitDPIAwareness()
 	logx.Printf("flit %s starting %q", Version, args)
@@ -206,6 +222,7 @@ func runTray(args []string) int {
 	a.initNotch()
 	a.initWindow()
 	a.initPanel()
+	a.applyUIScale()
 	a.tray.OnNotificationClick = func() {
 		if f := a.onNotify; f != nil {
 			a.onNotify = nil

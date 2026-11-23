@@ -34,6 +34,9 @@ type Window struct {
 	// OnEscape runs when Esc is pressed and no text is being edited
 	// (closing a popover).
 	OnEscape func()
+	// OnBack runs when the mouse browser Back button (XBUTTON1) or a
+	// browser-back APPCOMMAND is triggered.
+	OnBack func()
 }
 
 const (
@@ -48,16 +51,20 @@ const (
 	sizeMinimized      = 1
 	swMinimize         = 6
 
-	wmNcCalcSize   = 0x0083
-	wmNcHitTest    = 0x0084
-	htClient       = 1
-	htCaption      = 2
-	htTop          = 12
-	htTopLeft      = 13
-	htTopRight     = 14
-	smCyFrame      = 33
-	smCxPaddedBord = 92
-	swpFrameChange = 0x0020
+	wmNcCalcSize          = 0x0083
+	wmNcHitTest           = 0x0084
+	wmXButtonUp           = 0x020C
+	wmAppCommand          = 0x0319
+	xButton1              = 1
+	appCommandBrowserBack = 1
+	htClient              = 1
+	htCaption             = 2
+	htTop                 = 12
+	htTopLeft             = 13
+	htTopRight            = 14
+	smCyFrame             = 33
+	smCxPaddedBord        = 92
+	swpFrameChange        = 0x0020
 
 	dwmwaDarkMode     = 20
 	dwmwaCornerPref   = 33
@@ -132,7 +139,7 @@ func NewWindow(title string) (*Window, error) {
 		}
 	}
 	windowByHwnd[h] = w
-	w.scale = w.dpiScale()
+	w.setDPI(w.dpiScale())
 	// Recompute the frame now that windowProc knows the window: the
 	// caption becomes client area.
 	procSetWindowPos.Call(h, 0, 0, 0, 0, 0, swpFrameChange|swpNoActivate|0x0001|0x0002|0x0004) // NOSIZE|NOMOVE|NOZORDER
@@ -167,7 +174,7 @@ func colorref(c interface{ RGBA() (r, g, b, a uint32) }) uint32 {
 func (w *Window) setIcons() {
 	metric := func(idx uintptr) int {
 		if procGetSysMetricsDpi.Find() == nil {
-			n, _, _ := procGetSysMetricsDpi.Call(idx, uintptr(w.scale*96+0.5))
+			n, _, _ := procGetSysMetricsDpi.Call(idx, uintptr(w.rawDPI()*96+0.5))
 			return int(n)
 		}
 		n, _, _ := procGetSystemMetrics.Call(idx)
@@ -233,7 +240,7 @@ func (w *Window) minimize() { procShowWindow.Call(w.hwnd, swMinimize) }
 // frameY is the thickness of the sizing frame at the window's DPI: what a
 // maximised window overhangs the screen by, and the top resize band.
 func (w *Window) frameY() int32 {
-	dpi := uintptr(w.scale*96 + 0.5)
+	dpi := uintptr(w.rawDPI()*96 + 0.5)
 	if procGetSysMetricsDpi.Find() == nil {
 		f, _, _ := procGetSysMetricsDpi.Call(smCyFrame, dpi)
 		p, _, _ := procGetSysMetricsDpi.Call(smCxPaddedBord, dpi)
@@ -289,31 +296,6 @@ var (
 
 const monitorDefaultToNearest = 2
 
-// limitWidth keeps the window no wider than its content (FrameMaxW plus
-// the side frame): resized, and maximised, where it stays full height and
-// is centred on the screen's work area instead of showing empty space.
-func (w *Window) limitWidth(maxTrack, maxSize, maxPos *point) {
-	var wr, cr struct{ L, T, R, B int32 }
-	procGetWindowRect.Call(w.hwnd, uintptr(unsafe.Pointer(&wr)))
-	procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&cr)))
-	border := (wr.R - wr.L) - (cr.R - cr.L) // the side frames
-	if border < 0 || border > int32(64*w.scale) {
-		border = 0
-	}
-	maxW := int32(float32(FrameMaxW)*w.scale) + border
-	maxTrack.X = maxW
-	mon, _, _ := procMonitorFromWindow.Call(w.hwnd, monitorDefaultToNearest)
-	mi := monitorInfo{}
-	mi.Size = uint32(unsafe.Sizeof(mi))
-	if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
-		return
-	}
-	if workW := mi.Work.R - mi.Work.L; maxW < workW {
-		maxSize.X = maxW
-		maxPos.X = (mi.Work.L - mi.Monitor.L) + (workW-maxW)/2 // relative to the monitor
-	}
-}
-
 // place centres the window on the main screen's work area at its default
 // size for the screen's scale.
 func (w *Window) place() {
@@ -366,6 +348,16 @@ func windowProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 			w.OnEscape()
 			return 0
 		}
+	case wmXButtonUp:
+		if (wp>>16)&0xFFFF == xButton1 && w.OnBack != nil {
+			w.OnBack()
+			return 1
+		}
+	case wmAppCommand:
+		if (lp>>16)&0x0FFF == appCommandBrowserBack && w.OnBack != nil {
+			w.OnBack()
+			return 1
+		}
 	case wmClose:
 		w.Hide() // flit lives on in the tray
 		return 0
@@ -373,11 +365,22 @@ func windowProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		mmi := (*struct {
 			Reserved, MaxSize, MaxPos, MinTrack, MaxTrack point
 		})(cptrUI(lp))
-		mmi.MinTrack = point{int32(720 * w.scale), int32(480 * w.scale)}
-		w.limitWidth(&mmi.MaxTrack, &mmi.MaxSize, &mmi.MaxPos)
+		minW, minH := int32(720*w.scale), int32(480*w.scale)
+		mon, _, _ := procMonitorFromWindow.Call(w.hwnd, monitorDefaultToNearest)
+		mi := monitorInfo{}
+		mi.Size = uint32(unsafe.Sizeof(mi))
+		if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r != 0 {
+			if workW := mi.Work.R - mi.Work.L; workW > 0 {
+				minW = min(minW, workW)
+			}
+			if workH := mi.Work.B - mi.Work.T; workH > 0 {
+				minH = min(minH, workH)
+			}
+		}
+		mmi.MinTrack = point{minW, minH}
 		return 0
 	case wmDpiChanged:
-		w.scale = float32(wp&0xFFFF) / 96
+		w.setDPI(float32(wp&0xFFFF) / 96)
 		r := (*struct{ L, T, R, B int32 })(cptrUI(lp))
 		procSetWindowPos.Call(hwnd, 0, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoActivate|0x0004)
 		w.setIcons()

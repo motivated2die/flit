@@ -76,8 +76,19 @@ type Config struct {
 	YourName  string `json:"yourName,omitempty"`
 	// SummaryCPU keeps summaries off the graphics processor.
 	SummaryCPU bool `json:"summaryCpu,omitempty"`
+	// UIScale is the user's interface scale percentage (80, 100, 110, 125);
+	// 0 defaults to 100%.
+	UIScale int `json:"uiScale,omitempty"`
 
 	SetupComplete bool `json:"setupComplete,omitempty"`
+}
+
+// UIScaleFactor returns the configured UI zoom multiplier (default 1.0).
+func (c Config) UIScaleFactor() float32 {
+	if c.UIScale <= 0 {
+		return 1
+	}
+	return float32(max(80, min(125, c.UIScale))) / 100
 }
 
 // Values of Config.TranscribeGPU.

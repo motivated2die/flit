@@ -75,7 +75,9 @@ func (r CaptionRow) Layout(c *Ctx, x, y, w float32) float32 {
 // column. NoIcon leaves the icon out (the tray panel).
 type RecordingRow struct {
 	ID       string
+	Glyph    string // icon name (defaults to GlyphArticle)
 	Live     bool
+	Spinning bool // animated loading spinner instead of a static icon
 	Title    string
 	Facts    string
 	Snippet  string
@@ -174,10 +176,11 @@ func (l RecordingRow) Layout(c *Ctx, x, y, w float32) float32 {
 		stateR -= c.Px(8)
 	}
 	state := RectF{stateR - stateW, titleLine.T, stateR, titleLine.B}
-	if l.Live {
+	if l.Live || l.Spinning {
 		c.Animating = true
 	}
 	pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
+	spinAngle := float32(2 * math.Pi * float64(c.Now.UnixNano()%int64(time.Second)) / float64(time.Second))
 	c.ops[slot] = func(cv Canvas) {
 		if hover {
 			cv.RoundRect(r, c.Px(8), col(ColCardHover))
@@ -188,8 +191,18 @@ func (l RecordingRow) Layout(c *Ctx, x, y, w float32) float32 {
 			cx, cy := (icon.L+icon.R)/2, (icon.T+icon.B)/2
 			cv.Circle(cx, cy, c.Px(9)*(0.85+0.3*pulse), RGBA(ColLive, 0.22*pulse))
 			cv.Circle(cx, cy, c.Px(5.5), col(ColLive))
+		case l.Spinning:
+			cx, cy := (icon.L+icon.R)/2, (icon.T+icon.B)/2
+			outer := iconS * 0.44
+			inner := outer * 0.64
+			cv.Arc(cx, cy, inner, outer, 0, 2*math.Pi, RGBA(ColText, 0.18))
+			cv.Arc(cx, cy, inner, outer, spinAngle, spinAngle+math.Pi*0.65, col(ColText))
 		default:
-			DrawIcon(cv, GlyphArticle, icon, iconS, col(ColText))
+			glyph := l.Glyph
+			if glyph == "" {
+				glyph = GlyphArticle
+			}
+			DrawIcon(cv, glyph, icon, iconS, col(ColText))
 		}
 		cv.Text(l.Title, RectF{tx, titleLine.T, state.L - c.Px(12), titleLine.B}, c.F(fontBodySemi), col(ColText))
 		cv.Text(l.Trailing, state, sf, col(ColMuted))
@@ -274,7 +287,7 @@ func (b RoundButton) Layout(c *Ctx, x, y, w float32) float32 {
 	fill, fg := col(ColControl), col(ColText)
 	switch {
 	case b.Active && c.Hover == b.ID:
-		fill, fg = col(rgb(0xDC, 0xDC, 0xE0)), col(ColInk)
+		fill, fg = col(rgb(0xDC, 0xDC, 0xDC)), col(ColInk)
 	case b.Active:
 		fill, fg = col(ColText), col(ColInk)
 	case c.Hover == b.ID:

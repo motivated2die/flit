@@ -45,6 +45,7 @@ func (a *App) initWindow() {
 	}
 	w.Build = a.frame
 	w.OnEscape = a.closePopover
+	w.OnBack = a.navigateBack
 	w.OnHide = func() {
 		a.saveAllNotes()
 		a.syncMeters()
@@ -57,6 +58,8 @@ func (a *App) initWindow() {
 	} else {
 		fw.Build = a.pinnedNotesNode
 		fw.OnClose = a.unpinNotes
+		fw.OnDragMove = a.onFloatDragMove
+		fw.OnDragEnd = a.onFloatDragEnd
 		a.notesFloat = fw
 	}
 }
@@ -75,6 +78,10 @@ func (a *App) openWindow() {
 			a.page = pageSession + id
 			a.focusNotes = id
 		}
+	}
+	if a.stashedNotes != "" && a.page == pageSession+a.stashedNotes {
+		a.stashedNotes = ""
+		a.syncNotch()
 	}
 	if a.win == nil {
 		if a.tray != nil { // none in tests
@@ -132,6 +139,27 @@ func (a *App) go_(page string) {
 	a.invalidate()
 }
 
+// navigateBack handles the mouse browser Back button: closes a modal popover
+// if open, returns from a meeting detail page to Meetings (or Home while
+// actively recording), and returns from any other page to Home.
+func (a *App) navigateBack() {
+	if a.uninstallAsk {
+		a.closePopover()
+		return
+	}
+	if id, ok := strings.CutPrefix(a.page, pageSession); ok {
+		if s := a.sessionByID(id); s != nil && a.isRecording(s) {
+			a.go_(pageHome)
+			return
+		}
+		a.go_(pageRecordings)
+		return
+	}
+	if a.page != pageHome && a.page != pageWelcome {
+		a.go_(pageHome)
+	}
+}
+
 // reloadSessions re-reads the session list (on navigation and events, not
 // on every repaint).
 func (a *App) reloadSessions() {
@@ -156,7 +184,7 @@ func dirSize(dir string) int64 {
 func (a *App) frame() ui.Frame {
 	nav := []ui.NavEntry{
 		{ID: pageHome, Label: "Home", Glyph: ui.GlyphHome},
-		{ID: pageRecordings, Label: "Recordings", Glyph: ui.GlyphHistory},
+		{ID: pageRecordings, Label: "Meetings", Glyph: ui.GlyphArticle},
 		{ID: pageCalendar, Label: "Calendar", Glyph: ui.GlyphCalendar},
 		{ID: pageAudio, Label: "Audio", Glyph: ui.GlyphMic},
 		{ID: pageSettings, Label: "Settings", Glyph: ui.GlyphSettings},
@@ -310,6 +338,9 @@ func (a *App) stateText(s *session.Session) string {
 	}
 	switch s.Meta.State {
 	case session.Ready:
+		if a.hasSummary(s) {
+			return "Summarized"
+		}
 		return "Transcribed"
 	case session.Failed:
 		return "Failed"
@@ -370,6 +401,91 @@ func (a *App) languageControl(id string) ui.Node {
 	return ui.Segmented{ID: id, Options: names, Selected: sel, OnSelect: func(i int) { a.setLanguage(languages[i].code) }}
 }
 
+var uiScales = []struct {
+	pct   int
+	label string
+}{
+	{80, "80%"},
+	{100, "100%"},
+	{110, "110%"},
+	{125, "125%"},
+}
+
+func (a *App) uiScaleIndex() int {
+	pct := a.cfg.UIScale
+	if pct <= 0 {
+		pct = 100
+	}
+	best, bestD := 1, 1000
+	for i, s := range uiScales {
+		d := s.pct - pct
+		if d < 0 {
+			d = -d
+		}
+		if d < bestD {
+			best, bestD = i, d
+		}
+	}
+	return best
+}
+
+func (a *App) applyUIScale() {
+	z := a.cfg.UIScaleFactor()
+	if a.win != nil {
+		a.win.SetZoom(z)
+	}
+	if a.notesFloat != nil {
+		a.notesFloat.SetZoom(z)
+	}
+	if a.panel != nil {
+		a.panel.SetZoom(z)
+	}
+	if a.notch != nil {
+		a.notch.SetZoom(z)
+	}
+}
+
+func (a *App) setUIScale(pct int) {
+	if pct == 100 {
+		pct = 0 // default
+	}
+	if a.cfg.UIScale == pct {
+		a.invalidate()
+		return
+	}
+	a.cfg.UIScale = pct
+	a.save()
+	a.applyUIScale()
+	a.invalidate()
+}
+
+func (a *App) uiScaleControl() ui.Node {
+	labels := make([]string, len(uiScales))
+	for i, s := range uiScales {
+		labels[i] = s.label
+	}
+	sel := a.uiScaleIndex()
+	if a.scaleDragOn {
+		sel = a.scaleDragIdx
+	}
+	return ui.StepSlider{
+		ID:       "set:uiscale",
+		Labels:   labels,
+		Selected: sel,
+		OnChange: func(i int, done bool) {
+			if !done {
+				if !a.scaleDragOn || a.scaleDragIdx != i {
+					a.scaleDragOn, a.scaleDragIdx = true, i
+					a.invalidate()
+				}
+				return
+			}
+			a.scaleDragOn = false
+			a.setUIScale(uiScales[i].pct)
+		},
+	}
+}
+
 func (a *App) settingsPage() ui.Node {
 	var apps []ui.Node
 	for _, p := range detect.Providers {
@@ -424,6 +540,8 @@ func (a *App) settingsPage() ui.Node {
 		ui.Card{Gap: 2, Items: a.summarySettings()},
 		ui.Caption("App"),
 		ui.Card{Gap: 4, Items: []ui.Node{
+			ui.SettingRow{Label: "Interface scale", Detail: "Scales the window, floating notes, tray popover and notch", Control: a.uiScaleControl()},
+			ui.Divider{},
 			ui.Toggle{ID: "set:autostart", Label: "Start with Windows", Detail: "flit needs to run to notice meetings", On: install.AutoStartEnabled(), OnChange: func(on bool) {
 				if err := install.SetAutoStart(on); err != nil {
 					logx.Printf("autostart: %v", err)

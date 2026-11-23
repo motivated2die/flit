@@ -124,4 +124,8 @@ func TestFloatWindowHitTestAndSizeLimits(t *testing.T) {
 	if maxPt.X < minPt.X || maxPt.X > int32(floatMaxW*f.scale) || maxPt.Y < minPt.Y || maxPt.Y > int32(floatMaxH*f.scale) {
 		t.Errorf("maxTrack = %+v out of bounds", maxPt)
 	}
+
+	// Painting when Build returns nil must not panic.
+	f.Build = func() Node { return nil }
+	f.paint()
 }

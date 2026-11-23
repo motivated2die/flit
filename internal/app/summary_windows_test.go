@@ -133,20 +133,21 @@ func TestWelcomeNameHomeGreetingAndSettings(t *testing.T) {
 		t.Error("Welcome page missing last name field")
 	}
 
-	// Home greeting uses first name, else last name.
+	// Home greeting uses first name, else last name, else ends with "!".
 	a.cfg.SetupComplete = true
 	a.page = pageHome
 	a.setName("Moritz", "Haisch")
-	if !nodeHasText(a.homePage(), "Welcome, Moritz") {
-		t.Error("Home missing 'Welcome, Moritz'")
+	if !nodeHasText(a.homePage(), ", Moritz") {
+		t.Error("Home missing ', Moritz' greeting")
 	}
 	a.setName("", "Haisch")
-	if !nodeHasText(a.homePage(), "Welcome, Haisch") {
-		t.Error("Home missing 'Welcome, Haisch' fallback")
+	if !nodeHasText(a.homePage(), ", Haisch") {
+		t.Error("Home missing ', Haisch' fallback greeting")
 	}
 	a.setName("", "")
-	if nodeHasText(a.homePage(), "Welcome,") {
-		t.Error("Home showed Welcome greeting with empty name")
+	head := a.homePage().(ui.VStack).Items[0]
+	if nodeHasText(head, ", ") || !nodeHasText(head, "!") {
+		t.Errorf("Home greeting without name = %+v, want ending with '!' and no name", head)
 	}
 
 	// Settings has split name fields, no Speech model row, and a calendar confirm button.

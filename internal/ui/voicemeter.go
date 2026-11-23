@@ -23,13 +23,18 @@ type VoiceMeter struct {
 	// Stacked puts the two sides in two rows of a narrow box (its Width)
 	// instead of side by side across the width it is given.
 	Stacked bool
+	// Flat integrates the meter directly into a ColBase surface without a
+	// nested rounded card, using a compact inline strip with a top hairline.
+	Flat bool
 }
 
 // Geometry (logical pixels).
 const (
 	vmH        = 40
+	vmFlatH    = 28
 	vmRadius   = 10
 	vmPadX     = 14
+	vmFlatPadX = 2
 	vmBarW     = 4
 	vmBarGap   = 3
 	vmBarMin   = 3
@@ -104,6 +109,8 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 	h := c.Px(vmH)
 	if v.Stacked {
 		h = c.Px(2*vmRowH + 2*vmStackPad)
+	} else if v.Flat {
+		h = c.Px(vmFlatH)
 	}
 	box := RectF{x, y, x + w, y + h}
 	if !c.Visible(box) {
@@ -111,9 +118,14 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 	}
 	line := max(1, c.Px(1))
 	labels := v.Labels
+	padX := c.Px(vmPadX)
+	if v.Flat {
+		padX = c.Px(vmFlatPadX)
+	}
 	// Each side's slot: a half of the box, or a row of the stacked box.
 	var slots [2]RectF
 	var divider RectF
+	var topRule RectF
 	if v.Stacked {
 		top := y + c.Px(vmStackPad)
 		for s := range 2 {
@@ -121,19 +133,36 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 			slots[s] = RectF{x, t, x + w, t + c.Px(vmRowH)}
 		}
 		mid := top + c.Px(vmRowH)
-		divider = RectF{x + c.Px(vmPadX), mid - line/2, x + w - c.Px(vmPadX), mid + line/2}
+		divider = RectF{x + padX, mid - line/2, x + w - padX, mid + line/2}
 	} else {
 		half := w / 2
-		for s := range 2 {
-			slots[s] = RectF{x + float32(s)*half, y, x + float32(s+1)*half, y + h}
+		top := y
+		if v.Flat {
+			topRule = RectF{x, y, x + w, y + line}
+			top = y + c.Px(6)
 		}
-		divider = RectF{x + half - line/2, y + c.Px(10), x + half + line/2, y + h - c.Px(10)}
+		for s := range 2 {
+			slots[s] = RectF{x + float32(s)*half, top, x + float32(s+1)*half, y + h}
+		}
+		divInset := c.Px(10)
+		if v.Flat {
+			divInset = c.Px(4)
+		}
+		divider = RectF{x + half - line/2, top + divInset, x + half + line/2, y + h - divInset}
 	}
 	c.Draw(func(cv Canvas) {
-		cv.RoundRect(box, c.Px(vmRadius), col(ColBase))
+		if !v.Flat {
+			cv.RoundRect(box, c.Px(vmRadius), col(ColBase))
+		} else if topRule.H() > 0 {
+			cv.RoundRect(topRule, 0, col(ColDivider))
+		}
 		cv.RoundRect(divider, 0, col(ColDivider))
 		for s, r := range slots {
-			cv.Text(labels[s], RectF{r.L + c.Px(vmPadX), r.T, r.R, r.B}, c.F(fontSmall), col(ColMuted))
+			lx := r.L + padX
+			if v.Flat && s == 1 {
+				lx = r.L + c.Px(12)
+			}
+			cv.Text(labels[s], RectF{lx, r.T, r.R, r.B}, c.F(fontSmall), col(ColMuted))
 		}
 	})
 	n := v.bars()
@@ -144,10 +173,18 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 	barsW, bh := v.barsW(c), c.Px(vmBarMax)
 	// The bars follow their label, at the same place in both slots (after
 	// the wider label), and never past the slot's end.
-	off := min(c.Px(vmPadX)+v.labelW(c)+c.Px(vmLabelGap), slots[0].W()-c.Px(vmPadX)-barsW)
+	off := min(padX+v.labelW(c)+c.Px(vmLabelGap), slots[0].W()-padX-barsW)
 	bands, smooth := v.Bands, v.Smooth
 	for s, r := range slots {
 		l := r.L + off
+		if v.Flat {
+			// Right-align each side's bars cleanly inside its half.
+			rightPad := c.Px(12)
+			if s == 1 {
+				rightPad = padX
+			}
+			l = r.R - rightPad - barsW
+		}
 		mid := (r.T + r.B) / 2
 		area := RectF{l, mid - bh/2, l + barsW, mid + bh/2}
 		side := s

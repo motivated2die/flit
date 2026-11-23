@@ -23,6 +23,12 @@ type SummaryInfo struct {
 	Edited      bool      `json:"edited,omitempty"`      // the user changed it since
 }
 
+// HasSummary reports whether the recording has a non-empty summary on disk.
+func (s *Session) HasSummary() bool {
+	st, err := os.Stat(s.Path(SummaryFile))
+	return err == nil && st.Size() > 0
+}
+
 // Summary returns the recording's summary Markdown and how it was written;
 // "" when there is none.
 func (s *Session) Summary() (string, SummaryInfo, error) {

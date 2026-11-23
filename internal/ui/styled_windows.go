@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 // Styled paragraphs: one DirectWrite text layout with weight, italics and
@@ -26,7 +24,7 @@ func (g *d2d) styledLayout(s string, f Font, w, h float32, styles []TextStyle) *
 	if err != nil || s == "" {
 		return nil
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(w), f32(max(h, 1)), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -72,7 +70,7 @@ func (g *d2d) StyledLines(s string, f Font, width float32, styles []TextStyle) *
 	}
 	t := &TextLines{}
 	if tl := g.styledLayout(s, f, width, 1e6, styles); tl != nil {
-		u, _ := windows.UTF16FromString(s)
+		u := utf16Units(s)
 		t = layoutLines(tl, s, len(u)-1)
 		tl.release()
 	}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -233,7 +234,7 @@ func (g *d2d) paragraphHeight(s string, f Font, width float32) float32 {
 	if err != nil || s == "" {
 		return 0
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(width), f32(1e6), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -271,7 +272,7 @@ func (g *d2d) paragraphLines(s string, f Font, width float32) *TextLines {
 	if err != nil || s == "" {
 		return &TextLines{}
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(width), f32(1e6), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -334,7 +335,7 @@ func (g *d2d) Measure(s string, f Font) float32 {
 	if err != nil || s == "" {
 		return 0
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(10000), f32(1000), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -437,7 +438,7 @@ func (p *Painter) Text(s string, r RectF, f Font, c ColorF) {
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 2 /* clip */, 0)
 }
@@ -448,7 +449,7 @@ func (p *Painter) Paragraph(s string, r RectF, f Font, c ColorF) {
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 0, 0)
 }
@@ -465,7 +466,7 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 	if err != nil || s == "" {
 		return
 	}
-	u, _ := windows.UTF16FromString(s)
+	u := utf16Units(s)
 	var tl *comObj
 	if hr(p.g.dwrite.call(dwCreateTextLayout, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		f32(r.W()), f32(max(r.H(), 1)), uintptr(unsafe.Pointer(&tl))), "CreateTextLayout") != nil {
@@ -490,6 +491,13 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 		}
 	}
 	p.g.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
+}
+
+// utf16Units encodes s as UTF-16 code units with a trailing NUL (like
+// windows.UTF16FromString, but never failing on embedded NUL bytes).
+func utf16Units(s string) []uint16 {
+	u := utf16.Encode([]rune(s))
+	return append(u, 0)
 }
 
 // utf16Index is byte offset i of s in UTF-16 code units (DirectWrite's).
@@ -533,6 +541,65 @@ func (p *Painter) Polygons(polys [][]PointF, c ColorF) {
 		sink.call(sinkAddLines, uintptr(unsafe.Pointer(&rest[0])), uintptr(len(rest)))
 		sink.call(sinkEndFigure, 1)
 	}
+	sink.call(sinkClose)
+	sink.release()
+	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
+}
+
+// NotchShape fills a top-attached notch blob spanning [l, r] × [t, b] with
+// rounded bottom corners of radius bottomR and concave top flares of radius
+// flareR curving smoothly outward along the top edge y = t.
+func (p *Painter) NotchShape(l, t, r, b, bottomR, flareR float32, c ColorF) {
+	w, h := r-l, b-t
+	if w <= 0 || h <= 0 {
+		return
+	}
+	br := max(0, min(bottomR, min(w/2, h)))
+	fr := max(0, min(flareR, h-br))
+	var path *comObj
+	if hr(p.g.factory.call(factoryCreatePathGeometry, uintptr(unsafe.Pointer(&path))), "CreatePathGeometry") != nil {
+		return
+	}
+	defer path.release()
+	var sink *comObj
+	if hr(path.call(pathOpen, uintptr(unsafe.Pointer(&sink))), "Open") != nil {
+		return
+	}
+	addArc := func(x, y, rad float32, clockwise bool) {
+		dir := uint32(0) // D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE
+		if clockwise {
+			dir = 1
+		}
+		seg := struct {
+			X, Y, W, H, Rot float32
+			Dir, Size       uint32
+		}{x, y, rad, rad, 0, dir, 0}
+		sink.call(sinkAddArc, uintptr(unsafe.Pointer(&seg)))
+	}
+	sink.call(sinkSetFillMode, 1) // winding
+	sink.call(sinkBeginFigure, pt(l-fr, t), 0)
+	if fr > 0 {
+		addArc(l, t+fr, fr, true) // top-left concave flare
+	}
+	if b-br > t+fr {
+		sink.call(sinkAddLine, pt(l, b-br))
+	}
+	if br > 0 {
+		addArc(l+br, b, br, false) // bottom-left convex corner
+	}
+	if r-br > l+br {
+		sink.call(sinkAddLine, pt(r-br, b))
+	}
+	if br > 0 {
+		addArc(r, b-br, br, false) // bottom-right convex corner
+	}
+	if b-br > t+fr {
+		sink.call(sinkAddLine, pt(r, t+fr))
+	}
+	if fr > 0 {
+		addArc(r+fr, t, fr, true) // top-right concave flare
+	}
+	sink.call(sinkEndFigure, 1) // closes along top edge y = t
 	sink.call(sinkClose)
 	sink.release()
 	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)

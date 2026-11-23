@@ -14,15 +14,24 @@ import (
 // [MinW..MaxW] × [MinH..MaxH], and its content scrolls smoothly inside.
 type FloatWindow struct {
 	host
-	placed    bool
-	dragArm   bool
-	dragStart PointF
-	startMove func() // test hook; nil sends WM_NCLBUTTONDOWN(HTCAPTION)
+	placed      bool
+	dragArm     bool
+	dragStart   PointF
+	moving      bool
+	preDragRect struct{ L, T, R, B int32 }
+	hasPreDrag  bool
+	startMove   func() // test hook; nil sends WM_NCLBUTTONDOWN(HTCAPTION)
 
 	// Build returns the content node (a NotesEditor in pinned mode).
 	Build func() Node
 	// OnClose runs on WM_CLOSE (e.g. Alt+F4); if nil, the window hides.
 	OnClose func()
+	// OnDragMove runs while the floating window is being dragged by the user
+	// (screen coordinates of the cursor and the proposed window top edge).
+	OnDragMove func(cursorX, cursorY, winTop int32)
+	// OnDragEnd runs when a drag finishes. Returning true signals that the
+	// window was stashed/consumed by the caller.
+	OnDragEnd func(cursorX, cursorY, winTop int32) bool
 }
 
 const (
@@ -34,6 +43,9 @@ const (
 	wmNcPaint       = 0x0085
 	wmNcActivate    = 0x0086
 	wmNcLButtonDown = 0x00A1
+	wmMoving        = 0x0216
+	wmEnterSizeMove = 0x0231
+	wmExitSizeMove  = 0x0232
 
 	htLeft        = 10
 	htRight       = 11
@@ -81,7 +93,7 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 		f.layoutContent(c, cw, ch)
 	}
 	floatByHwnd[h] = f
-	f.scale = f.dpiScale()
+	f.setDPI(f.dpiScale())
 	procSetWindowPos.Call(h, 0, 0, 0, 0, 0, swpFrameChange|swpNoActivate|0x0001|0x0002|0x0004)
 	if procDwmSetWindowAttr.Find() == nil {
 		round := uint32(2) // DWMWCP_ROUND
@@ -99,11 +111,15 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 	if f.Build == nil {
 		return
 	}
+	node := f.Build()
+	if node == nil {
+		return
+	}
 	pad := c.Px(floatPad)
 	off := float32(math.Round(float64(c.Scroll[floatScrollID])))
 	view := RectF{0, 0, w, h}
 	c.PushClip(view)
-	ph := f.Build().Layout(c, pad, pad-off, w-2*pad)
+	ph := node.Layout(c, pad, pad-off, w-2*pad)
 	c.PopClip()
 
 	maxScroll := max(0, ph+2*pad-h)
@@ -149,6 +165,53 @@ func (f *FloatWindow) ShowNear(ax, ay int32, hasAnchor bool) {
 	f.Invalidate()
 }
 
+// RestorePreDrag moves the window back to where it sat before the last drag
+// (used when unstashing by click after dragging to the top edge).
+func (f *FloatWindow) RestorePreDrag() {
+	if !f.hasPreDrag {
+		return
+	}
+	r := f.preDragRect
+	f.hasPreDrag = false
+	if r.R > r.L && r.B > r.T {
+		f.placed = true
+		procSetWindowPos.Call(f.hwnd, hwndTopmost, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoActivate)
+	}
+}
+
+// ShowAtDrag brings the floating window up centred horizontally under (cx, cy)
+// and hands off to native caption dragging so the user can pull it straight
+// out of the notch in one continuous motion.
+func (f *FloatWindow) ShowAtDrag(cx, cy int32) {
+	f.hasPreDrag = false
+	var cur struct{ L, T, R, B int32 }
+	procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&cur)))
+	ww, wh := cur.R-cur.L, cur.B-cur.T
+	if ww <= 0 || wh <= 0 || !f.placed {
+		f.place(cx, cy, false)
+		f.placed = true
+		procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&cur)))
+		ww, wh = cur.R-cur.L, cur.B-cur.T
+	}
+	mon, _, _ := procMonitorFromPoint.Call(uintptr(uint32(cx))|uintptr(uint32(cy))<<32, monitorNearest)
+	mi := monitorInfo{}
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi)))
+	work := mi.Work
+	s := max(float32(1), f.scale)
+	x := max(work.L, min(cx-ww/2, work.R-ww))
+	y := max(work.T, min(cy-int32(26*s), work.B-wh))
+	procSetWindowPos.Call(f.hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(ww), uintptr(wh), swpShowWindow)
+	procSetForegroundWindow.Call(f.hwnd)
+	f.Invalidate()
+	if f.startMove != nil {
+		f.startMove()
+		return
+	}
+	lp := uintptr(uint16(int16(cx))) | uintptr(uint16(int16(cy)))<<16
+	procSendMessageW.Call(f.hwnd, wmNcLButtonDown, htCaption, lp)
+}
+
 // Hide hides the floating window.
 func (f *FloatWindow) Hide() {
 	if !f.Visible() {
@@ -169,7 +232,7 @@ func (f *FloatWindow) place(ax, ay int32, hasAnchor bool) {
 	if procGetDpiForMonitor.Find() == nil {
 		var dx, dy uint32
 		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx > 0 {
-			f.scale = float32(dx) / 96
+			f.setDPI(float32(dx) / 96)
 		}
 	}
 	mi := monitorInfo{}
@@ -306,10 +369,40 @@ func floatProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		f.limitSize(&mmi.MinTrack, &mmi.MaxTrack)
 		return 0
 	case wmDpiChanged:
-		f.scale = float32(wp&0xFFFF) / 96
+		f.setDPI(float32(wp&0xFFFF) / 96)
 		r := (*struct{ L, T, R, B int32 })(cptrUI(lp))
 		procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoActivate)
 		f.Invalidate()
+		return 0
+	case wmEnterSizeMove:
+		f.moving = false
+		var r struct{ L, T, R, B int32 }
+		if res, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r))); res != 0 {
+			f.preDragRect, f.hasPreDrag = r, true
+		}
+		return 0
+	case wmMoving:
+		f.moving = true
+		r := (*struct{ L, T, R, B int32 })(cptrUI(lp))
+		var pt point
+		procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+		if f.OnDragMove != nil {
+			f.OnDragMove(pt.X, pt.Y, r.T)
+		}
+		return 1
+	case wmExitSizeMove:
+		wasMoving := f.moving
+		f.moving = false
+		if wasMoving && f.OnDragEnd != nil {
+			var r struct{ L, T, R, B int32 }
+			procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+			var pt point
+			procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			if f.OnDragEnd(pt.X, pt.Y, r.T) {
+				return 0
+			}
+		}
+		f.hasPreDrag = false
 		return 0
 	case wmClose:
 		if f.OnClose != nil {

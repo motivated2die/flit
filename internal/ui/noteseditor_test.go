@@ -273,3 +273,51 @@ func TestNotesEditorPinAndDragHandle(t *testing.T) {
 		t.Errorf("drag handle (%+v) should sit to the left of pin button (%+v)", drag.R, fpin.R)
 	}
 }
+
+func TestNotesEditorVerticalBeforeRepaint(t *testing.T) {
+	// Regression: keys can arrive faster than WM_PAINT rebuilds geoms.
+	// Enter adds a block so ed.Caret.B == len(geoms); pressing Down/Up/PgDn/PgUp
+	// on the stale layout must not panic with index out of range.
+	ed := notes.NewEditor(notes.Parse("line one\n\nline two\n"))
+	c, _ := layoutEditor(ed, true)
+	tg, _ := c.editorByID("notes")
+	e := env()
+
+	// Add one block without re-laying out, then move Down and Up.
+	tg.Key(vkReturn, Mods{}, e)
+	if ed.Caret.B != 2 {
+		t.Fatalf("after Enter: caret %v, want B=2", ed.Caret)
+	}
+	tg.Key(vkDown, Mods{}, e)
+	if ed.Caret.B != 2 {
+		t.Errorf("Down on new block: caret %v, want B=2", ed.Caret)
+	}
+	tg.Key(vkUp, Mods{}, e)
+	if ed.Caret.B != 1 {
+		t.Errorf("Up from new block: caret %v, want B=1", ed.Caret)
+	}
+
+	// Add two blocks without re-laying out, then step Up once, then PageUp.
+	tg.Key(vkEnd, Mods{Ctrl: true}, e)
+	tg.Key(vkReturn, Mods{}, e)
+	tg.Key(vkReturn, Mods{}, e)
+	tg.Key(vkUp, Mods{}, e)
+	if ed.Caret.B != 3 {
+		t.Errorf("Up from second unlaid block: caret %v, want B=3", ed.Caret)
+	}
+	tg.Key(vkPrior, Mods{}, e)
+	if ed.Caret.B != 0 {
+		t.Errorf("PageUp from unlaid block: caret %v, want B=0", ed.Caret)
+	}
+
+	// Shrink the document without re-laying out (Backspace merges blocks), then Down.
+	c, _ = layoutEditor(ed, true)
+	tg, _ = c.editorByID("notes")
+	tg.Key(vkEnd, Mods{Ctrl: true}, e)
+	tg.Key(vkBack, Mods{}, e)
+	tg.Key(vkBack, Mods{}, e)
+	tg.Key(vkDown, Mods{}, e)
+	if ed.Caret.B >= len(ed.Doc.Blocks) {
+		t.Errorf("Down after shrink: caret %v out of %d blocks", ed.Caret, len(ed.Doc.Blocks))
+	}
+}

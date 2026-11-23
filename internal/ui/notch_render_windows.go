@@ -17,6 +17,7 @@ type notchFrame struct {
 	// collapsed draws the small capsule's cue instead of the content;
 	// hoverProgress (0..1) is how far resting the pointer on it has come.
 	collapsed     bool
+	hover         bool
 	hoverProgress float64
 	content       float32 // content opacity while resizing
 	hoverBtn      string
@@ -29,22 +30,23 @@ type notchFrame struct {
 
 var (
 	notchFill       = RGBA(ColBase, 0.97)
+	notchFillReady  = RGBA(ColCardHover, 0.97)
 	notchEdge       = RGBA(ColEdge, 1)
 	notchTitle      = RGBA(ColText, 1)
 	notchMuted      = RGBA(ColMuted, 1)
 	notchButton     = RGBA(ColControl, 1)
 	notchButtonHov  = RGBA(ColControlHi, 1)
 	notchPrimary    = RGBA(ColText, 1)
-	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xDC), 1)
+	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xD8), 1)
 	notchOnPrimary  = RGBA(ColInk, 1)
 	notchTrack      = RGBA(ColText, 0.18)
 )
 
 // notchSurfaceSize is the fixed size of the window: the widest capsule
-// plus room for the shadow below and at the sides.
+// plus room for the top-edge flares and the shadow below and at the sides.
 func notchSurfaceSize(scale float32) (int32, int32) {
 	px := func(v float32) int32 { return int32(math.Ceil(float64(v * scale))) }
-	return px(notchMaxW + 2*notchShadow), px(notchHeight + notchShadow)
+	return px(notchMaxW + 2*(notchShadow+notchFlareMax)), px(notchHeight + notchHighlightGrowH + notchShadow)
 }
 
 // capsuleOrigin is where the capsule's top-left corner is in the surface.
@@ -62,7 +64,12 @@ func renderNotch(s *Surface, f notchFrame) error {
 	ox, oy := f.capsuleOrigin(s.W)
 	h := f.height
 	w := f.width
+	fill := notchFill
 	edge := notchEdge
+	if f.view.Mode == NotchStashDrop && f.view.Highlight {
+		fill = notchFillReady
+		edge = RGBA(ColText, 0.35)
+	}
 	if f.collapsed && f.hoverProgress > 0 {
 		// Resting the pointer on it: the capsule swells a little and its
 		// edge brightens, so the expansion is seen coming.
@@ -71,22 +78,27 @@ func renderNotch(s *Surface, f notchFrame) error {
 		ox, w, h = ox-grow, w+2*grow, h+hp*3*f.scale
 		edge = RGBA(ColText, 0.15+0.45*hp)
 	}
-	r := h / 2
-	// The capsule hangs from the top edge: its top corners sit above the
-	// surface, so only the lower ones show rounded.
-	capsule := RectF{ox, oy - r, ox + w, oy + h}
+	// The blob hangs from the top edge (clamped to y <= 0 so a downward bounce
+	// keeps the flares anchored to the top of the screen) with concave flares
+	// flowing into the edge and rounded bottom corners.
+	top := min(float32(0), oy)
+	bottom := oy + h
+	spanH := bottom - top
+	br := min(h*0.48, w/2)
+	fr := min(spanH-br, min(h*0.36, notchFlareMax*f.scale))
+	capsule := RectF{ox, top, ox + w, bottom}
 
 	// A soft shadow: a few translucent, growing outlines.
 	for i := 1; i <= 5; i++ {
 		g := float32(i) * 2 * f.scale
-		p.RoundRect(RectF{capsule.L - g, capsule.T, capsule.R + g, capsule.B + g*1.1}, r+g, ColorF{0, 0, 0, 0.055})
+		p.NotchShape(ox-g, top, ox+w+g, bottom+g*1.1, br+g, max(0, fr-g*0.35), ColorF{0, 0, 0, 0.055})
 	}
-	p.RoundRect(RectF{capsule.L - 1, capsule.T, capsule.R + 1, capsule.B + 1}, r+1, edge)
-	p.RoundRect(capsule, r, notchFill)
+	p.NotchShape(ox-1, top, ox+w+1, bottom+1, br+1, max(0, fr-1), edge)
+	p.NotchShape(ox, top, ox+w, bottom, br, fr, fill)
 	if cd := f.view.CountdownAt(f.now); cd >= 0 && !f.collapsed {
-		// The countdown fills the capsule's background from the left.
-		p.PushClip(RectF{capsule.L, capsule.T, capsule.L + w*float32(cd), capsule.B})
-		p.RoundRect(capsule, r, RGBA(ColText, 0.13*f.content))
+		// The countdown fills the notch's background from the left.
+		p.PushClip(RectF{ox - fr, top, ox - fr + (w+2*fr)*float32(cd), bottom})
+		p.NotchShape(ox, top, ox+w, bottom, br, fr, RGBA(ColText, 0.13*f.content))
 		p.PopClip()
 	}
 
@@ -94,14 +106,15 @@ func renderNotch(s *Surface, f notchFrame) error {
 	if a <= 0 {
 		return p.End()
 	}
-	if f.collapsed {
+	if f.collapsed || f.view.Mode == NotchStashed {
 		f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
 		return p.End()
 	}
 	// Content keeps its final layout and is centred in the capsule while
 	// the capsule resizes, fading in as it reaches its width.
 	cx := ox + (f.width-f.layout.W)/2
-	at := func(rc RectF) RectF { return RectF{rc.L + cx, rc.T + oy, rc.R + cx, rc.B + oy} }
+	cy := oy + (f.height-f.layout.H)/2
+	at := func(rc RectF) RectF { return RectF{rc.L + cx, rc.T + cy, rc.R + cx, rc.B + cy} }
 	fade := func(c ColorF) ColorF { c.A *= a; return c }
 	scaled := func(fn Font) Font { fn.Size *= f.scale; return fn }
 
@@ -171,6 +184,8 @@ func (f notchFrame) drawIcon(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		}
 	case NotchReady:
 		p.Circle(cx, cy, rad*0.62, fade(RGBA(ColText, 1)))
+	case NotchStashDrop:
+		drawGripDots(p, cx, cy, f.scale, fade(RGBA(ColText, 0.9)))
 	default:
 		c := ColMuted
 		if f.view.Warning {
@@ -192,6 +207,22 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 	box := RectF{cx - l.W/2, cy - l.H/2, cx + l.W/2, cy + l.H/2}
 	fade := func(c ColorF) ColorF { c.A *= a; return c }
 	s := f.scale
+	if f.view.StashedNotes || f.view.Mode == NotchStashed {
+		gripCol := RGBA(ColMuted, 0.9)
+		if f.hover || f.hoverProgress > 0 {
+			gripCol = RGBA(ColText, 0.95)
+		}
+		if f.view.Mode == NotchRecording {
+			pulse := float32(Pulse(f.now.Sub(f.born), notchPulse))
+			dx := box.L + 13*s
+			p.Circle(dx, cy, 4.5*s*(0.8+0.3*pulse), fade(RGBA(ColLive, 0.25*pulse)))
+			p.Circle(dx, cy, 2.8*s, fade(RGBA(ColLive, 0.8+0.2*pulse)))
+			drawGripDots(p, (dx+box.R-6*s)/2, cy, s, fade(gripCol))
+			return
+		}
+		drawGripDots(p, cx, cy, s, fade(gripCol))
+		return
+	}
 	switch f.view.Mode {
 	case NotchRecording:
 		// The dot sits in the cue's left end; the microphone's level
@@ -228,6 +259,19 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		p.Text(NotchFinished, at(l.Word), tf, fade(RGBA(ColText, 0.92)))
 	default:
 		p.Circle(cx, cy, 2.4*s, fade(notchMuted))
+	}
+}
+
+// drawGripDots draws the 3×2 grab-handle dots centred at (cx, cy).
+func drawGripDots(p *Painter, cx, cy, scale float32, c ColorF) {
+	step := 4.5 * scale
+	rad := max(1.1, 1.4*scale)
+	for row := range 2 {
+		dy := (float32(row) - 0.5) * step
+		for colIdx := range 3 {
+			dx := (float32(colIdx) - 1) * step
+			p.Circle(cx+dx, cy+dy, rad, c)
+		}
 	}
 }
 

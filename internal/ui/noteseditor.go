@@ -309,6 +309,9 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 	ed.Reveal = false
 
 	posAt := func(px, py float32) notes.Pos {
+		if len(geoms) == 0 {
+			return notes.Pos{}
+		}
 		i := len(geoms) - 1
 		for k, g := range geoms {
 			if py < g.bottom+c.Px(4) {
@@ -324,9 +327,31 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 		}
 	}
 	// vertical moves the caret d lines up or down, aiming at the goal x.
+	// Keys can arrive faster than WM_PAINT rebuilds geoms (e.g. Enter then
+	// Down/Up before a repaint), so ed.Caret.B may be past len(geoms)-1 or
+	// ed.Doc.Blocks may have shrunk since this layout pass.
 	vertical := func(d int, extend bool, env *EditorEnv) {
+		if len(geoms) == 0 || len(ed.Doc.Blocks) == 0 {
+			return
+		}
 		p := ed.Caret
-		g := geoms[min(p.B, len(geoms)-1)]
+		if p.B >= len(geoms) {
+			// The caret sits in a block added after the last paint: treat each
+			// unlaid-out block as one line until it steps back into geoms.
+			if d > 0 {
+				b := min(p.B+d, len(ed.Doc.Blocks)-1)
+				ed.MoveTo(notes.Pos{B: b, O: len(ed.Doc.Blocks[b].Text)}, extend)
+				return
+			}
+			extra := p.B - (len(geoms) - 1)
+			if p.B+d >= len(geoms) {
+				ed.MoveTo(notes.Pos{B: p.B + d, O: 0}, extend)
+				return
+			}
+			d += extra
+			p = notes.Pos{B: len(geoms) - 1, O: len(doc.Blocks[len(geoms)-1].Text)}
+		}
+		g := geoms[p.B]
 		cx, _, _ := g.caret(p.O)
 		if env.GoalX != nil && *env.GoalX >= 0 {
 			cx = *env.GoalX
@@ -337,7 +362,7 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			b--
 			line += geoms[b].lineCount()
 		}
-		for line >= geoms[b].lineCount() && b < len(geoms)-1 {
+		for b < len(geoms)-1 && line >= geoms[b].lineCount() {
 			line -= geoms[b].lineCount()
 			b++
 		}
@@ -346,7 +371,8 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 		case line < 0:
 			to = notes.Pos{B: 0, O: 0}
 		case line >= geoms[b].lineCount():
-			to = notes.Pos{B: b, O: len(doc.Blocks[b].Text)}
+			bi := min(b, len(ed.Doc.Blocks)-1)
+			to = notes.Pos{B: bi, O: len(ed.Doc.Blocks[bi].Text)}
 		default:
 			gb := geoms[b]
 			ly := gb.top + gb.lineH/2

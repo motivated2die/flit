@@ -80,6 +80,8 @@ const (
 type Notch struct {
 	hwnd  uintptr
 	surf  *Surface
+	dpi   float32
+	zoom  float32
 	scale float32
 	work  struct{ L, T, R, B int32 }
 
@@ -100,12 +102,19 @@ type Notch struct {
 	hover         bool
 	hoverBtn      string
 	pressBtn      string
+	stashPress    bool  // mouse button held on the stashed-notes grab handle
+	stashDown     point // screen cursor where stashPress began
 	levels        [2]float32
 	progress      float32
 	timer         uintptr // current interval, 0 = off
 
 	// OnButton runs when a button is clicked.
 	OnButton func(id string)
+	// OnUnstash runs when the user clicks or drags down on the stashed-notes
+	// handle in the notch. drag is true when pulled out via downward drag.
+	OnUnstash func(cursorX, cursorY int32, drag bool)
+	// OnAutoHide runs when an AutoHide view's timer expires and it begins hiding.
+	OnAutoHide func()
 	// Levels, if set, is polled while recording for the mic's and the
 	// meeting's peaks since the last call (0..1).
 	Levels func() (me, them float32)
@@ -154,8 +163,17 @@ func (n *Notch) Show(v NotchView) {
 	oldW, oldH := n.currentSize(now)
 	if v.Mode != n.view.Mode || !wasVisible {
 		n.born = now
-		n.col.Expand(now) // new information: show it open first
-		n.setTransparent(false)
+		if v.StartCollapsed && v.Collapsible {
+			n.col.Collapse()
+		} else {
+			n.col.Expand(now) // new information: show it open first
+		}
+		n.setTransparent(n.col.Collapsed && !v.StashedNotes && v.Mode != NotchStashed)
+	} else if v.StartCollapsed && v.Collapsible && !n.col.Collapsed {
+		n.col.Collapse()
+		n.setTransparent(!v.StashedNotes && v.Mode != NotchStashed)
+	} else if v.StashedNotes != n.view.StashedNotes {
+		n.setTransparent(n.col.Collapsed && !v.StashedNotes && v.Mode != NotchStashed)
 	}
 	n.view = v
 	n.shownAt = now
@@ -184,6 +202,61 @@ func (n *Notch) Hide() {
 	n.tick()
 }
 
+// InStashZone reports whether a floating window being dragged (cursor at
+// (cx, cy), window top edge at winTop, in screen pixels) is in the top-center
+// drop zone to stash notes into the notch.
+func (n *Notch) InStashZone(cx, cy, winTop int32) bool {
+	if n.scale == 0 || n.work.R <= n.work.L {
+		n.place()
+	}
+	s := max(float32(1), n.scale)
+	centerX := (n.work.L + n.work.R) / 2
+	halfBand := max(int32(260*s), (n.work.R-n.work.L)/3)
+	if cx < centerX-halfBand || cx > centerX+halfBand {
+		return false
+	}
+	return cy <= n.work.T+int32(64*s) || winTop <= n.work.T+int32(10*s)
+}
+
+// showingStashedHandle reports whether the notch is currently displaying the
+// interactive stashed-notes grab handle (either idle or collapsed while recording).
+func (n *Notch) showingStashedHandle() bool {
+	return n.view.Mode == NotchStashed || (n.col.Collapsed && n.view.StashedNotes)
+}
+
+// CollapseNow shrinks a collapsible notch into its compact state immediately.
+func (n *Notch) CollapseNow() {
+	if !n.Visible() || !n.view.Collapsible {
+		return
+	}
+	n.col.Collapse()
+	n.hover = false
+	n.setTransparent(!n.view.StashedNotes)
+	n.dirty = true
+	n.tick()
+}
+
+// SetZoom changes the notch's UI scale multiplier (e.g. 0.8, 1.0, 1.1, 1.25).
+func (n *Notch) SetZoom(z float32) {
+	if z <= 0 {
+		z = 1
+	}
+	if z == n.zoom {
+		return
+	}
+	n.zoom = z
+	if n.Visible() {
+		n.place()
+		now := time.Now()
+		lay := n.layout(now)
+		n.fromW, n.toW, n.fromH, n.toH = lay.W, lay.W, lay.H, lay.H
+		n.dirty = true
+		n.tick()
+		return
+	}
+	n.scale = 0 // re-place and reallocate surface on next Show
+}
+
 // place sizes the window for the primary screen and puts it at the top
 // centre of its work area.
 func (n *Notch) place() {
@@ -192,13 +265,19 @@ func (n *Notch) place() {
 	mi.Size = uint32(unsafe.Sizeof(mi))
 	procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi)))
 	n.work = mi.Work
-	scale := float32(1)
+	dpi := float32(1)
 	if procGetDpiForMonitor.Find() == nil {
 		var dx, dy uint32
 		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx > 0 {
-			scale = float32(dx) / 96
+			dpi = float32(dx) / 96
 		}
 	}
+	n.dpi = dpi
+	zoom := n.zoom
+	if zoom <= 0 {
+		zoom = 1
+	}
+	scale := dpi * zoom
 	if scale != n.scale || n.surf == nil {
 		n.scale = scale
 		n.surf.Free()
@@ -275,6 +354,9 @@ func (n *Notch) tick() {
 		slide, rise = 1, 1
 		if n.view.AutoHide > 0 && !n.hover && now.Sub(n.shownAt) >= n.view.AutoHide {
 			n.phase, n.phaseStart = phHiding, now
+			if n.OnAutoHide != nil {
+				n.OnAutoHide()
+			}
 		}
 	case phHiding:
 		slide = 1 - float64(now.Sub(n.phaseStart))/float64(notchSlideOut)
@@ -309,15 +391,16 @@ func (n *Notch) tick() {
 	// Collapse when left alone, expand when the pointer rests on it.
 	wasCollapsed := n.col.Collapsed
 	curW, curH := n.currentSize(now)
-	over := n.col.Collapsed && n.phase == phShown && n.overCollapsed(curW, curH)
-	hp := n.col.Step(now, n.view.Collapsible, n.hover, over)
+	over := n.col.Collapsed && n.phase == phShown && !n.stashPress && n.overCollapsed(curW, curH)
+	policy := CollapsePolicy{Collapsible: n.view.Collapsible, HoverDelay: n.view.HoverDelay}
+	hp := n.col.StepWithPolicy(now, policy, n.hover, over)
 	if hp != n.hoverProgress {
 		n.dirty = true
 	}
 	n.hoverProgress = hp
 	if n.col.Collapsed != wasCollapsed {
 		n.dirty = true
-		n.setTransparent(n.col.Collapsed)
+		n.setTransparent(n.col.Collapsed && !n.view.StashedNotes && n.view.Mode != NotchStashed)
 		if !n.col.Collapsed {
 			// Opened by hovering: the pointer is on it; leaving starts the
 			// count to collapse again.
@@ -334,18 +417,20 @@ func (n *Notch) tick() {
 	}
 	width, height := n.currentSize(now)
 	content := float32(1)
-	if resizing := now.Sub(n.resizeStart) < notchResize && (n.fromW != n.toW || n.fromH != n.toH); resizing {
+	if resizing := now.Sub(n.resizeStart) < notchResize && (n.fromW != n.toW || n.fromH != n.toH); resizing && n.view.Mode != NotchStashDrop {
 		// The content fades in on an S-curve as the shape nears its size.
 		content = float32(Smoothstep(0.3, 0.85, float64(now.Sub(n.resizeStart))/float64(notchResize)))
 	}
-	moving := n.phase == phShowing || n.phase == phHiding || now.Sub(n.resizeStart) < notchResize ||
+	cd := n.view.CountdownAt(now)
+	counting := cd >= 0 && cd < 1
+	moving := n.phase == phShowing || n.phase == phHiding || now.Sub(n.resizeStart) < notchResize || counting ||
 		(n.view.Mode == NotchWorking && n.progress >= 0 && absf(target-n.progress) > 0.002)
 	// A collapsed, still capsule needs no new frames: only the pointer is
 	// polled. The live dot and the prompt's dot always move.
 	live := n.view.Mode == NotchRecording || n.view.Mode == NotchPrompt || (n.view.Mode == NotchWorking && n.view.Progress < 0)
 	if moving || live || n.dirty || hp > 0 || !n.col.Collapsed {
 		f := notchFrame{view: n.view, layout: lay, scale: n.scale, slide: slide, rise: rise, width: width, height: height, content: content,
-			collapsed: n.col.Collapsed, hoverProgress: hp,
+			collapsed: n.col.Collapsed, hover: n.hover, hoverProgress: hp,
 			hoverBtn: n.hoverBtn, pressBtn: n.pressBtn, levels: n.levels, progress: n.progress, now: now, born: n.born}
 		if err := renderNotch(n.surf, f); err == nil {
 			n.present(slide)
@@ -431,6 +516,19 @@ func notchProc(hwnd uintptr, m uint32, w, l uintptr) uintptr {
 	case wmMouseActivate:
 		return maNoActivate
 	case wmMouseMove:
+		if n.stashPress {
+			var pt point
+			procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			thresh := int32(max(6, 6*n.scale))
+			if pt.Y-n.stashDown.Y >= thresh || abs32(float32(pt.X-n.stashDown.X)) >= float32(thresh)*1.5 {
+				n.stashPress = false
+				procReleaseCapture.Call()
+				if n.OnUnstash != nil {
+					n.OnUnstash(pt.X, pt.Y, true)
+				}
+			}
+			return 0
+		}
 		if !n.hover {
 			n.hover = true
 			n.trackLeave()
@@ -448,6 +546,14 @@ func notchProc(hwnd uintptr, m uint32, w, l uintptr) uintptr {
 		n.tick()
 		return 0
 	case wmLButtonDown:
+		if n.showingStashedHandle() {
+			var pt point
+			procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			n.stashPress = true
+			n.stashDown = pt
+			procSetCapture.Call(n.hwnd)
+			return 0
+		}
 		n.dirty = true
 		n.col.Touch(time.Now())
 		x, y := n.toCapsule(l)
@@ -455,6 +561,16 @@ func notchProc(hwnd uintptr, m uint32, w, l uintptr) uintptr {
 		n.tick()
 		return 0
 	case wmLButtonUp:
+		if n.stashPress {
+			n.stashPress = false
+			procReleaseCapture.Call()
+			var pt point
+			procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			if n.OnUnstash != nil {
+				n.OnUnstash(pt.X, pt.Y, false)
+			}
+			return 0
+		}
 		x, y := n.toCapsule(l)
 		id := n.layout(time.Now()).HitButton(x, y)
 		pressed := n.pressBtn
@@ -464,9 +580,12 @@ func notchProc(hwnd uintptr, m uint32, w, l uintptr) uintptr {
 			n.OnButton(id)
 		}
 		return 0
+	case wmCaptureChange:
+		n.stashPress = false
+		return 0
 	case wmSetCursor:
 		cursor := uintptr(idcArrow)
-		if n.hoverBtn != "" {
+		if n.hoverBtn != "" || n.showingStashedHandle() {
 			cursor = idcHand
 		}
 		c, _, _ := procLoadCursorW.Call(0, cursor)
