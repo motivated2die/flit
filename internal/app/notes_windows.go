@@ -102,6 +102,11 @@ func (a *App) dropNotes(id string) {
 			a.notesFloat.Hide()
 		}
 	}
+	if a.stashedNotes == id {
+		a.stashedNotes = ""
+		a.stashHover = false
+		a.syncNotch()
+	}
 	if ns := a.notes[id]; ns != nil && ns.timer != nil {
 		ns.timer.Stop()
 	}
@@ -115,20 +120,120 @@ func (a *App) pinNotes(s *session.Session) {
 		return
 	}
 	a.notesFor(s) // ensure editor exists
+	wasStashed := a.stashedNotes != ""
+	a.stashedNotes = ""
+	a.stashHover = false
 	a.pinnedNotes = s.Meta.ID
 	a.focusFloat = true
 	var ax, ay int32
 	var hasAnchor bool
 	if a.win != nil {
-		if _, t, r, _, ok := a.win.Rect(); ok {
-			ax, ay, hasAnchor = r, t, true
+		if a.win.Visible() {
+			if _, t, r, _, ok := a.win.Rect(); ok {
+				ax, ay, hasAnchor = r, t, true
+			}
+			a.win.Hide()
 		}
-		a.win.Hide()
 	}
 	if a.notesFloat != nil {
+		if wasStashed {
+			a.notesFloat.RestorePreDrag()
+		}
 		a.notesFloat.ShowNear(ax, ay, hasAnchor)
 	}
+	if wasStashed {
+		a.syncNotch()
+	}
 	logx.Printf("notes of %s pinned", s.Meta.ID)
+}
+
+// onFloatDragMove tracks the floating notes window while dragged, expanding
+// the notch into a "Stash the notes" drop target when near the top of the screen.
+func (a *App) onFloatDragMove(cx, cy, winTop int32) {
+	if a.notch == nil || a.pinnedNotes == "" {
+		return
+	}
+	inZone := a.notch.InStashZone(cx, cy, winTop)
+	if inZone != a.stashHover {
+		a.stashHover = inZone
+		a.syncNotch()
+	}
+}
+
+// onFloatDragEnd stashes the floating notes window into the notch when dropped
+// in the top drop zone, or restores the notch otherwise.
+func (a *App) onFloatDragEnd(cx, cy, winTop int32) bool {
+	if a.notch == nil || a.pinnedNotes == "" {
+		a.stashHover = false
+		return false
+	}
+	inZone := a.notch.InStashZone(cx, cy, winTop)
+	wasHover := a.stashHover
+	a.stashHover = false
+	if inZone {
+		a.stashNotes(a.pinnedNotes)
+		return true
+	}
+	if wasHover {
+		a.syncNotch()
+	}
+	return false
+}
+
+// stashNotes hides the floating notes window and keeps a grab handle in the
+// notch so the user can pull the notes back out at any time.
+func (a *App) stashNotes(id string) {
+	if id == "" {
+		return
+	}
+	a.saveNotes(id)
+	a.pinnedNotes = ""
+	a.stashedNotes = id
+	if a.notesFloat != nil {
+		a.notesFloat.Hide()
+	}
+	if a.rec != nil {
+		a.showRecordingView(true)
+	} else {
+		a.syncNotch()
+	}
+	logx.Printf("notes of %s stashed", id)
+}
+
+// unstashNotes restores the floating notes window from the notch, either at
+// its pre-stash position (click) or directly under the cursor for a continuous
+// pull-out drag.
+func (a *App) unstashNotes(cx, cy int32, drag bool) {
+	id := a.stashedNotes
+	if id == "" {
+		return
+	}
+	s := a.sessionByID(id)
+	if s == nil && a.rec != nil && a.rec.sess.Meta.ID == id {
+		s = a.rec.sess
+	}
+	a.stashedNotes = ""
+	a.stashHover = false
+	if s == nil {
+		a.syncNotch()
+		return
+	}
+	a.notesFor(s)
+	a.pinnedNotes = id
+	a.focusFloat = true
+	if a.win != nil && a.win.Visible() {
+		a.win.Hide()
+	}
+	a.syncNotch()
+	if a.notesFloat != nil {
+		if drag {
+			a.notesFloat.ShowAtDrag(cx, cy)
+		} else {
+			a.notesFloat.RestorePreDrag()
+			a.notesFloat.ShowNear(0, 0, false)
+		}
+	}
+	logx.Printf("notes of %s unstashed", id)
 }
 
 // unpinNotes returns the pinned notes back into the main window on that

@@ -17,6 +17,7 @@ type notchFrame struct {
 	// collapsed draws the small capsule's cue instead of the content;
 	// hoverProgress (0..1) is how far resting the pointer on it has come.
 	collapsed     bool
+	hover         bool
 	hoverProgress float64
 	content       float32 // content opacity while resizing
 	hoverBtn      string
@@ -63,6 +64,9 @@ func renderNotch(s *Surface, f notchFrame) error {
 	h := f.height
 	w := f.width
 	edge := notchEdge
+	if f.view.Mode == NotchStashDrop {
+		edge = RGBA(ColText, 0.35)
+	}
 	if f.collapsed && f.hoverProgress > 0 {
 		// Resting the pointer on it: the capsule swells a little and its
 		// edge brightens, so the expansion is seen coming.
@@ -94,7 +98,7 @@ func renderNotch(s *Surface, f notchFrame) error {
 	if a <= 0 {
 		return p.End()
 	}
-	if f.collapsed {
+	if f.collapsed || f.view.Mode == NotchStashed {
 		f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
 		return p.End()
 	}
@@ -171,6 +175,8 @@ func (f notchFrame) drawIcon(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		}
 	case NotchReady:
 		p.Circle(cx, cy, rad*0.62, fade(RGBA(ColText, 1)))
+	case NotchStashDrop:
+		drawGripDots(p, cx, cy, f.scale, fade(RGBA(ColText, 0.9)))
 	default:
 		c := ColMuted
 		if f.view.Warning {
@@ -192,6 +198,22 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 	box := RectF{cx - l.W/2, cy - l.H/2, cx + l.W/2, cy + l.H/2}
 	fade := func(c ColorF) ColorF { c.A *= a; return c }
 	s := f.scale
+	if f.view.StashedNotes || f.view.Mode == NotchStashed {
+		gripCol := RGBA(ColMuted, 0.9)
+		if f.hover || f.hoverProgress > 0 {
+			gripCol = RGBA(ColText, 0.95)
+		}
+		if f.view.Mode == NotchRecording {
+			pulse := float32(Pulse(f.now.Sub(f.born), notchPulse))
+			dx := box.L + 13*s
+			p.Circle(dx, cy, 4.5*s*(0.8+0.3*pulse), fade(RGBA(ColLive, 0.25*pulse)))
+			p.Circle(dx, cy, 2.8*s, fade(RGBA(ColLive, 0.8+0.2*pulse)))
+			drawGripDots(p, (dx+box.R-6*s)/2, cy, s, fade(gripCol))
+			return
+		}
+		drawGripDots(p, cx, cy, s, fade(gripCol))
+		return
+	}
 	switch f.view.Mode {
 	case NotchRecording:
 		// The dot sits in the cue's left end; the microphone's level
@@ -228,6 +250,19 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		p.Text(NotchFinished, at(l.Word), tf, fade(RGBA(ColText, 0.92)))
 	default:
 		p.Circle(cx, cy, 2.4*s, fade(notchMuted))
+	}
+}
+
+// drawGripDots draws the 3×2 grab-handle dots centred at (cx, cy).
+func drawGripDots(p *Painter, cx, cy, scale float32, c ColorF) {
+	step := 4.5 * scale
+	rad := max(1.1, 1.4*scale)
+	for row := range 2 {
+		dy := (float32(row) - 0.5) * step
+		for colIdx := range 3 {
+			dx := (float32(colIdx) - 1) * step
+			p.Circle(cx+dx, cy+dy, rad, c)
+		}
 	}
 }
 

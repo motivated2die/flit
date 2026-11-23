@@ -57,6 +57,8 @@ func (a *App) initWindow() {
 	} else {
 		fw.Build = a.pinnedNotesNode
 		fw.OnClose = a.unpinNotes
+		fw.OnDragMove = a.onFloatDragMove
+		fw.OnDragEnd = a.onFloatDragEnd
 		a.notesFloat = fw
 	}
 }
@@ -75,6 +77,10 @@ func (a *App) openWindow() {
 			a.page = pageSession + id
 			a.focusNotes = id
 		}
+	}
+	if a.stashedNotes != "" && a.page == pageSession+a.stashedNotes {
+		a.stashedNotes = ""
+		a.syncNotch()
 	}
 	if a.win == nil {
 		if a.tray != nil { // none in tests

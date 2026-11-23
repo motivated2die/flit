@@ -44,6 +44,20 @@ func (a *App) startCalendar() {
 	a.cal = &calendarState{svc: svc, cancel: cancel}
 	svc.Start(ctx, a.cfg.CalendarURL)
 	a.cal.status = svc.Status()
+	if a.tray != nil {
+		go func() {
+			t := time.NewTicker(5 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case now := <-t.C:
+					a.tray.Post(func() { a.checkUpcomingMeetings(now) })
+				}
+			}
+		}()
+	}
 }
 
 func (a *App) stopCalendar() {
@@ -59,7 +73,49 @@ func (a *App) onCalendar() {
 		return
 	}
 	a.cal.status = a.cal.svc.Status()
+	a.checkUpcomingMeetings(time.Now())
 	a.invalidate()
+}
+
+// meetingReminderKey identifies one calendar occurrence for join reminders.
+func meetingReminderKey(m calendar.Meeting) string {
+	return m.UID + "|" + m.Start.UTC().Format(time.RFC3339)
+}
+
+// upcomingJoinMeeting returns the first timed, joinable meeting starting
+// within joinPromptLead (1 minute) that hasn't already been prompted.
+func upcomingJoinMeeting(meetings []calendar.Meeting, now time.Time, prompted map[string]bool) (calendar.Meeting, bool) {
+	for _, m := range meetings {
+		if m.AllDay || m.Link == "" {
+			continue
+		}
+		if prompted[meetingReminderKey(m)] {
+			continue
+		}
+		until := m.Start.Sub(now)
+		if until <= joinPromptLead && until > -15*time.Second {
+			return m, true
+		}
+	}
+	return calendar.Meeting{}, false
+}
+
+// checkUpcomingMeetings opens the notch with a Join button 1 minute before a
+// scheduled meeting starts (when idle and not already showing a higher-priority
+// prompt).
+func (a *App) checkUpcomingMeetings(now time.Time) {
+	if a.cal == nil || a.rec != nil || a.detected != nil || a.joinPrompt != nil || a.stashHover {
+		return
+	}
+	if a.joinPrompted == nil {
+		a.joinPrompted = map[string]bool{}
+	}
+	m, ok := upcomingJoinMeeting(a.meetings(), now, a.joinPrompted)
+	if !ok {
+		return
+	}
+	a.joinPrompted[meetingReminderKey(m)] = true
+	a.showJoinPrompt(m)
 }
 
 func (a *App) meetings() []calendar.Meeting {

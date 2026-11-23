@@ -31,6 +31,7 @@ func (a *App) onMeeting(ev detect.Event) {
 			return
 		}
 		c := ev.Candidate
+		a.clearJoinPrompt()
 		a.detected = &c
 		if a.cfg.AutoRecord {
 			a.startCountdown()
@@ -43,7 +44,7 @@ func (a *App) onMeeting(ev detect.Event) {
 			a.detected = nil
 			a.stopCountdown()
 			if a.notch != nil && a.notch.View().Mode == ui.NotchPrompt {
-				a.notch.Hide()
+				a.syncNotch()
 			}
 		}
 		if a.rec != nil && a.rec.provider == ev.Provider {
@@ -94,6 +95,7 @@ func (a *App) startRecording(c *detect.Candidate) {
 		return
 	}
 	a.stopCountdown()
+	a.clearJoinPrompt()
 	a.yieldSummary()
 	meta := session.Meta{Language: a.cfg.Language, Model: a.cfg.Model}
 	them := capture.Source{Kind: capture.Loopback, DeviceID: a.cfg.OutputID, DeviceName: a.cfg.OutputName}
@@ -188,9 +190,7 @@ func (a *App) finishRecording(transcribe bool) {
 		a.afterLive(func() { a.jobs.add(s); a.startUpdate() })
 	} else {
 		a.afterLive(func() {})
-		if a.notch != nil {
-			a.notch.Hide()
-		}
+		a.syncNotch()
 	}
 	a.refresh()
 }

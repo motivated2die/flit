@@ -19,11 +19,13 @@ type NotchMode int
 
 const (
 	NotchHidden    NotchMode = iota
-	NotchPrompt              // a meeting was detected: transcribe it?
+	NotchPrompt              // a meeting was detected (or about to start)
 	NotchRecording           // recording, with a live dot, the time and levels
 	NotchWorking             // transcribing, with progress
 	NotchReady               // the transcript is ready
 	NotchMessage             // a short note (an error, a download)
+	NotchStashDrop           // dragging the floating notes window over the top drop zone
+	NotchStashed             // floating notes are stashed in the notch (idle)
 )
 
 // NotchButton is a clickable pill.
@@ -48,8 +50,17 @@ type NotchView struct {
 	// AutoHide hides the notch after this long (0 = stays).
 	AutoHide time.Duration
 	// Collapsible views shrink to a small capsule when left alone (see
-	// Collapser).
+	// Collapser). HoverDelay is how long the pointer must rest on the
+	// collapsed capsule before it expands (0 = expand immediately).
 	Collapsible bool
+	HoverDelay  time.Duration
+	// StashedNotes marks that the floating notes window is stashed in the
+	// notch: the collapsed capsule stays taller with a grab handle and
+	// accepts clicks/drags to unstash instead of letting clicks through.
+	StashedNotes bool
+	// StartCollapsed opens or switches into the view directly in its
+	// collapsed state (e.g. right after stashing notes during a recording).
+	StartCollapsed bool
 	// CountFrom/CountFor fill the capsule from left to right over CountFor
 	// from CountFrom (a countdown, e.g. to recording automatically).
 	CountFrom time.Time
@@ -119,6 +130,9 @@ func (v NotchView) DetailText(now time.Time) string {
 
 // Layout places the view's parts at scale s (1 = 96 DPI).
 func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout {
+	if v.Mode == NotchStashed {
+		return StashedLayout(false, s)
+	}
 	px := func(f float32) float32 { return float32(math.Round(float64(f * s))) }
 	scaled := func(f Font) Font { f.Size *= s; return f }
 	h := px(notchHeight)
@@ -252,7 +266,18 @@ const (
 
 	notchCollapsedW = 46 // logical
 	notchCollapsedH = 11
+	notchStashedW   = 56 // logical (idle stashed handle)
+	notchStashedRW  = 74 // logical (recording dot + stashed handle)
+	notchStashedH   = 22 // logical (easy to grab)
 )
+
+// CollapsePolicy controls how a collapsible notch reacts to idle time and hover.
+type CollapsePolicy struct {
+	Collapsible bool
+	// HoverDelay is how long the pointer must rest on the collapsed capsule
+	// before expanding (0 = expand immediately on hover).
+	HoverDelay time.Duration
+}
 
 // Collapser decides when the notch collapses and expands.
 type Collapser struct {
@@ -271,11 +296,23 @@ func (c *Collapser) Expand(now time.Time) {
 	c.Touch(now)
 }
 
-// Step advances the state. hover: the pointer is over the expanded notch;
-// over: the pointer rests on the collapsed capsule. It returns how far the
-// hover to expand has come (0..1), for the capsule to show it.
+// Collapse puts the notch straight into its compact state.
+func (c *Collapser) Collapse() {
+	c.Collapsed, c.hoverStart = true, time.Time{}
+}
+
+// Step advances the state with the default ExpandHover delay.
 func (c *Collapser) Step(now time.Time, collapsible, hover, over bool) float64 {
-	if !collapsible {
+	return c.StepWithPolicy(now, CollapsePolicy{Collapsible: collapsible, HoverDelay: ExpandHover}, hover, over)
+}
+
+// StepWithPolicy advances the state according to policy. hover: the pointer is
+// over the expanded notch; over: the pointer rests on the collapsed capsule.
+// It returns how far the hover to expand has come (0..1), for the capsule to
+// show it. When policy.HoverDelay <= 0, hovering over the collapsed capsule
+// expands it immediately.
+func (c *Collapser) StepWithPolicy(now time.Time, policy CollapsePolicy, hover, over bool) float64 {
+	if !policy.Collapsible {
 		c.Collapsed, c.hoverStart = false, time.Time{}
 		return 0
 	}
@@ -291,10 +328,14 @@ func (c *Collapser) Step(now time.Time, collapsible, hover, over bool) float64 {
 		c.hoverStart = time.Time{}
 		return 0
 	}
+	if policy.HoverDelay <= 0 {
+		c.Expand(now)
+		return 1
+	}
 	if c.hoverStart.IsZero() {
 		c.hoverStart = now
 	}
-	p := float64(now.Sub(c.hoverStart)) / float64(ExpandHover)
+	p := float64(now.Sub(c.hoverStart)) / float64(policy.HoverDelay)
 	if p >= 1 {
 		c.Expand(now)
 		return 1
@@ -308,12 +349,26 @@ func CollapsedLayout(scale float32) NotchLayout {
 	return NotchLayout{W: px(notchCollapsedW), H: px(notchCollapsedH)}
 }
 
+// StashedLayout is the grab-handle capsule's size when notes are stashed.
+func StashedLayout(recording bool, scale float32) NotchLayout {
+	px := func(f float32) float32 { return float32(math.Round(float64(f * scale))) }
+	w := float32(notchStashedW)
+	if recording {
+		w = notchStashedRW
+	}
+	return NotchLayout{W: px(w), H: px(notchStashedH)}
+}
+
 // notchTinyFont is the collapsed capsule's word: as small as still reads.
 var notchTinyFont = Font{Family: "Segoe UI", Size: 8, Weight: 600}
 
-// CollapsedLayoutFor is the small capsule for v: a finished transcript
-// widens it just enough for a check mark and "Finished".
+// CollapsedLayoutFor is the small capsule for v: stashed notes keep a taller
+// grab-handle capsule; a finished transcript widens it just enough for a check
+// mark and "Finished".
 func CollapsedLayoutFor(v NotchView, scale float32, measure Measurer) NotchLayout {
+	if v.StashedNotes || v.Mode == NotchStashed {
+		return StashedLayout(v.Mode == NotchRecording, scale)
+	}
 	l := CollapsedLayout(scale)
 	if v.Mode != NotchReady {
 		return l

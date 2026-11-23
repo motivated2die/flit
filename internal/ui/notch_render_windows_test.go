@@ -20,8 +20,12 @@ func notchViews(now time.Time) map[string]NotchView {
 		"working":         {Mode: NotchWorking, Title: "Transcribing", Progress: 0.62},
 		"countdown": {Mode: NotchPrompt, Title: "Teams meeting detected", Detail: "recording starts automatically", CountFrom: now.Add(-3 * time.Second), CountFor: 5 * time.Second,
 			Buttons: []NotchButton{{ID: "record", Label: "Record now", Primary: true}, {ID: "dismiss", Label: "Cancel"}}},
-		"ready":   {Mode: NotchReady, Title: "Transcript ready", Detail: "1,284 words", Buttons: []NotchButton{{ID: "copy", Label: "Copy", Primary: true}}},
-		"message": {Mode: NotchMessage, Title: "Couldn't start recording", Detail: "the microphone is blocked", Warning: true},
+		"ready":      {Mode: NotchReady, Title: "Transcript ready", Detail: "1,284 words", Buttons: []NotchButton{{ID: "copy", Label: "Copy", Primary: true}}},
+		"message":    {Mode: NotchMessage, Title: "Couldn't start recording", Detail: "the microphone is blocked", Warning: true},
+		"stash-drop": {Mode: NotchStashDrop, Title: "Stash the notes"},
+		"stashed":    {Mode: NotchStashed, StashedNotes: true},
+		"join": {Mode: NotchPrompt, Title: "Weekly sync", Detail: "starts in 1 min", CountFrom: now.Add(-6 * time.Second), CountFor: 15 * time.Second,
+			Buttons: []NotchButton{{ID: "join", Label: "Join", Primary: true}, {ID: "join-close", Label: "Close"}}},
 	}
 }
 

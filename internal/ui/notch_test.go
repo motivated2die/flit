@@ -172,3 +172,46 @@ func TestCollapser(t *testing.T) {
 		t.Fatal("a prompt collapsed")
 	}
 }
+
+func TestCollapserImmediateAndDelayed(t *testing.T) {
+	t0 := time.Date(2026, 11, 21, 14, 0, 0, 0, time.UTC)
+
+	// Outside of recording (HoverDelay == 0): hovering on the collapsed capsule
+	// expands it immediately without waiting.
+	var immediate Collapser
+	immediate.Collapse()
+	p := immediate.StepWithPolicy(t0, CollapsePolicy{Collapsible: true, HoverDelay: 0}, false, true)
+	if p != 1 || immediate.Collapsed {
+		t.Fatalf("immediate expand: p=%v collapsed=%v, want 1, false", p, immediate.Collapsed)
+	}
+
+	// While recording (HoverDelay == ExpandHover): requires resting for 1 s.
+	var delayed Collapser
+	delayed.Collapse()
+	policy := CollapsePolicy{Collapsible: true, HoverDelay: ExpandHover}
+	if p := delayed.StepWithPolicy(t0, policy, false, true); p != 0 || !delayed.Collapsed {
+		t.Fatalf("delayed start: p=%v collapsed=%v, want 0, true", p, delayed.Collapsed)
+	}
+	if p := delayed.StepWithPolicy(t0.Add(500*time.Millisecond), policy, false, true); p < 0.45 || p > 0.55 || !delayed.Collapsed {
+		t.Fatalf("delayed half: p=%v collapsed=%v", p, delayed.Collapsed)
+	}
+	if p := delayed.StepWithPolicy(t0.Add(ExpandHover), policy, false, true); p != 1 || delayed.Collapsed {
+		t.Fatalf("delayed done: p=%v collapsed=%v, want 1, false", p, delayed.Collapsed)
+	}
+}
+
+func TestStashedAndDropLayouts(t *testing.T) {
+	now := time.Now()
+	drop := Layout(NotchView{Mode: NotchStashDrop, Title: "Stash the notes"}, 1, now, fixedMeasure)
+	if drop.H != notchHeight || drop.Title.W() <= 0 {
+		t.Fatalf("stash drop layout: %+v", drop)
+	}
+	stashedIdle := Layout(NotchView{Mode: NotchStashed, StashedNotes: true}, 1, now, fixedMeasure)
+	if stashedIdle.W != notchStashedW || stashedIdle.H != notchStashedH {
+		t.Fatalf("stashed idle layout: %+v", stashedIdle)
+	}
+	stashedRec := CollapsedLayoutFor(NotchView{Mode: NotchRecording, StashedNotes: true}, 1, fixedMeasure)
+	if stashedRec.W != notchStashedRW || stashedRec.H != notchStashedH {
+		t.Fatalf("stashed recording layout: %+v", stashedRec)
+	}
+}

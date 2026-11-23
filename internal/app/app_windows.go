@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/motivated2die/flit/internal/calendar"
 	"github.com/motivated2die/flit/internal/capture"
 	"github.com/motivated2die/flit/internal/config"
 	"github.com/motivated2die/flit/internal/detect"
@@ -137,8 +138,12 @@ type App struct {
 	sumInstr    map[string]string      // the extra instruction typed, per recording
 	focusNotes  string
 	focusTitle  string // the same for a recording's title field
-	pinnedNotes string // session ID shown in notesFloat ("" when not pinned)
-	focusFloat  bool   // ask notesFloat's editor for keyboard focus once
+	pinnedNotes  string            // session ID shown in notesFloat ("" when not pinned)
+	stashedNotes string            // session ID stashed in the notch ("" when not stashed)
+	stashHover   bool              // notesFloat is currently dragged over the notch drop zone
+	focusFloat   bool              // ask notesFloat's editor for keyboard focus once
+	joinPrompt   *calendar.Meeting // upcoming calendar meeting currently shown in the notch
+	joinPrompted map[string]bool   // meeting keys already shown a join prompt
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
