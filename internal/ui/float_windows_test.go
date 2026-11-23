@@ -60,7 +60,7 @@ func TestFloatWindowHitTestAndSizeLimits(t *testing.T) {
 		}
 	}
 
-	// 6-dot drag handle maps to HTCAPTION for native dragging.
+	// 6-dot drag handle and empty toolbar lane both map to HTCAPTION.
 	drag, ok := f.last.HitByID("float:1:drag")
 	if !ok {
 		t.Fatal("missing :drag handle in FloatWindow layout")
@@ -69,8 +69,17 @@ func TestFloatWindowHitTestAndSizeLimits(t *testing.T) {
 	if got := f.hitTestClient(dx, dy, cw, ch); got != htCaption {
 		t.Errorf("drag handle (%d,%d): got %d, want htCaption (%d)", dx, dy, got, htCaption)
 	}
+	bar, ok := f.last.HitByID("float:1:bar")
+	if !ok {
+		t.Fatal("missing :bar swim lane in FloatWindow layout")
+	}
+	bx, by := int32(drag.R.L-10), int32((bar.R.T+bar.R.B)/2)
+	if got := f.hitTestClient(bx, by, cw, ch); got != htCaption {
+		t.Errorf("empty toolbar lane (%d,%d): got %d, want htCaption (%d)", bx, by, got, htCaption)
+	}
 
-	// Pin button stays clickable (HTCLIENT) and invokes OnPin.
+	// Pin button stays clickable (HTCLIENT): click-release activates OnPin,
+	// whereas press-and-drag hands off to native window dragging without firing OnPin.
 	pin, ok := f.last.HitByID("float:1:tool:pin")
 	if !ok {
 		t.Fatal("missing :tool:pin button in FloatWindow layout")
@@ -79,9 +88,31 @@ func TestFloatWindowHitTestAndSizeLimits(t *testing.T) {
 	if got := f.hitTestClient(px, py, cw, ch); got != htClient {
 		t.Errorf("pin button (%d,%d): got %d, want htClient (%d)", px, py, got, htClient)
 	}
-	pin.OnClick()
-	if !unpinned {
-		t.Error("pin button click did not invoke OnPin")
+	at := func(x, y int32) uintptr { return uintptr(uint16(int16(x))) | uintptr(uint16(int16(y)))<<16 }
+	moved := 0
+	f.startMove = func() { moved++ }
+
+	// Press and drag on the pin button -> drags window, does NOT unpin.
+	floatProc(f.hwnd, wmLButtonDown, 0, at(px, py))
+	floatProc(f.hwnd, wmMouseMove, 0, at(px+12, py))
+	floatProc(f.hwnd, wmLButtonUp, 0, at(px+12, py))
+	if moved != 1 || unpinned {
+		t.Errorf("drag on toolbar button: moved=%d unpinned=%v, want 1, false", moved, unpinned)
+	}
+
+	// Press and release on the pin button -> activates OnPin, does NOT drag.
+	floatProc(f.hwnd, wmLButtonDown, 0, at(px, py))
+	floatProc(f.hwnd, wmLButtonUp, 0, at(px, py))
+	if moved != 1 || !unpinned {
+		t.Errorf("click on toolbar button: moved=%d unpinned=%v, want 1, true", moved, unpinned)
+	}
+
+	// WM_NCACTIVATE and WM_NCPAINT suppress classic white border painting.
+	if got := floatProc(f.hwnd, wmNcActivate, 0, 0); got != 1 {
+		t.Errorf("WM_NCACTIVATE(inactive) = %d, want 1", got)
+	}
+	if got := floatProc(f.hwnd, wmNcPaint, 0, 0); got != 0 {
+		t.Errorf("WM_NCPAINT = %d, want 0", got)
 	}
 
 	// Size limits respect [MinW..MaxW] × [MinH..MaxH].

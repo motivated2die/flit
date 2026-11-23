@@ -14,7 +14,10 @@ import (
 // [MinW..MaxW] × [MinH..MaxH], and its content scrolls smoothly inside.
 type FloatWindow struct {
 	host
-	placed bool
+	placed    bool
+	dragArm   bool
+	dragStart PointF
+	startMove func() // test hook; nil sends WM_NCLBUTTONDOWN(HTCAPTION)
 
 	// Build returns the content node (a NotesEditor in pinned mode).
 	Build func() Node
@@ -28,21 +31,26 @@ const (
 
 	wsThickFrame = 0x00040000
 
+	wmNcPaint       = 0x0085
+	wmNcActivate    = 0x0086
+	wmNcLButtonDown = 0x00A1
+
 	htLeft        = 10
 	htRight       = 11
 	htBottom      = 15
 	htBottomLeft  = 16
 	htBottomRight = 17
 
-	floatDefaultW   = 420
-	floatDefaultH   = 440
-	floatMinW       = 380
-	floatMinH       = 220
-	floatMaxW       = 680
-	floatMaxH       = 860
-	floatPad        = 12
-	floatEdgeBand   = 6
-	floatCornerBand = 14
+	floatDefaultW      = 420
+	floatDefaultH      = 440
+	floatMinW          = 380
+	floatMinH          = 220
+	floatMaxW          = 680
+	floatMaxH          = 860
+	floatPad           = 12
+	floatEdgeBand      = 6
+	floatCornerBand    = 14
+	floatDragThreshold = 4
 )
 
 var floatByHwnd = map[uintptr]*FloatWindow{}
@@ -212,7 +220,7 @@ func (f *FloatWindow) hitTestClient(x, y, cw, ch int32) uintptr {
 		return htBottom
 	}
 	if f.last != nil {
-		if hit, ok := f.last.HitAt(float32(x), float32(y)); ok && strings.HasSuffix(hit.ID, ":drag") {
+		if hit, ok := f.last.HitAt(float32(x), float32(y)); ok && (strings.HasSuffix(hit.ID, ":drag") || strings.HasSuffix(hit.ID, ":bar")) {
 			return htCaption
 		}
 	}
@@ -242,6 +250,37 @@ func floatProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 	if f == nil {
 		return defWindowProc(hwnd, m, wp, lp)
 	}
+	switch m {
+	case wmLButtonDown:
+		f.dragArm = false
+		if f.last != nil {
+			x, y := float32(int16(lp&0xFFFF)), float32(int16(lp>>16&0xFFFF))
+			if hit, ok := f.last.HitAt(x, y); ok && strings.Contains(hit.ID, ":tool:") {
+				f.dragArm = true
+				f.dragStart = PointF{x, y}
+			}
+		}
+	case wmMouseMove:
+		if f.dragArm {
+			x, y := float32(int16(lp&0xFFFF)), float32(int16(lp>>16&0xFFFF))
+			thresh := max(float32(floatDragThreshold), floatDragThreshold*f.scale)
+			if abs32(x-f.dragStart.X) >= thresh || abs32(y-f.dragStart.Y) >= thresh {
+				f.dragArm = false
+				f.pressed = ""
+				f.blurOnUp = false
+				f.Invalidate()
+				procReleaseCapture.Call()
+				if f.startMove != nil {
+					f.startMove()
+				} else {
+					procSendMessageW.Call(hwnd, wmNcLButtonDown, htCaption, 0)
+				}
+				return 0
+			}
+		}
+	case wmLButtonUp, wmCaptureChange:
+		f.dragArm = false
+	}
 	if r, ok := f.handle(m, wp, lp); ok {
 		return r
 	}
@@ -250,6 +289,14 @@ func floatProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		if wp != 0 {
 			return 0 // entire window is client area: no native title bar
 		}
+	case wmNcPaint:
+		// Suppress classic Win32 non-client border painting; DWM draws the
+		// rounded 1 px ColEdge border.
+		return 0
+	case wmNcActivate:
+		// Allow activation state change without letting DefWindowProc paint a
+		// thick classic white WS_THICKFRAME border on deactivation.
+		return 1
 	case wmNcHitTest:
 		return f.hitTest(lp)
 	case wmGetMinMaxInfo:
