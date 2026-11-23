@@ -857,7 +857,7 @@ func TestRecordingNotListedWhileRecording(t *testing.T) {
 	// The recordings page counts only what it lists.
 	a.setSearch("")
 	p := a.recordingsPage().(ui.VStack)
-	if para, ok := p.Items[1].(ui.Para); !ok || !strings.HasPrefix(para.Text, fmt.Sprintf("%d recordings", len(a.sessions)-1)) {
+	if para, ok := p.Items[1].(ui.Para); !ok || !strings.HasPrefix(para.Text, fmt.Sprintf("%d meetings", len(a.sessions)-1)) {
 		t.Fatalf("count line %+v", p.Items[1])
 	}
 	// Stopped (being transcribed): listed again.
