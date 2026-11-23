@@ -81,15 +81,17 @@ var homeGreetings = []greeting{
 // otherwise.
 func homeGreeting(now time.Time, name string) string {
 	t := now.Local()
-	hour := t.Hour()
+	// Quantise to the 2-hour window's start hour so the active pool never
+	// changes mid-window.
+	slotHour := (t.Hour() / 2) * 2
 	n := uint64(0)
 	for _, g := range homeGreetings {
-		if g.activeAt(hour) {
+		if g.activeAt(slotHour) {
 			n++
 		}
 	}
 	y, m, d := t.Date()
-	bucket := uint64(y)*100000 + uint64(m)*1000 + uint64(d)*20 + uint64(hour/2)
+	bucket := uint64(y)*100000 + uint64(m)*1000 + uint64(d)*20 + uint64(slotHour/2)
 	h := bucket * 0x9E3779B97F4A7C15
 	h ^= h >> 30
 	h *= 0xBF58476D1CE4E5B9
@@ -98,7 +100,7 @@ func homeGreeting(now time.Time, name string) string {
 	base := "Welcome back"
 	idx := uint64(0)
 	for _, g := range homeGreetings {
-		if !g.activeAt(hour) {
+		if !g.activeAt(slotHour) {
 			continue
 		}
 		if idx == pick {

@@ -145,8 +145,9 @@ func TestWelcomeNameHomeGreetingAndSettings(t *testing.T) {
 		t.Error("Home missing ', Haisch' fallback greeting")
 	}
 	a.setName("", "")
-	if nodeHasText(a.homePage(), ", ") || !nodeHasText(a.homePage(), "!") {
-		t.Error("Home greeting without name should end with '!' and have no name")
+	head := a.homePage().(ui.VStack).Items[0]
+	if nodeHasText(head, ", ") || !nodeHasText(head, "!") {
+		t.Errorf("Home greeting without name = %+v, want ending with '!' and no name", head)
 	}
 
 	// Settings has split name fields, no Speech model row, and a calendar confirm button.
