@@ -80,14 +80,14 @@ func (v NotchView) CountdownAt(now time.Time) float64 {
 
 // Notch geometry in logical pixels (scaled by the screen's DPI).
 const (
-	notchHeight    = 34
-	notchPadX      = 14
-	notchIcon      = 14 // the dot / ring
-	notchGap       = 9
-	notchButtonH   = 24
-	notchButtonPad = 12
-	notchButtonGap = 6
-	notchLevelW    = 16
+	notchHeight         = 34
+	notchPadX           = 14
+	notchIcon           = 14 // the dot / ring
+	notchGap            = 9
+	notchButtonH        = 24
+	notchButtonPad      = 12
+	notchButtonGap      = 6
+	notchLevelW         = 16
 	notchMaxW           = 560
 	notchShadow         = 14 // room for the shadow around the capsule
 	notchFlareMax       = 10 // max concave flare radius at the top edge

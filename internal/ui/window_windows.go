@@ -58,13 +58,13 @@ const (
 	xButton1              = 1
 	appCommandBrowserBack = 1
 	htClient              = 1
-	htCaption      = 2
-	htTop          = 12
-	htTopLeft      = 13
-	htTopRight     = 14
-	smCyFrame      = 33
-	smCxPaddedBord = 92
-	swpFrameChange = 0x0020
+	htCaption             = 2
+	htTop                 = 12
+	htTopLeft             = 13
+	htTopRight            = 14
+	smCyFrame             = 33
+	smCxPaddedBord        = 92
+	swpFrameChange        = 0x0020
 
 	dwmwaDarkMode     = 20
 	dwmwaCornerPref   = 33
