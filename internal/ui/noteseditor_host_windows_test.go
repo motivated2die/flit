@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/motivated2die/flit/internal/notes"
 )
@@ -111,9 +112,9 @@ func TestNotesEditorInAWindow(t *testing.T) {
 	}
 }
 
-// The window is never wider than its content: resized, or maximised
-// (then centred on the screen).
-func TestWindowMaxWidth(t *testing.T) {
+// The main window can be resized to any width while keeping the page content
+// and docked audio player centred at pageMaxW inside the main area.
+func TestWindowUnrestrictedWidthAndCenteredContent(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	w, err := NewWindow("flit width test")
@@ -125,16 +126,38 @@ func TestWindowMaxWidth(t *testing.T) {
 		Reserved, MaxSize, MaxPos, MinTrack, MaxTrack point
 	}
 	mmi.MaxTrack, mmi.MaxSize = point{99999, 99999}, point{99999, 99999}
-	w.limitWidth(&mmi.MaxTrack, &mmi.MaxSize, &mmi.MaxPos)
-	content := int32(float32(FrameMaxW) * w.scale)
-	if mmi.MaxTrack.X < content || mmi.MaxTrack.X > content+int32(40*w.scale) {
-		t.Errorf("max width %d for %d of content", mmi.MaxTrack.X, content)
+	windowProc(w.hwnd, wmGetMinMaxInfo, 0, uintptr(unsafe.Pointer(&mmi)))
+	if mmi.MaxTrack.X != 99999 || mmi.MaxSize.X != 99999 {
+		t.Fatalf("window max width restricted: MaxTrack=%+v MaxSize=%+v", mmi.MaxTrack, mmi.MaxSize)
 	}
-	if mmi.MaxSize.X != 99999 && (mmi.MaxSize.X != mmi.MaxTrack.X || mmi.MaxPos.X <= 0) {
-		t.Errorf("maximised: %d wide at x %d", mmi.MaxSize.X, mmi.MaxPos.X)
+
+	// On a wide 1600 px frame (scale 1), page content (720 px) and dock are
+	// centred inside the main area [208..1600] (equal left/right margins).
+	c := NewCtx(1, fakeMetrics{}, time.Now(), "", "", nil)
+	f := Frame{
+		Page:   Button{ID: "p:btn", Label: "Action", OnClick: func() {}},
+		PageID: "p",
+		Dock:   Button{ID: "d:btn", Label: "Play", OnClick: func() {}},
+		DockID: "d",
 	}
-	if mmi.MaxTrack.Y != 99999 {
-		t.Error("the height was limited too")
+	f.Layout(c, 1600, 800)
+	wantColX := float32(sidebarW) + float32(1600-sidebarW-pageMaxW)/2
+	btn, ok := c.HitByID("p:btn")
+	if !ok || btn.R.L != wantColX {
+		t.Fatalf("page button L=%v, want centred colX=%v", btn.R.L, wantColX)
+	}
+	dockBtn, ok := c.HitByID("d:btn")
+	if !ok || dockBtn.R.L != wantColX {
+		t.Fatalf("dock button L=%v, want centred colX=%v", dockBtn.R.L, wantColX)
+	}
+
+	// Mouse browser Back button (WM_XBUTTONUP XBUTTON1 and WM_APPCOMMAND) fires OnBack.
+	backs := 0
+	w.OnBack = func() { backs++ }
+	windowProc(w.hwnd, wmXButtonUp, uintptr(xButton1)<<16, 0)
+	windowProc(w.hwnd, wmAppCommand, 0, uintptr(appCommandBrowserBack)<<16)
+	if backs != 2 {
+		t.Fatalf("OnBack fired %d times, want 2", backs)
 	}
 }
 

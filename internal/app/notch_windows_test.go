@@ -98,3 +98,37 @@ func TestMeetingRowIconsAndStatus(t *testing.T) {
 		t.Fatalf("summarized status = %q, want Summarized", got)
 	}
 }
+
+func TestNavigateBack(t *testing.T) {
+	a := testApp(t)
+	s := a.sessions[0]
+
+	// Meeting detail page -> Meetings -> Home.
+	a.page = pageSession + s.Meta.ID
+	a.navigateBack()
+	if a.page != pageRecordings {
+		t.Fatalf("from meeting detail: got %q, want %q", a.page, pageRecordings)
+	}
+	a.navigateBack()
+	if a.page != pageHome {
+		t.Fatalf("from Meetings: got %q, want %q", a.page, pageHome)
+	}
+
+	// Active recording page -> Home directly.
+	a.rec = &recording{sess: s, started: time.Now()}
+	a.page = pageSession + s.Meta.ID
+	a.navigateBack()
+	if a.page != pageHome {
+		t.Fatalf("from active recording: got %q, want %q", a.page, pageHome)
+	}
+	a.rec = nil
+
+	// Other top-level pages -> Home.
+	for _, p := range []string{pageCalendar, pageAudio, pageSettings, pageDebug} {
+		a.page = p
+		a.navigateBack()
+		if a.page != pageHome {
+			t.Fatalf("from %q: got %q, want %q", p, a.page, pageHome)
+		}
+	}
+}

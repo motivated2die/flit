@@ -409,6 +409,7 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 	area := RectF{side, 0, w, h}
 	pad := c.Px(pagePad)
 	pw := min(area.W()-2*pad, c.Px(pageMaxW))
+	colX := side + float32(math.Round(float64((area.W()-pw)/2)))
 	id := FrameScrollID(f.PageID)
 	// Whole pixels: a smooth scroll passes through fractions, and text
 	// drawn between pixels would blur while it moves.
@@ -420,7 +421,7 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 	var reserve float32
 	var dk dockGeom
 	if f.Dock != nil {
-		dk = f.dockGeom(c, side, pw, w, h)
+		dk = f.dockGeom(c, side, colX, pw, w, h)
 		if !f.DockOut {
 			reserve = dk.reserve
 		}
@@ -434,7 +435,7 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 		view.T = c.Px(CaptionH)
 	}
 	c.PushClip(view)
-	ph := f.Page.Layout(c, side+pad, pad-off, pw)
+	ph := f.Page.Layout(c, colX, pad-off, pw)
 	c.PopClip()
 	if f.Dock != nil {
 		f.drawDock(c, dk)
@@ -500,9 +501,9 @@ type dockGeom struct {
 	fade    RectF   // the backdrop, page-wide, sliding with the pill
 }
 
-// dockGeom places the pill in the page column (width pw) and slides it in
-// after DockAt, or out when DockOut.
-func (f Frame) dockGeom(c *Ctx, side, pw, w, h float32) dockGeom {
+// dockGeom places the pill centred on the page column [colX, colX+pw] and
+// slides it in after DockAt, or out when DockOut.
+func (f Frame) dockGeom(c *Ctx, side, colX, pw, w, h float32) dockGeom {
 	// Measure the content in a pass of its own; it is laid out for real
 	// in drawDock.
 	probe := NewCtx(c.Scale, c.M, c.Now, "", "", nil)
@@ -530,7 +531,7 @@ func (f Frame) dockGeom(c *Ctx, side, pw, w, h float32) dockGeom {
 	// left that is what makes a round button at the start concentric with
 	// the pill's rounded end.
 	padL := max(0, (ph-c.Px(roundButtonSize))/2)
-	left := side + c.Px(pagePad) - padL
+	left := colX - padL
 	top := h - margin - ph + dy
 	pill := RectF{left, top, left + padL + pw + c.Px(dockPadR), top + ph}
 	return dockGeom{

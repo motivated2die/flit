@@ -45,6 +45,7 @@ func (a *App) initWindow() {
 	}
 	w.Build = a.frame
 	w.OnEscape = a.closePopover
+	w.OnBack = a.navigateBack
 	w.OnHide = func() {
 		a.saveAllNotes()
 		a.syncMeters()
@@ -136,6 +137,27 @@ func (a *App) go_(page string) {
 	}
 	a.syncMeters()
 	a.invalidate()
+}
+
+// navigateBack handles the mouse browser Back button: closes a modal popover
+// if open, returns from a meeting detail page to Meetings (or Home while
+// actively recording), and returns from any other page to Home.
+func (a *App) navigateBack() {
+	if a.uninstallAsk {
+		a.closePopover()
+		return
+	}
+	if id, ok := strings.CutPrefix(a.page, pageSession); ok {
+		if s := a.sessionByID(id); s != nil && a.isRecording(s) {
+			a.go_(pageHome)
+			return
+		}
+		a.go_(pageRecordings)
+		return
+	}
+	if a.page != pageHome && a.page != pageWelcome {
+		a.go_(pageHome)
+	}
 }
 
 // reloadSessions re-reads the session list (on navigation and events, not
