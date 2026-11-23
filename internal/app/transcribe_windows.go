@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/motivated2die/flit/internal/audio/dsp"
+	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/audio/wav"
 	"github.com/motivated2die/flit/internal/config"
 	"github.com/motivated2die/flit/internal/download"
@@ -346,8 +347,15 @@ func countWords(segs []transcript.Segment) int {
 	return n
 }
 
-// load16k reads a WAV file as 16 kHz mono.
+// load16k reads an audio file (.m4a, .aac, or .wav) as 16 kHz mono.
 func load16k(path string) ([]float32, float64, error) {
+	if strings.HasSuffix(strings.ToLower(path), ".m4a") || strings.HasSuffix(strings.ToLower(path), ".aac") {
+		mono, err := track.ReadAllMono(path, pipeline.Rate)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		return mono, float64(len(mono)) / pipeline.Rate, nil
+	}
 	a, err := wav.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s: %w", filepath.Base(path), err)

@@ -18,3 +18,4 @@ Architecture decision records: one choice per file, numbered in order. A record 
 | [0012](0012-speaker-names-from-the-call-app.md) | Speaker names from the call app's window (UI Automation), voted onto Sortformer's speakers | proposed (parked) |
 | [0013](0013-own-markdown-notes-editor.md) | An own, line-based Markdown notes editor (headings, nested and numbered lists, tasks, bold, italics, @flit mentions) on flit's Direct2D framework | accepted |
 | [0014](0014-gpu-assisted-transcription.md) | Optional Vulkan GPU acceleration for transcription and diarization (on-demand 18 MB download, DXGI check, 3-mode setting, CPU fallback) | accepted |
+| [0015](0015-m4a-audio-storage.md) | Store recordings as 48 kHz M4A (AAC-LC via Windows Media Foundation: mono mic, stereo meeting, crash-safe ADTS → M4A, WAV fallback) | accepted |

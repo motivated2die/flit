@@ -485,12 +485,7 @@ func (a *App) filesCard(s *session.Session) ui.Node {
 	}
 	var rows []ui.Node
 	if a.hasAudio(s) {
-		var size int64
-		for _, f := range []string{session.MeFile, session.ThemFile} {
-			if st, err := os.Stat(s.Path(f)); err == nil {
-				size += st.Size()
-			}
-		}
+		size := audioSize(s)
 		detail := "Both tracks, " + sysinfo.Bytes(uint64(size)) + "; needed to listen and to transcribe again"
 		rows = append(rows, ui.SettingRow{Label: "Audio", Detail: detail, Control: a.confirmButton("session:delaudio", "Delete audio", false, func() { a.deleteAudio(s) })}, ui.Divider{})
 	}
@@ -539,14 +534,12 @@ func (a *App) confirmButtonAs(id, label, again string, large bool, act func()) u
 	}}
 }
 
-func (a *App) hasAudio(s *session.Session) bool {
-	return s.Has(session.MeFile) || s.Has(session.ThemFile)
-}
+func (a *App) hasAudio(s *session.Session) bool { return s.HasAudio() }
 
 // deleteAudio removes a recording's tracks and keeps its transcript.
 func (a *App) deleteAudio(s *session.Session) {
 	a.stopPlayer(s)
-	for _, f := range []string{session.MeFile, session.ThemFile} {
+	for _, f := range s.AudioFiles() {
 		if err := os.Remove(s.Path(f)); err != nil && !os.IsNotExist(err) {
 			logx.Printf("deleting %s of %s: %v", f, s.Meta.ID, err)
 		}

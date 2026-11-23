@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/motivated2die/flit/internal/audio/m4a"
 	"github.com/motivated2die/flit/internal/audio/wav"
 	"github.com/motivated2die/flit/internal/pipeline"
 	"github.com/motivated2die/flit/internal/transcript"
@@ -314,5 +315,84 @@ func TestLiveStateForAnotherLanguageIsDropped(t *testing.T) {
 	text, _ := s.Transcript(false)
 	if strings.Contains(text, " de") {
 		t.Fatalf("German chunks kept:\n%s", text)
+	}
+}
+
+func TestM4ALiveTranscribeAndCrashRecover(t *testing.T) {
+	if !m4a.Available() {
+		t.Skip("Media Foundation AAC unavailable")
+	}
+	dir := t.TempDir()
+	s, err := Create(dir, Meta{Language: "de"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write a 3-second 48 kHz stereo them.m4a and 3-second mono me.m4a.
+	writeM4A := func(path string, ch int) {
+		w, err := m4a.Create(path, m4a.Format{SampleRate: 48000, Channels: ch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]float32, 48000*3*ch)
+		for i := range 48000 * 3 {
+			v := float32(0.2)
+			if ch == 1 {
+				buf[i] = v
+			} else {
+				buf[2*i], buf[2*i+1] = v, v
+			}
+		}
+		if err := w.Write(buf); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeM4A(s.Path(MeM4A), 1)
+	writeM4A(s.Path(ThemM4A), 2)
+
+	if !s.HasAudio() || s.TrackFile("me") != MeM4A || s.TrackFile("them") != ThemM4A {
+		t.Fatalf("track lookup failed: me=%q them=%q", s.TrackFile("me"), s.TrackFile("them"))
+	}
+	if err := s.Transcribe(context.Background(), engine{}, pipeline.Options{Speakers: true}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.Meta.State != Ready {
+		t.Fatalf("state %s, want Ready", s.Meta.State)
+	}
+
+	// Simulate a crash mid-recording with leftover .m4a.aac: Recover must remux to .m4a.
+	crashed, err := Create(dir, Meta{Language: "de", State: Recording})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := m4a.Create(crashed.Path(MeM4A), m4a.Format{SampleRate: 48000, Channels: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(make([]float32, 48000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	// Copy the live .aac to simulate an abrupt process exit before Close().
+	aacBytes, err := os.ReadFile(crashed.Path(MeM4A + m4a.ScratchSuffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	_ = os.Remove(crashed.Path(MeM4A))
+	if err := os.WriteFile(crashed.Path(MeM4A+m4a.ScratchSuffix), aacBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	todo := Recover(dir)
+	if len(todo) != 1 || todo[0].Dir != crashed.Dir {
+		t.Fatalf("Recover returned %d sessions, want crashed", len(todo))
+	}
+	if !crashed.Has(MeM4A) || crashed.Has(MeM4A+m4a.ScratchSuffix) {
+		t.Fatalf("Recover didn't remux .aac to .m4a: files=%v", crashed.AudioFiles())
 	}
 }

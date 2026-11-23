@@ -141,7 +141,7 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 		}
 	case s.Meta.SpeakersError != "":
 		hint = "Telling the speakers apart failed: " + s.Meta.SpeakersError
-	case s.Meta.Speakers == 0 && s.Has(session.ThemFile):
+	case s.Meta.Speakers == 0 && s.HasTrack("them"):
 		hint = "Everyone on the meeting's side is one speaker here. Analyzing the audio again tells up to four people apart (about 2 minutes per hour of meeting)."
 	}
 	items = append(items, ui.Para{Text: hint, Muted: true, Small: true})
@@ -152,7 +152,7 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 // Speakers caption; nil when there is no audio or it is busy.
 func (a *App) analyzeLink(s *session.Session) ui.Node {
 	busy := a.finding != nil || (a.working != nil && a.working.Dir == s.Dir)
-	if !s.Has(session.ThemFile) || busy {
+	if !s.HasTrack("them") || busy {
 		return nil
 	}
 	label := "Analyze speakers"

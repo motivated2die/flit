@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/motivated2die/flit/internal/audio/m4a"
 	"github.com/motivated2die/flit/internal/capture"
 	"github.com/motivated2die/flit/internal/detect"
 	"github.com/motivated2die/flit/internal/install"
@@ -300,6 +301,13 @@ func sessionTitle(s *session.Session) string {
 	return defaultTitle(s)
 }
 
+func keepAudioDetail() string {
+	if m4a.Available() {
+		return "Both tracks stay in the session's folder, about 70 MB per hour"
+	}
+	return "Both tracks stay in the session's folder, about 230 MB per hour"
+}
+
 // defaultTitle is a recording's name without one given.
 func defaultTitle(s *session.Session) string {
 	if s.Meta.Provider != "" {
@@ -403,7 +411,7 @@ func (a *App) settingsPage() ui.Node {
 		ui.Group(a.calendarSettings()),
 		ui.Caption("Recordings"),
 		ui.Card{Gap: 4, Items: []ui.Node{
-			ui.Toggle{ID: "set:keep", Label: "Keep recordings after transcription", Detail: "Both tracks stay in the session's folder, about 115 MB per hour", On: a.cfg.KeepAudio,
+			ui.Toggle{ID: "set:keep", Label: "Keep recordings after transcription", Detail: keepAudioDetail(), On: a.cfg.KeepAudio,
 				OnChange: func(on bool) { a.cfg.KeepAudio = on; a.save(); a.invalidate() }},
 			ui.HStack{Items: []ui.Node{ui.Link{ID: "set:recfolder", Glyph: ui.GlyphFolder, Label: "Open recordings folder", OnClick: func() { openFolder(session.Root(a.dataDir)) }}}},
 		}},

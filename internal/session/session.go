@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/motivated2die/flit/internal/audio/m4a"
 )
 
 // State is where a session is in its life.
@@ -31,6 +33,8 @@ const (
 	MetaFile        = "meta.json"
 	MeFile          = "me.wav"
 	ThemFile        = "them.wav"
+	MeM4A           = "me.m4a"
+	ThemM4A         = "them.m4a"
 	TranscriptJSON  = "transcript.json"
 	TranscriptText  = "transcript.txt"
 	TranscriptMD    = "transcript.md"
@@ -168,6 +172,50 @@ func (s *Session) Has(name string) bool {
 	return err == nil
 }
 
+// RecordFileNames returns the filenames for a new recording's tracks: 48 kHz
+// M4A when Windows Media Foundation AAC is available, falling back to WAV
+// otherwise (for example on Windows N editions without the Media Feature Pack).
+func RecordFileNames() (me, them string) {
+	if m4a.Available() {
+		return MeM4A, ThemM4A
+	}
+	return MeFile, ThemFile
+}
+
+// TrackFile returns the filename on disk for side ("me" or "them"), checking
+// finalized .m4a, in-progress/crashed .m4a.aac, and legacy .wav in order.
+func (s *Session) TrackFile(side string) string {
+	var names []string
+	if side == "me" {
+		names = []string{MeM4A, MeM4A + m4a.ScratchSuffix, MeFile}
+	} else {
+		names = []string{ThemM4A, ThemM4A + m4a.ScratchSuffix, ThemFile}
+	}
+	for _, f := range names {
+		if s.Has(f) {
+			return f
+		}
+	}
+	return ""
+}
+
+// HasTrack reports whether side ("me" or "them") has an audio file on disk.
+func (s *Session) HasTrack(side string) bool { return s.TrackFile(side) != "" }
+
+// HasAudio reports whether the session has any audio track on disk.
+func (s *Session) HasAudio() bool { return s.HasTrack("me") || s.HasTrack("them") }
+
+// AudioFiles returns all audio filenames present in the session folder.
+func (s *Session) AudioFiles() []string {
+	var out []string
+	for _, f := range []string{MeM4A, MeM4A + m4a.ScratchSuffix, MeFile, ThemM4A, ThemM4A + m4a.ScratchSuffix, ThemFile} {
+		if s.Has(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // List returns all sessions, newest first. Unreadable folders are skipped.
 func List(dataDir string) []*Session {
 	entries, err := os.ReadDir(Root(dataDir))
@@ -196,8 +244,17 @@ func Recover(dataDir string) []*Session {
 	for _, s := range List(dataDir) {
 		switch s.Meta.State {
 		case Recording:
+			for _, pair := range [][2]string{{MeM4A + m4a.ScratchSuffix, MeM4A}, {ThemM4A + m4a.ScratchSuffix, ThemM4A}} {
+				if s.Has(pair[0]) && !s.Has(pair[1]) {
+					_ = m4a.Recover(s.Path(pair[0]), s.Path(pair[1]))
+				}
+			}
 			if s.Meta.Ended.IsZero() {
-				s.Meta.Ended = modTime(s.Path(MeFile), s.Path(ThemFile))
+				var paths []string
+				for _, f := range s.AudioFiles() {
+					paths = append(paths, s.Path(f))
+				}
+				s.Meta.Ended = modTime(paths...)
 			}
 			s.Meta.State = Recorded
 		case Transcribing:

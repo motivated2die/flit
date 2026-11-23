@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Rate is the sample rate of session tracks.
-const Rate = 16000
+// Rate is the playback sample rate (fullband 48 kHz stereo).
+const Rate = 48000
 
 // Range is a stretch of the timeline in samples, To exclusive.
 type Range struct{ From, To int64 }

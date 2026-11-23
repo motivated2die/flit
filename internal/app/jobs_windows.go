@@ -386,7 +386,7 @@ func (a *App) onTranscribed(s *session.Session, err error) {
 	a.lastReady = s
 	a.forget(s)
 	if !a.cfg.KeepAudio {
-		for _, f := range []string{session.MeFile, session.ThemFile} {
+		for _, f := range s.AudioFiles() {
 			if err := os.Remove(s.Path(f)); err != nil && !os.IsNotExist(err) {
 				logx.Printf("removing %s of %s: %v", f, s.Meta.ID, err)
 			}

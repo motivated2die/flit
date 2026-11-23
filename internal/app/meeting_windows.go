@@ -113,7 +113,8 @@ func (a *App) startRecording(c *detect.Candidate) {
 	}
 	a.matchMeeting(s, time.Time{}, windowTitle)
 	mic := a.micSource(c)
-	r, err := capture.Record(s.Dir, session.MeFile, session.ThemFile, mic, them,
+	meFile, themFile := session.RecordFileNames()
+	r, err := capture.Record(s.Dir, meFile, themFile, mic, them,
 		func(ev capture.Event) {
 			if ev.Err != nil {
 				logx.Printf("capture %s: %v", ev.Source, ev.Err)

@@ -29,6 +29,7 @@ flit is past research and being built (see the package table in [architecture/ov
    - [research/speaker-identity.md](research/speaker-identity.md): recognising the same person across recordings
    - [research/meeting-detection.md](research/meeting-detection.md): noticing a meeting start and end
    - [research/audio-capture.md](research/audio-capture.md): recording mic and meeting audio on Windows
+   - [research/audio-storage-and-quality.md](research/audio-storage-and-quality.md): why 16 kHz WAV sounded muffled, 7.1 downmix fix, and 48 kHz M4A (Windows MF AAC) benchmarks
    - [research/window-rendering.md](research/window-rendering.md): what a frame of the window costs, and whether smooth scrolling fits
    - [research/voice-meter-bands.md](research/voice-meter-bands.md): where the voice meter's bands sit, measured on speech and noise
    - [research/engine-cores.md](research/engine-cores.md): how many cores the engine uses, and what limiting it costs
