@@ -211,6 +211,27 @@ func panelProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 	return defWindowProc(hwnd, m, wp, lp)
 }
 
+// PanelSheet splits the tray panel into a darker top extension (ColBase,
+// where the live recording dot and corner glow sit) emerging from behind a
+// lighter bottom card (ColSidebar) with rounded top corners.
+type PanelSheet struct {
+	Top  Node
+	Body Node
+}
+
+func (s PanelSheet) Layout(c *Ctx, x, y, w float32) float32 {
+	pad := c.Px(panelPad)
+	th := float32(0)
+	if s.Top != nil {
+		th = s.Top.Layout(c, x, y, w)
+	}
+	bh := float32(0)
+	if s.Body != nil {
+		bh = s.Body.Layout(c, x, y+th+2*pad, w)
+	}
+	return th + 2*pad + bh
+}
+
 // panelLight is the colour the border turns to near the glow: the live
 // red, lightened.
 var panelLight = rgb(0xF8, 0xA8, 0xB2)
@@ -218,14 +239,38 @@ var panelLight = rgb(0xF8, 0xA8, 0xB2)
 // panelLayout draws the panel on a w×h surface: its background, the
 // corner glow while lit, the content n, and its border on top.
 func panelLayout(c *Ctx, n Node, w, h float32, lit, rounded bool) {
-	c.Draw(func(cv Canvas) { cv.RoundRect(RectF{0, 0, w, h}, 0, col(ColSidebar)) })
-	if lit {
-		c.Animating = true
-		pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
-		c.Glow(0, 0, liveGlow, ColLive, 0.75+0.25*pulse)
-	}
 	pad := c.Px(panelPad)
-	n.Layout(c, pad, pad, w-2*pad)
+	if sheet, ok := n.(PanelSheet); ok {
+		// Darker top extension behind a lighter, top-rounded bottom card.
+		c.Draw(func(cv Canvas) { cv.RoundRect(RectF{0, 0, w, h}, 0, col(ColBase)) })
+		if lit {
+			c.Animating = true
+			pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
+			c.Glow(0, 0, liveGlow, ColLive, 0.75+0.25*pulse)
+		}
+		th := float32(0)
+		if sheet.Top != nil {
+			th = sheet.Top.Layout(c, pad, pad, w-2*pad)
+		}
+		splitY := th + 2*pad
+		cardR := c.Px(12)
+		line := max(1, c.Px(1))
+		c.Draw(func(cv Canvas) {
+			cv.RoundRect(RectF{0, splitY - line, w, h + cardR}, cardR+line, col(ColEdge))
+			cv.RoundRect(RectF{0, splitY, w, h + cardR}, cardR, col(ColSidebar))
+		})
+		if sheet.Body != nil {
+			sheet.Body.Layout(c, pad, splitY+pad, w-2*pad)
+		}
+	} else {
+		c.Draw(func(cv Canvas) { cv.RoundRect(RectF{0, 0, w, h}, 0, col(ColSidebar)) })
+		if lit {
+			c.Animating = true
+			pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
+			c.Glow(0, 0, liveGlow, ColLive, 0.75+0.25*pulse)
+		}
+		n.Layout(c, pad, pad, w-2*pad)
+	}
 	iw, ih := int(w), int(h)
 	r := 0.0
 	if rounded {

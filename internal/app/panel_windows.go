@@ -52,9 +52,29 @@ func (a *App) act(fn func()) func() {
 }
 
 func (a *App) panelContent() ui.Node {
+	footer := ui.HStack{Items: []ui.Node{
+		ui.BrandLink{ID: "panel:open", Detail: "Click to open the app", OnClick: a.act(a.openWindow)},
+		ui.Space(0),
+		ui.Inset{Top: 4, Child: ui.Button{ID: "panel:quit", Label: "Quit", Glyph: ui.GlyphPower, HoverDanger: true, OnClick: a.act(a.quit)}},
+	}}
+	if a.rec != nil {
+		// While recording, the active recording section sits in a darker top
+		// extension sliding out from behind the rounded bottom card.
+		var body []ui.Node
+		if meetings := a.panelMeetings(); len(meetings) > 1 {
+			// Skip the leading divider: the rounded card edge separates it.
+			body = append(body, meetings[1:]...)
+			body = append(body, ui.Divider{})
+		}
+		body = append(body, footer)
+		return ui.PanelSheet{
+			Top:  a.panelStatus(),
+			Body: ui.VStack{Gap: 8, Items: body},
+		}
+	}
 	items := []ui.Node{a.panelStatus()}
 	items = append(items, a.panelMeetings()...)
-	if s := a.latestReady(); s != nil && a.rec == nil {
+	if s := a.latestReady(); s != nil {
 		facts := s.Meta.Started.Format("Mon 2 Jan · 15:04")
 		if w := len(strings.Fields(a.preview(s))); w > 0 {
 			facts += " · " + plural(w, "word")
@@ -64,15 +84,7 @@ func (a *App) panelContent() ui.Node {
 				Actions: []ui.Node{ui.RoundButton{ID: "panel:latest:copy", Glyph: ui.GlyphCopy, OnClick: a.act(func() { a.copyTranscript(s, false) })}},
 				OnClick: a.act(func() { a.openPage(pageSession + s.Meta.ID) })})
 	}
-	items = append(items, ui.Divider{},
-		ui.SettingRow{Label: "Meeting language", Control: a.languageControl("panel:lang")},
-		ui.Divider{},
-		ui.HStack{Items: []ui.Node{
-			ui.BrandLink{ID: "panel:open", Detail: "Click to open the app", OnClick: a.act(a.openWindow)},
-			ui.Space(0),
-			ui.Inset{Top: 4, Child: ui.Button{ID: "panel:quit", Label: "Quit", Glyph: ui.GlyphPower, HoverDanger: true, OnClick: a.act(a.quit)}},
-		}},
-	)
+	items = append(items, ui.Divider{}, footer)
 	return ui.VStack{Gap: 8, Items: items}
 }
 
@@ -85,13 +97,13 @@ func (a *App) panelStatus() ui.Node {
 		if a.rec.sess.Meta.Title != "" {
 			title = a.rec.sess.Meta.Title
 		}
-		return ui.VStack{Gap: 8, Items: []ui.Node{
+		return ui.VStack{Gap: 10, Items: []ui.Node{
 			ui.LiveTitle{Text: shorten(title, 24), Detail: ui.Clock(time.Since(a.rec.started))},
 			ui.HStack{Gap: 8, Items: []ui.Node{
-				ui.Button{ID: "panel:stop", Label: "Stop and transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.act(a.stopRecording)},
+				ui.Button{ID: "panel:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.act(a.stopRecording)},
 				a.confirmButtonAs("panel:cancel", "Cancel", "Click again", false, a.act(a.cancelRecording)),
 			}},
-			a.voiceMeter(false),
+			ui.VoiceMeter{Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Flat: true},
 		}}
 	case a.detected != nil:
 		c := *a.detected
