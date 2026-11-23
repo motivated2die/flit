@@ -15,7 +15,9 @@ import (
 type host struct {
 	hwnd    uintptr
 	surf    *Surface
-	scale   float32
+	dpi     float32 // OS monitor DPI scale (1 = 96 DPI)
+	zoom    float32 // user UI scale multiplier (0 or 1 = 100%)
+	scale   float32 // effective scale = dpi * zoom
 	metrics Metrics
 	bg      ColorF
 
@@ -134,6 +136,43 @@ func (h *host) dpiScale() float32 {
 		}
 	}
 	return 1
+}
+
+// rawDPI returns the monitor's OS DPI scale without user zoom.
+func (h *host) rawDPI() float32 {
+	if h.dpi > 0 {
+		return h.dpi
+	}
+	if h.scale > 0 {
+		return h.scale
+	}
+	return 1
+}
+
+func (h *host) setDPI(d float32) {
+	if d <= 0 {
+		d = 1
+	}
+	h.dpi = d
+	z := h.zoom
+	if z <= 0 {
+		z = 1
+	}
+	h.scale = d * z
+}
+
+// SetZoom changes the user UI scale multiplier (e.g. 0.8, 1.0, 1.1, 1.25)
+// and repaints the window.
+func (h *host) SetZoom(z float32) {
+	if z <= 0 {
+		z = 1
+	}
+	if h.dpi <= 0 {
+		h.dpi = h.dpiScale()
+	}
+	h.zoom = z
+	h.scale = h.dpi * z
+	h.Invalidate()
 }
 
 // Invalidate asks for a repaint.

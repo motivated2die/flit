@@ -567,6 +567,84 @@ func (s Segmented) Layout(c *Ctx, x, y, w float32) float32 {
 	return h
 }
 
+// StepSlider is a compact notched slider with discrete labelled stops
+// (e.g. "80%", "100%", "110%", "125%"). Clicking or dragging snaps to the
+// nearest notch; OnChange receives the snapped index and whether the drag
+// finished (true on release or click).
+type StepSlider struct {
+	ID       string
+	Labels   []string
+	Selected int
+	OnChange func(i int, done bool)
+}
+
+func (s StepSlider) Width(c *Ctx) float32 { return c.Px(216) }
+
+func (s StepSlider) Layout(c *Ctx, x, y, w float32) float32 {
+	h := c.Px(36)
+	n := len(s.Labels)
+	if n < 2 {
+		return h
+	}
+	sel := max(0, min(s.Selected, n-1))
+	sw := s.Width(c)
+	outer := RectF{x, y, x + sw, y + h}
+	padX := c.Px(18)
+	trackL, trackR := x+padX, x+sw-padX
+	trackY := y + c.Px(10)
+	trackH := c.Px(4)
+	tickW := max(1, c.Px(2))
+	tickH := c.Px(8)
+	hover := c.Hover == s.ID || c.Pressed == s.ID
+	knobR := c.Px(6.5)
+	if hover {
+		knobR = c.Px(7.5)
+	}
+	stopX := func(i int) float32 {
+		return trackL + (trackR-trackL)*float32(i)/float32(n-1)
+	}
+	knobX := stopX(sel)
+	labels := s.Labels
+	c.Draw(func(cv Canvas) {
+		cv.RoundRect(RectF{trackL, trackY - trackH/2, trackR, trackY + trackH/2}, trackH/2, col(ColControl))
+		if knobX > trackL {
+			cv.RoundRect(RectF{trackL, trackY - trackH/2, knobX, trackY + trackH/2}, trackH/2, col(ColText))
+		}
+		for i := range n {
+			sx := stopX(i)
+			tc := col(ColControlHi)
+			if i <= sel {
+				tc = col(ColText)
+			}
+			cv.RoundRect(RectF{sx - tickW/2, trackY - tickH/2, sx + tickW/2, trackY + tickH/2}, tickW/2, tc)
+		}
+		cv.Circle(knobX, trackY, knobR, col(ColText))
+		lf := c.F(Font{Family: uiFont, Size: 10.5, Weight: 400, Center: true})
+		lfSel := c.F(Font{Family: uiFont, Size: 10.5, Weight: 600, Center: true})
+		for i, lbl := range labels {
+			sx := stopX(i)
+			colLbl, fn := col(ColFaint), lf
+			if i == sel {
+				colLbl, fn = col(ColText), lfSel
+			} else if hover {
+				colLbl = col(ColMuted)
+			}
+			half := c.Px(22)
+			cv.Text(lbl, RectF{sx - half, y + c.Px(19), sx + half, y + h}, fn, colLbl)
+		}
+	})
+	if s.OnChange != nil {
+		onChange := s.OnChange
+		c.Drag(s.ID, outer, func(px, _ float32, done bool) {
+			t := max(0, min(1, (px-trackL)/(trackR-trackL)))
+			idx := int(math.Round(float64(t) * float64(n-1)))
+			idx = max(0, min(idx, n-1))
+			onChange(idx, done)
+		})
+	}
+	return h
+}
+
 // ListRow is a clickable line in a list: a glyph (or a live red dot), a
 // title with a muted detail under it, and text on the right.
 type ListRow struct {

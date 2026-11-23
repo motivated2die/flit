@@ -132,3 +132,29 @@ func TestNavigateBack(t *testing.T) {
 		}
 	}
 }
+
+func TestUIScaleSetting(t *testing.T) {
+	a := testApp(t)
+	if got := a.cfg.UIScaleFactor(); got != 1 {
+		t.Fatalf("default UIScaleFactor = %v, want 1", got)
+	}
+	if got := a.uiScaleIndex(); got != 1 {
+		t.Fatalf("default uiScaleIndex = %d, want 1 (100%%)", got)
+	}
+	a.setUIScale(80)
+	if got := a.cfg.UIScaleFactor(); got != 0.8 {
+		t.Fatalf("80%% UIScaleFactor = %v, want 0.8", got)
+	}
+	a.setUIScale(110)
+	if got := a.cfg.UIScaleFactor(); got != 1.1 {
+		t.Fatalf("110%% UIScaleFactor = %v, want 1.1", got)
+	}
+	a.setUIScale(125)
+	if got := a.cfg.UIScaleFactor(); got != 1.25 {
+		t.Fatalf("125%% UIScaleFactor = %v, want 1.25", got)
+	}
+	a.setUIScale(100)
+	if a.cfg.UIScale != 0 || a.cfg.UIScaleFactor() != 1 {
+		t.Fatalf("reset to 100%%: UIScale=%d factor=%v", a.cfg.UIScale, a.cfg.UIScaleFactor())
+	}
+}

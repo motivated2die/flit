@@ -139,7 +139,7 @@ func NewWindow(title string) (*Window, error) {
 		}
 	}
 	windowByHwnd[h] = w
-	w.scale = w.dpiScale()
+	w.setDPI(w.dpiScale())
 	// Recompute the frame now that windowProc knows the window: the
 	// caption becomes client area.
 	procSetWindowPos.Call(h, 0, 0, 0, 0, 0, swpFrameChange|swpNoActivate|0x0001|0x0002|0x0004) // NOSIZE|NOMOVE|NOZORDER
@@ -174,7 +174,7 @@ func colorref(c interface{ RGBA() (r, g, b, a uint32) }) uint32 {
 func (w *Window) setIcons() {
 	metric := func(idx uintptr) int {
 		if procGetSysMetricsDpi.Find() == nil {
-			n, _, _ := procGetSysMetricsDpi.Call(idx, uintptr(w.scale*96+0.5))
+			n, _, _ := procGetSysMetricsDpi.Call(idx, uintptr(w.rawDPI()*96+0.5))
 			return int(n)
 		}
 		n, _, _ := procGetSystemMetrics.Call(idx)
@@ -240,7 +240,7 @@ func (w *Window) minimize() { procShowWindow.Call(w.hwnd, swMinimize) }
 // frameY is the thickness of the sizing frame at the window's DPI: what a
 // maximised window overhangs the screen by, and the top resize band.
 func (w *Window) frameY() int32 {
-	dpi := uintptr(w.scale*96 + 0.5)
+	dpi := uintptr(w.rawDPI()*96 + 0.5)
 	if procGetSysMetricsDpi.Find() == nil {
 		f, _, _ := procGetSysMetricsDpi.Call(smCyFrame, dpi)
 		p, _, _ := procGetSysMetricsDpi.Call(smCxPaddedBord, dpi)
@@ -365,10 +365,22 @@ func windowProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		mmi := (*struct {
 			Reserved, MaxSize, MaxPos, MinTrack, MaxTrack point
 		})(cptrUI(lp))
-		mmi.MinTrack = point{int32(720 * w.scale), int32(480 * w.scale)}
+		minW, minH := int32(720*w.scale), int32(480*w.scale)
+		mon, _, _ := procMonitorFromWindow.Call(w.hwnd, monitorDefaultToNearest)
+		mi := monitorInfo{}
+		mi.Size = uint32(unsafe.Sizeof(mi))
+		if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r != 0 {
+			if workW := mi.Work.R - mi.Work.L; workW > 0 {
+				minW = min(minW, workW)
+			}
+			if workH := mi.Work.B - mi.Work.T; workH > 0 {
+				minH = min(minH, workH)
+			}
+		}
+		mmi.MinTrack = point{minW, minH}
 		return 0
 	case wmDpiChanged:
-		w.scale = float32(wp&0xFFFF) / 96
+		w.setDPI(float32(wp&0xFFFF) / 96)
 		r := (*struct{ L, T, R, B int32 })(cptrUI(lp))
 		procSetWindowPos.Call(hwnd, 0, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoActivate|0x0004)
 		w.setIcons()

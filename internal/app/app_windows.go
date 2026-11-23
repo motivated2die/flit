@@ -145,6 +145,8 @@ type App struct {
 	focusFloat    bool              // ask notesFloat's editor for keyboard focus once
 	joinPrompt   *calendar.Meeting // upcoming calendar meeting currently shown in the notch
 	joinPrompted map[string]bool   // meeting keys already shown a join prompt
+	scaleDragOn  bool              // dragging the Settings UI scale slider
+	scaleDragIdx int               // preview stop while dragging the slider
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary
@@ -220,6 +222,7 @@ func runTray(args []string) int {
 	a.initNotch()
 	a.initWindow()
 	a.initPanel()
+	a.applyUIScale()
 	a.tray.OnNotificationClick = func() {
 		if f := a.onNotify; f != nil {
 			a.onNotify = nil

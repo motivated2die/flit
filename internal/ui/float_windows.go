@@ -93,7 +93,7 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 		f.layoutContent(c, cw, ch)
 	}
 	floatByHwnd[h] = f
-	f.scale = f.dpiScale()
+	f.setDPI(f.dpiScale())
 	procSetWindowPos.Call(h, 0, 0, 0, 0, 0, swpFrameChange|swpNoActivate|0x0001|0x0002|0x0004)
 	if procDwmSetWindowAttr.Find() == nil {
 		round := uint32(2) // DWMWCP_ROUND
@@ -232,7 +232,7 @@ func (f *FloatWindow) place(ax, ay int32, hasAnchor bool) {
 	if procGetDpiForMonitor.Find() == nil {
 		var dx, dy uint32
 		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx > 0 {
-			f.scale = float32(dx) / 96
+			f.setDPI(float32(dx) / 96)
 		}
 	}
 	mi := monitorInfo{}
@@ -369,7 +369,7 @@ func floatProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		f.limitSize(&mmi.MinTrack, &mmi.MaxTrack)
 		return 0
 	case wmDpiChanged:
-		f.scale = float32(wp&0xFFFF) / 96
+		f.setDPI(float32(wp&0xFFFF) / 96)
 		r := (*struct{ L, T, R, B int32 })(cptrUI(lp))
 		procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoActivate)
 		f.Invalidate()

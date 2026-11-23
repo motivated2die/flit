@@ -98,7 +98,7 @@ func (p *Panel) ShowAt(x, y int32) {
 			scale = float32(dx) / 96
 		}
 	}
-	p.scale = scale
+	p.setDPI(scale)
 	p.hover, p.pressed = "", ""
 	p.place(true)
 	procSetForegroundWindow.Call(p.hwnd)
@@ -116,6 +116,13 @@ func (p *Panel) Hide() {
 	if p.OnHide != nil {
 		p.OnHide()
 	}
+}
+
+// SetZoom changes the panel's UI scale multiplier and refits it if visible.
+func (p *Panel) SetZoom(z float32) {
+	p.host.SetZoom(z)
+	p.lastHeight = 0
+	p.Refresh()
 }
 
 // Refresh repaints the panel, refitting its height to the content.
@@ -201,7 +208,7 @@ func panelProc(hwnd uintptr, m uint32, wp, lp uintptr) uintptr {
 		p.Hide()
 		return 0
 	case wmDpiChanged:
-		p.scale = float32(wp&0xFFFF) / 96
+		p.setDPI(float32(wp&0xFFFF) / 96)
 		p.place(false)
 		return 0
 	}

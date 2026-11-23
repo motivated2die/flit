@@ -80,6 +80,8 @@ const (
 type Notch struct {
 	hwnd  uintptr
 	surf  *Surface
+	dpi   float32
+	zoom  float32
 	scale float32
 	work  struct{ L, T, R, B int32 }
 
@@ -234,6 +236,27 @@ func (n *Notch) CollapseNow() {
 	n.tick()
 }
 
+// SetZoom changes the notch's UI scale multiplier (e.g. 0.8, 1.0, 1.1, 1.25).
+func (n *Notch) SetZoom(z float32) {
+	if z <= 0 {
+		z = 1
+	}
+	if z == n.zoom {
+		return
+	}
+	n.zoom = z
+	if n.Visible() {
+		n.place()
+		now := time.Now()
+		lay := n.layout(now)
+		n.fromW, n.toW, n.fromH, n.toH = lay.W, lay.W, lay.H, lay.H
+		n.dirty = true
+		n.tick()
+		return
+	}
+	n.scale = 0 // re-place and reallocate surface on next Show
+}
+
 // place sizes the window for the primary screen and puts it at the top
 // centre of its work area.
 func (n *Notch) place() {
@@ -242,13 +265,19 @@ func (n *Notch) place() {
 	mi.Size = uint32(unsafe.Sizeof(mi))
 	procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi)))
 	n.work = mi.Work
-	scale := float32(1)
+	dpi := float32(1)
 	if procGetDpiForMonitor.Find() == nil {
 		var dx, dy uint32
 		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx > 0 {
-			scale = float32(dx) / 96
+			dpi = float32(dx) / 96
 		}
 	}
+	n.dpi = dpi
+	zoom := n.zoom
+	if zoom <= 0 {
+		zoom = 1
+	}
+	scale := dpi * zoom
 	if scale != n.scale || n.surf == nil {
 		n.scale = scale
 		n.surf.Free()
