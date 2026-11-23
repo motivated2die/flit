@@ -51,3 +51,41 @@ func TestRecent(t *testing.T) {
 		t.Fatalf("%d lines", n)
 	}
 }
+
+func TestInitCrashAndInfo(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, ok := CrashInfo(dir); ok {
+		t.Fatal("CrashInfo reported ok before crash.log existed")
+	}
+
+	// Empty crash.log created by InitCrash is not reported as a crash.
+	closeCrash, err := InitCrash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCrash()
+	if _, _, ok := CrashInfo(dir); ok {
+		t.Fatal("CrashInfo reported ok for empty crash.log")
+	}
+
+	// Non-empty crash.log is reported with its size.
+	if err := os.WriteFile(CrashPath(dir), []byte("panic: boom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if sz, mod, ok := CrashInfo(dir); !ok || sz != int64(len("panic: boom\n")) || mod.IsZero() {
+		t.Fatalf("CrashInfo = (%d, %v, %v), want non-empty", sz, mod, ok)
+	}
+
+	// Oversized crash.log rotates to crash.old.log.
+	if err := os.WriteFile(CrashPath(dir), make([]byte, maxSize+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closeCrash, err = InitCrash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCrash()
+	if st, err := os.Stat(filepath.Join(dir, crashOldName)); err != nil || st.Size() != maxSize+1 {
+		t.Fatalf("old crash log: %v", err)
+	}
+}

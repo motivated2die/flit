@@ -10,15 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	fileName = "debug.log"
-	oldName  = "debug.old.log"
-	maxSize  = 2 << 20
+	fileName      = "debug.log"
+	oldName       = "debug.old.log"
+	crashFileName = "crash.log"
+	crashOldName  = "crash.old.log"
+	maxSize       = 2 << 20
 )
 
 var (
@@ -93,6 +96,46 @@ func Recent(n int) []string {
 
 // Path returns the log file's path in dir.
 func Path(dir string) string { return filepath.Join(dir, fileName) }
+
+// CrashPath returns the crash log file's path in dir.
+func CrashPath(dir string) string { return filepath.Join(dir, crashFileName) }
+
+// CrashInfo reports whether a non-empty crash log exists in dir, along with
+// its size in bytes and last modification time.
+func CrashInfo(dir string) (size int64, mod time.Time, ok bool) {
+	st, err := os.Stat(CrashPath(dir))
+	if err != nil || st.Size() == 0 {
+		return 0, time.Time{}, false
+	}
+	return st.Size(), st.ModTime(), true
+}
+
+// InitCrash routes Go runtime crash output (unrecovered panics, fatal runtime
+// errors, and unhandled exceptions) to dir\crash.log, rotating to
+// crash.old.log once it exceeds maxSize. This preserves full goroutine stack
+// traces even in GUI builds where stderr is disconnected.
+// The returned function clears the crash output and closes the file.
+func InitCrash(dir string) (func(), error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return func() {}, err
+	}
+	path := CrashPath(dir)
+	if st, err := os.Stat(path); err == nil && st.Size() > maxSize {
+		_ = os.Rename(path, filepath.Join(dir, crashOldName))
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return func() {}, err
+	}
+	if err := debug.SetCrashOutput(file, debug.CrashOptions{}); err != nil {
+		_ = file.Close()
+		return func() {}, err
+	}
+	return func() {
+		_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
+		_ = file.Close()
+	}, nil
+}
 
 func hasConsole() bool {
 	st, err := os.Stderr.Stat()

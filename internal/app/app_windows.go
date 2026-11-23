@@ -165,6 +165,14 @@ func runTray(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "logging:", err)
 	}
+	if sz, mod, ok := logx.CrashInfo(dataDir); ok {
+		logx.Printf("previous crash log present: %s (%d bytes, %s)", filepath.Base(logx.CrashPath(dataDir)), sz, mod.Format("2006-01-02 15:04:05"))
+	}
+	closeCrash, err := logx.InitCrash(dataDir)
+	defer closeCrash()
+	if err != nil {
+		logx.Printf("crash logging: %v", err)
+	}
 	ui.InitDPIAwareness()
 	logx.Printf("flit %s starting %q", Version, args)
 

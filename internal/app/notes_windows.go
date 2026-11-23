@@ -128,6 +128,7 @@ func (a *App) pinNotes(s *session.Session) {
 	if a.notesFloat != nil {
 		a.notesFloat.ShowNear(ax, ay, hasAnchor)
 	}
+	logx.Printf("notes of %s pinned", s.Meta.ID)
 }
 
 // unpinNotes returns the pinned notes back into the main window on that
@@ -145,6 +146,7 @@ func (a *App) unpinNotes() {
 	a.page = pageSession + id
 	a.focusNotes = id
 	a.openWindow()
+	logx.Printf("notes of %s unpinned", id)
 }
 
 // pinnedNotesNode builds the content of the floating notes window.

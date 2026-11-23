@@ -465,6 +465,13 @@ func (a *App) debugPage() ui.Node {
 	if a.summarizing() {
 		head = append(head, ui.Caption("Summary model"), ui.Card{Gap: 2, Items: a.summaryDebug(d, value)})
 	}
+	logLinks := []ui.Node{
+		ui.Link{ID: "dbg:log", Glyph: ui.GlyphDocument, Label: "Open log file", OnClick: func() { openFile(logx.Path(a.dataDir)) }},
+	}
+	if _, _, ok := logx.CrashInfo(a.dataDir); ok {
+		logLinks = append(logLinks, ui.Link{ID: "dbg:crash", Glyph: ui.GlyphWarning, Label: "Open crash log", OnClick: func() { openFile(logx.CrashPath(a.dataDir)) }})
+	}
+	logLinks = append(logLinks, ui.Link{ID: "dbg:data", Glyph: ui.GlyphFolder, Label: "Open data folder", OnClick: func() { openFolder(a.dataDir) }})
 	return ui.VStack{Gap: 12, Items: append(head,
 		ui.Caption("Speech engine"),
 		ui.Card{Gap: 2, Items: engine},
@@ -473,10 +480,7 @@ func (a *App) debugPage() ui.Node {
 		ui.Caption("Log, latest lines"),
 		ui.Card{Gap: 8, Items: []ui.Node{
 			ui.Para{Text: logText, Muted: true, Mono: true},
-			ui.HStack{Gap: 16, Items: []ui.Node{
-				ui.Link{ID: "dbg:log", Glyph: ui.GlyphDocument, Label: "Open log file", OnClick: func() { openFile(logx.Path(a.dataDir)) }},
-				ui.Link{ID: "dbg:data", Glyph: ui.GlyphFolder, Label: "Open data folder", OnClick: func() { openFolder(a.dataDir) }},
-			}},
+			ui.HStack{Gap: 16, Items: logLinks},
 		}},
 	)}
 }
