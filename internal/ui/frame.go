@@ -146,6 +146,7 @@ func (f Frame) modal(c *Ctx, w, h float32) {
 		t := float64(c.Now.Sub(f.ModalAt)) / float64(modalFade*time.Millisecond)
 		if t < 1 {
 			c.Animating = true
+			c.AnimatingFast = true
 		}
 		e = float32(EaseOut(max(0, min(1, t))))
 	}
@@ -602,6 +603,7 @@ func (f Frame) dockGeom(c *Ctx, side, colX, pw, w, h float32) dockGeom {
 		t := float64(c.Now.Sub(f.DockAt)) / float64(dockSlide*time.Millisecond)
 		if t < 1 {
 			c.Animating = true
+			c.AnimatingFast = true
 		}
 		t = max(0, min(1, t))
 		if f.DockOut {

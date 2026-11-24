@@ -137,8 +137,11 @@ type Ctx struct {
 	anchors  []Anchor
 	clips    []RectF
 	// Animating is set by nodes that change over time (a live dot, a
-	// clock), asking the window to draw again soon.
+	// clock), asking the window to draw again soon (20 fps).
 	Animating bool
+	// AnimatingFast is set by short motion transitions (dock slide,
+	// modal fade) that should run at the monitor's native refresh rate.
+	AnimatingFast bool
 	// live are the regions that change faster than that (DrawLive).
 	live []liveArea
 	// intoView is a node's wish to be scrolled into view (its top, in
