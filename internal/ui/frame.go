@@ -88,7 +88,7 @@ const (
 	pagePad      = 32
 	pageMaxW     = 720
 	navItemH     = 38
-	scrollStep   = 56
+	scrollStep   = 72
 	scrollbarW   = 4
 	brandH       = 64
 	statusLineH  = 44
@@ -516,9 +516,9 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 	pw := min(area.W()-2*pad, c.Px(pageMaxW))
 	colX := side + float32(math.Round(float64((area.W()-pw)/2)))
 	id := FrameScrollID(f.PageID)
-	// Whole pixels: a smooth scroll passes through fractions, and text
-	// drawn between pixels would blur while it moves.
-	off := float32(math.Round(float64(c.Scroll[id])))
+	// Sub-pixel offsets while moving avoid 1 px tail stepping at high refresh
+	// rates; scroll targets round to whole pixels so resting text stays crisp.
+	off := c.Scroll[id]
 
 	// The dock floats over the page's bottom: the page keeps scrolling
 	// under it, and can scroll far enough for its end to clear the pill.

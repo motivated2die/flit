@@ -87,27 +87,36 @@ func TestHostWheelDirectVsSmooth(t *testing.T) {
 		t.Fatalf("fractional scroll = %v, want %v", got, wantFrac)
 	}
 
-	// Detented wheel notch (±120): queues smooth scroll and activates vsyncScroll.
+	// Detented wheel notch (±120): queues smooth scroll (rounded target) and activates vsyncScroll.
 	deltaNotch := int16(-120)
 	h.handle(wmMouseWheel, uintptr(uint16(deltaNotch))<<16, 0)
 	if h.vsyncMask&vsyncScroll == 0 {
 		t.Fatalf("detented wheel delta did not activate vsyncScroll")
 	}
-	if got := h.scrollTo["page:a"]; got != wantFrac+scrollStep {
-		t.Fatalf("scrollTo = %v, want %v", got, wantFrac+scrollStep)
+	wantTarget := float32(math.Round(float64(wantFrac + scrollStep)))
+	if got := h.scrollTo["page:a"]; got != wantTarget {
+		t.Fatalf("scrollTo = %v, want %v", got, wantTarget)
 	}
 
-	// Advance time past easing and verify stepScroll completes and clears vsyncScroll.
-	h.scrollTick = time.Now().Add(-500 * time.Millisecond)
-	for i := 0; i < 20 && h.vsyncMask&vsyncScroll != 0; i++ {
-		h.scrollTick = time.Now().Add(-100 * time.Millisecond)
+	// Step spring at 144 Hz (~7 ms): must approach monotonically with zero overshoot and settle cleanly.
+	prev := h.scroll["page:a"]
+	for i := 0; i < 120 && h.vsyncMask&vsyncScroll != 0; i++ {
+		h.scrollTick = time.Now().Add(-7 * time.Millisecond)
 		h.stepScroll()
+		cur := h.scroll["page:a"]
+		if cur < prev-1e-3 || cur > wantTarget+1e-3 {
+			t.Fatalf("step %d: spring out of bounds: prev=%v cur=%v target=%v", i, prev, cur, wantTarget)
+		}
+		prev = cur
 	}
 	if h.vsyncMask&vsyncScroll != 0 {
-		t.Fatalf("vsyncScroll still active after easing completed")
+		t.Fatalf("vsyncScroll still active after spring settled")
 	}
-	if got := h.scroll["page:a"]; got != wantFrac+scrollStep {
-		t.Fatalf("final scroll = %v, want %v", got, wantFrac+scrollStep)
+	if got := h.scroll["page:a"]; got != wantTarget {
+		t.Fatalf("final scroll = %v, want %v", got, wantTarget)
+	}
+	if vel := h.scrollVel["page:a"]; vel != 0 {
+		t.Fatalf("residual scrollVel = %v, want 0", vel)
 	}
 }
 

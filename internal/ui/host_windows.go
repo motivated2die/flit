@@ -29,9 +29,10 @@ type host struct {
 
 	hover, pressed string
 	scroll         map[string]float32
-	// Smooth scrolling: where each moving scroll area is headed, and when
-	// the last step was.
+	// Smooth scrolling: critically-damped spring target and velocity per
+	// moving scroll area, and when the last step ran.
 	scrollTo   map[string]float32
+	scrollVel  map[string]float32
 	scrollTick time.Time
 	// drag is the target being dragged (its OnDrag follows the pointer).
 	drag          string
@@ -98,16 +99,17 @@ const (
 	srcCopy         = 0x00CC0020
 	timerAnimate    = 2
 	selEdge         = 28 // px (logical) from the view's edge where selecting scrolls
-	// scrollEase is the smooth scroll's time constant: each wheel step
-	// is mostly done after 2–3 of these.
-	scrollEase    = 50 * time.Millisecond
-	vkEscape      = 0x1B
-	vkControl     = 0x11
-	vkShift       = 0x10
-	vkMenu        = 0x12 // Alt
-	smCxDoubleClk = 36
-	smCyDoubleClk = 37
-	idcIBeam      = 32513
+	// scrollSpringOmega is the angular frequency (rad/s) of the critically-damped
+	// smooth-scroll spring: smooth ramp-up, velocity-preserving retargeting on
+	// rapid wheel turns, zero overshoot, and a crisp settle (~190 ms).
+	scrollSpringOmega = 26.0
+	vkEscape          = 0x1B
+	vkControl         = 0x11
+	vkShift           = 0x10
+	vkMenu            = 0x12 // Alt
+	smCxDoubleClk     = 36
+	smCyDoubleClk     = 37
+	idcIBeam          = 32513
 )
 
 var (
@@ -219,6 +221,7 @@ func (h *host) paint() {
 	c.ScrollTo = h.scrollSmoothly
 	c.SetScroll = func(id string, to float32) {
 		delete(h.scrollTo, id)
+		delete(h.scrollVel, id)
 		if len(h.scrollTo) == 0 {
 			h.setVsync(vsyncScroll, false)
 		}
@@ -386,6 +389,7 @@ func (h *host) stopTimers() {
 	h.vsyncMask = 0
 	h.vsync.stopPacer()
 	clear(h.scrollTo)
+	clear(h.scrollVel)
 }
 
 // paintLive repaints the live regions of the last layout. On a hardware
@@ -646,6 +650,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 					// without adding easing lag.
 					to := max(0, min(a.Max, h.scroll[a.ID]-delta/120*scrollStep*h.scale))
 					delete(h.scrollTo, a.ID)
+					delete(h.scrollVel, a.ID)
 					if len(h.scrollTo) == 0 {
 						h.setVsync(vsyncScroll, false)
 					}
@@ -839,6 +844,7 @@ func (h *host) scrollWhileSelecting() bool {
 	if to != h.scroll[a.ID] {
 		h.scroll[a.ID] = to
 		delete(h.scrollTo, a.ID)
+		delete(h.scrollVel, a.ID)
 		if len(h.scrollTo) == 0 {
 			h.setVsync(vsyncScroll, false)
 		}
@@ -1030,10 +1036,21 @@ func (h *host) changed() {
 	}
 }
 
-// scrollSmoothly moves scroll area id to offset to over a few VSync frames.
+// scrollSmoothly moves scroll area id to offset to using a critically-damped
+// spring (velocity-preserving across rapid wheel turns, landing on a whole
+// pixel so resting text stays crisp).
 func (h *host) scrollSmoothly(id string, to float32) {
 	if h.scrollTo == nil {
 		h.scrollTo = map[string]float32{}
+	}
+	if h.scrollVel == nil {
+		h.scrollVel = map[string]float32{}
+	}
+	to = float32(math.Round(float64(to)))
+	if h.last != nil {
+		if a, ok := h.last.ScrollArea(id); ok {
+			to = max(0, min(a.Max, to))
+		}
 	}
 	if len(h.scrollTo) == 0 {
 		h.scrollTick = time.Now()
@@ -1042,8 +1059,8 @@ func (h *host) scrollSmoothly(id string, to float32) {
 	h.scrollTo[id] = to
 }
 
-// stepScroll eases each moving scroll area towards its target and reports
-// whether any scroll offset changed.
+// stepScroll advances each moving scroll area along its analytical
+// critically-damped spring and reports whether any scroll offset changed.
 func (h *host) stepScroll() bool {
 	if len(h.scrollTo) == 0 {
 		h.setVsync(vsyncScroll, false)
@@ -1058,19 +1075,31 @@ func (h *host) stepScroll() bool {
 	if dt > 100*time.Millisecond {
 		dt = 100 * time.Millisecond
 	}
-	k := float32(1 - math.Exp(-float64(dt)/float64(scrollEase)))
+	dtSec := dt.Seconds()
+	const w = scrollSpringOmega
+	e := math.Exp(-w * dtSec)
 	changed := false
 	for id, to := range h.scrollTo {
+		maxS := float32(math.MaxFloat32)
 		if h.last != nil {
 			if a, ok := h.last.ScrollArea(id); ok {
-				to = min(to, a.Max) // the page got shorter meanwhile
+				maxS = a.Max
+				to = min(to, maxS) // the page got shorter meanwhile
 			}
 		}
 		prev := h.scroll[id]
-		cur := prev + (to-prev)*k
-		if math.Abs(float64(to-cur)) < 0.5 {
+		x0 := float64(prev - to)
+		v0 := float64(h.scrollVel[id])
+		c2 := v0 + w*x0
+		x := (x0 + c2*dtSec) * e
+		v := (c2 - w*(x0+c2*dtSec)) * e
+		cur := max(0, min(maxS, to+float32(x)))
+		if math.Abs(x) < 0.5 && math.Abs(v) < 25 {
 			cur = to
 			delete(h.scrollTo, id)
+			delete(h.scrollVel, id)
+		} else {
+			h.scrollVel[id] = float32(v)
 		}
 		if cur != prev {
 			h.scroll[id] = cur
