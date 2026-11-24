@@ -15,8 +15,10 @@ type notchFrame struct {
 	width  float32 // the capsule's current width (animating to layout.W)
 	height float32 // its current height (animating between collapsed and open)
 	// collapsed draws the small capsule's cue instead of the content;
+	// hidden means the collapsed state is fully hidden (zero height) until hovered.
 	// hoverProgress (0..1) is how far resting the pointer on it has come.
 	collapsed     bool
+	hidden        bool
 	hover         bool
 	hoverProgress float64
 	content       float32 // content opacity while resizing
@@ -73,8 +75,15 @@ func renderNotch(s *Surface, f notchFrame) error {
 		// edge brightens, so the expansion is seen coming.
 		hp := float32(EaseOut(f.hoverProgress))
 		grow := hp * 5 * f.scale
-		ox, w, h = ox-grow, w+2*grow, h+hp*3*f.scale
+		dh := hp * 3 * f.scale
+		if f.hidden {
+			dh = hp * 5 * f.scale
+		}
+		ox, w, h = ox-grow, w+2*grow, h+dh
 		edge = RGBA(ColText, 0.15+0.45*hp)
+	}
+	if h <= 0.5 {
+		return p.End()
 	}
 	// The blob hangs from the top edge (clamped to y <= 0 so a downward bounce
 	// keeps the flares anchored to the top of the screen) with concave flares
@@ -105,7 +114,9 @@ func renderNotch(s *Surface, f notchFrame) error {
 		return p.End()
 	}
 	if f.collapsed || f.view.Mode == NotchStashed {
-		f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
+		if !f.hidden {
+			f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
+		}
 		return p.End()
 	}
 	// Content keeps its final layout and is centred in the capsule while
@@ -153,7 +164,11 @@ func renderNotch(s *Surface, f notchFrame) error {
 			rc = RectF{rc.L + 1, rc.T + 1, rc.R - 1, rc.B - 1}
 		}
 		p.RoundRect(rc, rc.H()/2, fade(fill))
-		p.Text(f.layout.Labels[i], rc, scaled(notchButtonFont), fade(text))
+		if i < len(f.layout.Glyphs) && f.layout.Glyphs[i] != "" && f.layout.Labels[i] == "" {
+			DrawIcon(p, f.layout.Glyphs[i], rc, 14*f.scale, fade(text))
+		} else {
+			p.Text(f.layout.Labels[i], rc, scaled(notchButtonFont), fade(text))
+		}
 	}
 	return p.End()
 }

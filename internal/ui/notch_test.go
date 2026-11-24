@@ -219,3 +219,41 @@ func TestStashedAndDropLayouts(t *testing.T) {
 		t.Fatalf("stashed recording layout: %+v", stashedRec)
 	}
 }
+
+func TestRecordingChevronAndHideCollapsed(t *testing.T) {
+	now := time.Now()
+	v := NotchView{
+		Mode:          NotchRecording,
+		Title:         "Recording",
+		Since:         now.Add(-5 * time.Second),
+		Collapsible:   true,
+		HideCollapsed: true,
+		Buttons: []NotchButton{
+			{ID: "notes", Label: "Notes"},
+			{ID: "stop", Label: "Stop"},
+			{ID: "notch-hide", Glyph: GlyphUp},
+		},
+	}
+	l := Layout(v, 1, now, fixedMeasure)
+	if len(l.Buttons) != 3 || l.IDs[2] != "notch-hide" || l.Glyphs[2] != GlyphUp {
+		t.Fatalf("buttons=%v glyphs=%v", l.IDs, l.Glyphs)
+	}
+	btn := l.Buttons[2]
+	if btn.W() != notchButtonH || btn.H() != notchButtonH {
+		t.Fatalf("icon button should be square (%vx%v), got %vx%v", notchButtonH, notchButtonH, btn.W(), btn.H())
+	}
+	if hit := l.HitButton((btn.L+btn.R)/2, (btn.T+btn.B)/2); hit != "notch-hide" {
+		t.Fatalf("hit %q, want notch-hide", hit)
+	}
+
+	// HideCollapsed collapses height to 0 (fully hidden), unless notes are stashed.
+	hidden := CollapsedLayoutFor(v, 1, fixedMeasure)
+	if hidden.H != 0 {
+		t.Fatalf("HideCollapsed height = %v, want 0", hidden.H)
+	}
+	v.StashedNotes = true
+	stashed := CollapsedLayoutFor(v, 1, fixedMeasure)
+	if stashed.H != notchStashedH {
+		t.Fatalf("StashedNotes should keep grab handle height %v, got %v", notchStashedH, stashed.H)
+	}
+}

@@ -28,10 +28,11 @@ const (
 	NotchStashed             // floating notes are stashed in the notch (idle)
 )
 
-// NotchButton is a clickable pill.
+// NotchButton is a clickable pill (or circular icon button when Label is empty).
 type NotchButton struct {
 	ID      string
 	Label   string
+	Glyph   string
 	Primary bool
 }
 
@@ -52,8 +53,11 @@ type NotchView struct {
 	// Collapsible views shrink to a small capsule when left alone (see
 	// Collapser). HoverDelay is how long the pointer must rest on the
 	// collapsed capsule before it expands (0 = expand immediately).
-	Collapsible bool
-	HoverDelay  time.Duration
+	// HideCollapsed hides the collapsed capsule completely until the pointer
+	// rests at the top-centre edge of the screen for HoverDelay.
+	Collapsible   bool
+	HoverDelay    time.Duration
+	HideCollapsed bool
 	// StashedNotes marks that the floating notes window is stashed in the
 	// notch: the collapsed capsule stays taller with a grab handle and
 	// accepts clicks/drags to unstash instead of letting clicks through.
@@ -113,6 +117,7 @@ type NotchLayout struct {
 	IDs     []string
 	Primary []bool
 	Labels  []string
+	Glyphs  []string
 	// Link is the title and detail when they are a link (TitleID).
 	Link   RectF
 	LinkID string
@@ -177,11 +182,15 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 		} else {
 			x += px(notchButtonGap)
 		}
-		w := measure(b.Label, scaled(notchButtonFont)) + 2*px(notchButtonPad)
+		w := bh
+		if b.Label != "" || b.Glyph == "" {
+			w = measure(b.Label, scaled(notchButtonFont)) + 2*px(notchButtonPad)
+		}
 		l.Buttons = append(l.Buttons, RectF{x, (h - bh) / 2, x + w, (h + bh) / 2})
 		l.IDs = append(l.IDs, b.ID)
 		l.Primary = append(l.Primary, b.Primary)
 		l.Labels = append(l.Labels, b.Label)
+		l.Glyphs = append(l.Glyphs, b.Glyph)
 		x += w
 	}
 	if v.TitleID != "" && v.Title != "" {
@@ -380,6 +389,10 @@ func CollapsedLayoutFor(v NotchView, scale float32, measure Measurer) NotchLayou
 		return StashedLayout(v.Mode == NotchRecording, scale)
 	}
 	l := CollapsedLayout(scale)
+	if v.HideCollapsed {
+		l.H = 0
+		return l
+	}
 	if v.Mode != NotchReady {
 		return l
 	}

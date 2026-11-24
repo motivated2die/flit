@@ -131,22 +131,23 @@ type App struct {
 	// notes are the recordings' notes being edited (notes_windows.go);
 	// focusNotes asks the next layout to give that recording's editor the
 	// keyboard.
-	notes         map[string]*notesState
-	summaries     map[string]*notesState // nil entry: none written
-	sumRun        *summaryRun            // the summary being written
-	sumErr        map[string]string      // why a recording's last summary failed
-	sumInstr      map[string]string      // the extra instruction typed, per recording
-	focusNotes    string
-	focusTitle    string            // the same for a recording's title field
-	pinnedNotes   string            // session ID shown in notesFloat ("" when not pinned)
-	stashedNotes  string            // session ID stashed in the notch ("" when not stashed)
-	stashDragging bool              // notesFloat is currently being dragged
-	stashReady    bool              // dragged notesFloat is close enough to the notch to stash
-	focusFloat    bool              // ask notesFloat's editor for keyboard focus once
-	joinPrompt    *calendar.Meeting // upcoming calendar meeting currently shown in the notch
-	joinPrompted  map[string]bool   // meeting keys already shown a join prompt
-	scaleDragOn   bool              // dragging the Settings UI scale slider
-	scaleDragIdx  int               // preview stop while dragging the slider
+	notes              map[string]*notesState
+	summaries          map[string]*notesState // nil entry: none written
+	sumRun             *summaryRun            // the summary being written
+	sumErr             map[string]string      // why a recording's last summary failed
+	sumInstr           map[string]string      // the extra instruction typed, per recording
+	focusNotes         string
+	focusTitle         string            // the same for a recording's title field
+	pinnedNotes        string            // session ID shown in notesFloat ("" when not pinned)
+	stashedNotes       string            // session ID stashed in the notch ("" when not stashed)
+	stashDragging      bool              // notesFloat is currently being dragged
+	stashReady         bool              // dragged notesFloat is close enough to the notch to stash
+	focusFloat         bool              // ask notesFloat's editor for keyboard focus once
+	joinPrompt         *calendar.Meeting // upcoming calendar meeting currently shown in the notch
+	joinPrompted       map[string]bool   // meeting keys already shown a join prompt
+	hideRecordingNotch bool              // user hid the recording notch's collapsed capsule
+	scaleDragOn        bool              // dragging the Settings UI scale slider
+	scaleDragIdx       int               // preview stop while dragging the slider
 	// speakerCache holds each session's speakers (read from its transcript)
 	// until it changes.
 	speakerCache map[string][]transcript.SpeakerSummary

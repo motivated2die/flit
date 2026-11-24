@@ -56,6 +56,27 @@ func TestNotchJoinPromptState(t *testing.T) {
 	}
 }
 
+func TestRecordingNotchHideToggle(t *testing.T) {
+	a := &App{dataDir: t.TempDir(), rec: &recording{started: time.Now()}}
+	if a.hideRecordingNotch {
+		t.Fatal("hideRecordingNotch should default to false")
+	}
+	a.onNotchButton("notch-hide")
+	if !a.hideRecordingNotch {
+		t.Fatal("first notch-hide click should enable HideCollapsed")
+	}
+	a.onNotchButton("notch-hide")
+	if a.hideRecordingNotch {
+		t.Fatal("second notch-hide click should restore the collapsed capsule")
+	}
+	a.onNotchButton("notch-hide")
+	a.rec = nil
+	a.syncNotchState(false)
+	if a.hideRecordingNotch {
+		t.Fatal("syncNotchState without an active recording should reset hideRecordingNotch")
+	}
+}
+
 func TestMeetingRowIconsAndStatus(t *testing.T) {
 	a := &App{dataDir: t.TempDir()}
 	s, err := session.Create(a.dataDir, session.Meta{Title: "Sync", Started: time.Now(), State: session.Transcribing})
