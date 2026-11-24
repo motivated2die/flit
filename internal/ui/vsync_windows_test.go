@@ -279,8 +279,11 @@ func TestThemeRippleGeometryAndGPUComposite(t *testing.T) {
 		t.Fatalf("expected vsyncRipple active during transition")
 	}
 
-	// Mid-transition frame: fast GPU composite path.
+	// Mid-transition frame: fast GPU composite path; paintLive and timerAnimate must be no-ops.
+	w.vsyncMask |= vsyncLive
 	w.ripple.start = time.Now().Add(-themeRippleDur / 2)
+	w.paintLive()
+	w.handle(wmTimer, timerAnimate, 0)
 	if !w.paintRippleFrame(cw, ch) {
 		t.Fatalf("expected mid-transition paintRippleFrame to return true")
 	}

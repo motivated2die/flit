@@ -222,6 +222,15 @@ func (w *Window) RefreshTheme() {
 	if w.ripple.armed() {
 		w.ripple.newBorder = ColEdge
 		w.ripple.hasBorder = true
+		wantDark := uint32(1)
+		if IsLight() {
+			wantDark = 0
+		}
+		w.ripple.onMid = func() {
+			if procDwmSetWindowAttr.Find() == nil {
+				procDwmSetWindowAttr.Call(w.hwnd, dwmwaDarkMode, uintptr(unsafe.Pointer(&wantDark)), 4)
+			}
+		}
 		w.ripple.onDone = func() { darkFrame(w.hwnd, ColSidebar) }
 	} else {
 		darkFrame(w.hwnd, ColSidebar)

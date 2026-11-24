@@ -24,6 +24,8 @@ type themeRipple struct {
 	oldBorder color.RGBA
 	newBorder color.RGBA
 	hasBorder bool
+	midDone   bool
+	onMid     func()
 	onDone    func()
 }
 
@@ -41,6 +43,8 @@ func (r *themeRipple) free() {
 	}
 	r.w, r.h = 0, 0
 	r.hasBorder = false
+	r.midDone = false
+	r.onMid = nil
 	r.onDone = nil
 }
 
@@ -126,6 +130,12 @@ func (h *host) paintRippleFrame(cw, ch int32) bool {
 		return false
 	}
 	e := easeOutCubic(t)
+	if e >= 0.45 && !h.ripple.midDone {
+		h.ripple.midDone = true
+		if h.ripple.onMid != nil {
+			h.ripple.onMid()
+		}
+	}
 	if h.ripple.hasBorder {
 		setDWMBorderColor(h.hwnd, lerpColorref(h.ripple.oldBorder, h.ripple.newBorder, e))
 	}

@@ -359,7 +359,7 @@ func (h *host) onVsync() {
 			needsPaint = true
 		}
 	}
-	if h.vsyncMask&vsyncRipple != 0 {
+	if h.vsyncMask&vsyncRipple != 0 || h.ripple.armed() {
 		h.Invalidate()
 		needsPaint = true
 	}
@@ -397,6 +397,9 @@ func (h *host) stopTimers() {
 // (no Build(), no Layout(), no disk/text work); on the software fallback, only
 // the live regions are redrawn into h.surf via pixelCanvas.
 func (h *host) paintLive() {
+	if h.ripple.armed() || h.ripple.ready() {
+		return
+	}
 	c := h.last
 	if c == nil || len(c.live) == 0 || !h.Visible() {
 		h.setLive(false)
@@ -503,7 +506,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		h.Invalidate()
 		return 0, true
 	case wmTimer:
-		if wp == timerAnimate {
+		if wp == timerAnimate && !h.ripple.armed() && !h.ripple.ready() {
 			h.Invalidate()
 		}
 		return 0, true
