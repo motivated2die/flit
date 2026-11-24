@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -129,5 +130,61 @@ func TestFrameTransitionsRequestFastAnimating(t *testing.T) {
 	f.Layout(done, 960, 660)
 	if done.AnimatingFast {
 		t.Fatalf("after transitions AnimatingFast=true, want false")
+	}
+}
+
+func TestHwndTargetPaintResizeFree(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	w, err := NewWindow("flit hwnd target test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+
+	w.Build = func() Frame {
+		return Frame{
+			Nav:      []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}},
+			Selected: "home",
+			PageID:   "home",
+			Page: VStack{Gap: 8, Items: []Node{
+				Title("Hardware Direct2D"),
+				Para{Text: "Rendered through ID2D1HwndRenderTarget."},
+				Button{ID: "btn", Label: "Click", Glyph: GlyphRecord, Primary: true},
+			}},
+			Dock:   Space(36),
+			DockID: "dock:test",
+		}
+	}
+
+	// First paint creates the hardware HwndRenderTarget (no software Surface).
+	w.paint()
+	if !w.hw.ready() {
+		t.Fatalf("expected HwndTarget to be active after paint")
+	}
+	if w.surf != nil {
+		t.Fatalf("expected no software Surface fallback when HwndTarget succeeds")
+	}
+	w1, h1 := w.hw.w, w.hw.h
+
+	// Resize the window and repaint: target should resize in place.
+	procSetWindowPos.Call(w.hwnd, 0, 0, 0, 1200, 800, swpNoActivate|swpNoMove|swpNoZOrder)
+	w.paint()
+	if !w.hw.ready() {
+		t.Fatalf("HwndTarget not ready after resize")
+	}
+	if w.hw.w == w1 && w.hw.h == h1 {
+		t.Fatalf("HwndTarget did not resize: still %dx%d", w.hw.w, w.hw.h)
+	}
+
+	// Simulate device loss / Free and verify clean recreation on next paint.
+	w.hw.Free()
+	if w.hw.ready() {
+		t.Fatalf("HwndTarget still ready after Free")
+	}
+	w.paint()
+	if !w.hw.ready() {
+		t.Fatalf("HwndTarget did not recreate after Free")
 	}
 }

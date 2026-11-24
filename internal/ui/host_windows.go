@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -9,15 +10,17 @@ import (
 )
 
 // host is what flit's drawn windows share (the main window, the tray
-// panel): a double-buffered Direct2D surface for the client area, a layout
-// pass per paint, hover and press tracking, clicks, wheel scrolling, and a
-// timer that repaints while something live is on screen.
+// panel, the floating notes window): a hardware-accelerated Direct2D
+// HwndRenderTarget (with automatic software fallback), a layout pass per
+// paint, hover and press tracking, clicks, VSync-paced wheel scrolling,
+// and timers/VSync for live regions and animations.
 type host struct {
 	hwnd    uintptr
-	surf    *Surface
-	dpi     float32 // OS monitor DPI scale (1 = 96 DPI)
-	zoom    float32 // user UI scale multiplier (0 or 1 = 100%)
-	scale   float32 // effective scale = dpi * zoom
+	hw      HwndTarget
+	surf    *Surface // fallback software surface if HwndTarget is unavailable
+	dpi     float32  // OS monitor DPI scale (1 = 96 DPI)
+	zoom    float32  // user UI scale multiplier (0 or 1 = 100%)
+	scale   float32  // effective scale = dpi * zoom
 	metrics Metrics
 	bg      ColorF
 	bgBrush uintptr // dark GDI brush for WM_ERASEBKGND before first paint
@@ -203,15 +206,6 @@ func (h *host) paint() {
 	if cw <= 0 || ch <= 0 || h.layout == nil {
 		return
 	}
-	if h.surf == nil || h.surf.W != cw || h.surf.H != ch {
-		h.surf.Free()
-		s, err := NewSurface(cw, ch)
-		if err != nil {
-			h.surf = nil
-			return
-		}
-		h.surf = s
-	}
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
 	c.ScrollTo = h.scrollSmoothly
 	c.SetScroll = func(id string, to float32) {
@@ -257,15 +251,43 @@ func (h *host) paint() {
 	if h.edit != nil && c.committer(h.edit.ID) == nil {
 		h.edit = nil // the field went away (another page)
 	}
-	p, err := BeginWith(h.surf, h.bg)
-	if err != nil {
+	p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
+	switch {
+	case err == nil:
+		c.Paint(p)
+		err = p.End()
+		if errors.Is(err, ErrRecreateTarget) {
+			h.hw.Free()
+			h.Invalidate()
+			return
+		}
+		if err != nil {
+			return
+		}
+	case errors.Is(err, ErrRecreateTarget):
+		h.Invalidate()
 		return
+	default:
+		// Hardware target unavailable: fall back to software Surface + BitBlt.
+		if h.surf == nil || h.surf.W != cw || h.surf.H != ch {
+			h.surf.Free()
+			s, serr := NewSurface(cw, ch)
+			if serr != nil {
+				h.surf = nil
+				return
+			}
+			h.surf = s
+		}
+		p, serr := BeginWith(h.surf, h.bg)
+		if serr != nil {
+			return
+		}
+		c.Paint(p)
+		if p.End() != nil {
+			return
+		}
+		procBitBlt.Call(hdc, 0, 0, uintptr(cw), uintptr(ch), h.surf.dc, 0, 0, srcCopy)
 	}
-	c.Paint(p)
-	if p.End() != nil {
-		return
-	}
-	procBitBlt.Call(hdc, 0, 0, uintptr(cw), uintptr(ch), h.surf.dc, 0, 0, srcCopy)
 	h.last = c
 	h.setVsync(vsyncAnimate, c.AnimatingFast)
 	h.setTicking(c.Animating && !c.AnimatingFast)
@@ -339,17 +361,26 @@ func (h *host) stopTimers() {
 	clear(h.scrollTo)
 }
 
-// paintLive repaints only the live regions of the last layout, onto the
-// kept surface (from Go, pixelCanvas) and straight to the window: no
-// layout, no Direct2D pass, no full repaint.
+// paintLive repaints the live regions of the last layout. On a hardware
+// HwndTarget, a full GPU paint is triggered directly; on the software
+// fallback, only the live regions are redrawn into h.surf via pixelCanvas.
 func (h *host) paintLive() {
 	c := h.last
-	if c == nil || len(c.live) == 0 || h.surf == nil || !h.Visible() {
+	if c == nil || len(c.live) == 0 || !h.Visible() {
 		h.setLive(false)
 		return
 	}
 	if ic, _, _ := procIsIconic.Call(h.hwnd); ic != 0 {
 		return // minimised: nothing to see
+	}
+	if h.hw.ready() {
+		h.Invalidate()
+		procUpdateWindow.Call(h.hwnd)
+		return
+	}
+	if h.surf == nil {
+		h.setLive(false)
+		return
 	}
 	if cw, ch := h.clientSize(); cw != h.surf.W || ch != h.surf.H {
 		h.Invalidate() // resized: a full paint comes
@@ -406,9 +437,12 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		return 0, true
 	case wmDestroy:
 		h.stopTimers()
+		h.hw.Free()
+		h.surf.Free()
+		h.surf = nil
 		return 0, false
 	case wmEraseBkgnd:
-		if h.surf == nil && h.bgBrush != 0 && wp != 0 {
+		if !h.hw.ready() && h.surf == nil && h.bgBrush != 0 && wp != 0 {
 			var rc winRect
 			procGetClientRect.Call(h.hwnd, uintptr(unsafe.Pointer(&rc)))
 			procFillRect.Call(wp, uintptr(unsafe.Pointer(&rc)), h.bgBrush)
