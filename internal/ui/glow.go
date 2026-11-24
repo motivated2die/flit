@@ -42,9 +42,10 @@ func (c *Ctx) Glow(cx, cy float32, g glowSpec, k color.RGBA, opacity float32) {
 
 const rippleTexSize = 160
 
-// SoftRipple draws a soft-edged, feathered circular wave of colour k centred
+// SoftRipple draws a soft-edged, feathered circular area of colour k centred
 // at (cx, cy) with radius r (device pixels) at opacity. One canonical texture
-// is cached on the GPU and scaled smoothly per frame with linear filtering.
+// is cached on the GPU and scaled smoothly per frame with linear filtering so
+// the expanding disc dissipates uniformly as a whole.
 func (c *Ctx) SoftRipple(cx, cy, r float32, k color.RGBA, opacity float32) {
 	if r <= 0 || opacity <= 0 {
 		return
@@ -53,23 +54,20 @@ func (c *Ctx) SoftRipple(cx, cy, r float32, k color.RGBA, opacity float32) {
 	dst := RectF{cx - r, cy - r, cx + r, cy + r}
 	c.Draw(func(cv Canvas) {
 		cv.ScaledBitmap(key, dst, rippleTexSize, rippleTexSize, opacity, func() []byte {
-			return rippleRingPixels(rippleTexSize, k)
+			return rippleDiscPixels(rippleTexSize, k)
 		})
 	})
 }
 
-// rippleRingPixels renders a size×size premultiplied BGRA soft-edged ring of
-// colour k: a Gaussian-feathered wave crest around u=0.72 that reaches exact
-// zero at u=1.0 (no hard edge) with a faint inner trailing wash, dithered.
-func rippleRingPixels(size int, k color.RGBA) []byte {
+// rippleDiscPixels renders a size×size premultiplied BGRA filled circular disc
+// of colour k: uniform inside innerR, then smoothly feathered with smoothstep
+// to exact zero at u=1.0 so there is no hard edge, dithered against banding.
+func rippleDiscPixels(size int, k color.RGBA) []byte {
 	pix := make([]byte, 4*size*size)
 	half := float64(size) / 2
 	const (
-		peakR    = 0.72
-		sigma    = 0.14
-		peakA    = 0.42
-		washA    = 0.12
-		edgeFade = 0.08
+		innerR = 0.62
+		fillA  = 0.30
 	)
 	for y := range size {
 		for x := range size {
@@ -78,22 +76,11 @@ func rippleRingPixels(size int, k color.RGBA) []byte {
 			if u >= 1 {
 				continue
 			}
-			// Gaussian wave crest centred at peakR.
-			d := (u - peakR) / sigma
-			ring := peakA * math.Exp(-0.5*d*d)
-			// Soft inner wash trailing behind the crest.
-			wash := 0.0
-			if u < peakR {
-				w := u / peakR
-				wash = washA * w * w
+			a := fillA
+			if u > innerR {
+				t := (1 - u) / (1 - innerR)
+				a = fillA * t * t * (3 - 2*t) // smoothstep fade to 0 at u=1
 			}
-			// Smoothly force alpha to exact 0 at u=1 so the outer boundary never clips hard.
-			outer := 1.0
-			if u > 1-edgeFade {
-				t := (1 - u) / edgeFade
-				outer = t * t * (3 - 2*t)
-			}
-			a := (ring + wash) * outer
 			alpha := math.Round(a*255 + dither(x, y) - 0.5)
 			if alpha <= 0 {
 				continue

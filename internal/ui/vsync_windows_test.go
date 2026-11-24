@@ -289,18 +289,18 @@ func TestThemeRippleGeometryAndGPUComposite(t *testing.T) {
 	}
 }
 
-func TestLiveDotRippleAndSoftRingPixels(t *testing.T) {
-	// Outer corners of the soft ring texture must be fully transparent (no hard box edge).
-	pix := rippleRingPixels(rippleTexSize, ColLive)
+func TestLiveDotRippleAndSoftDiscPixels(t *testing.T) {
+	// Outer corners of the soft disc texture must be fully transparent (no hard box edge).
+	pix := rippleDiscPixels(rippleTexSize, ColLive)
 	if pix[3] != 0 {
 		t.Fatalf("top-left corner alpha = %d, want 0", pix[3])
 	}
-	// A pixel near the ring crest (u ≈ 0.72) should have non-zero alpha.
+	// Centre and mid-disc pixels should have uniform non-zero fill, feathering down toward the edge.
 	cx := rippleTexSize / 2
-	crestX := cx + int(float64(cx)*0.72)
-	crestAlpha := pix[4*(cx*rippleTexSize+crestX)+3]
-	if crestAlpha == 0 {
-		t.Fatalf("crest alpha = 0, want > 0")
+	centerAlpha := pix[4*(cx*rippleTexSize+cx)+3]
+	edgeAlpha := pix[4*(cx*rippleTexSize+cx+int(float64(cx)*0.9))+3]
+	if centerAlpha == 0 || edgeAlpha >= centerAlpha {
+		t.Fatalf("expected filled centre (%d) feathering down near edge (%d)", centerAlpha, edgeAlpha)
 	}
 
 	now := time.Now()
