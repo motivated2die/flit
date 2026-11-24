@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -67,6 +68,7 @@ const (
 
 var floatByHwnd = map[uintptr]*FloatWindow{}
 var floatClassDone bool
+var floatBgBrush uintptr
 
 // NewFloatWindow creates the (hidden) always-on-top floating window.
 func NewFloatWindow(title string) (*FloatWindow, error) {
@@ -76,7 +78,8 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	}
 	if !floatClassDone {
 		cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(floatProc), Instance: moduleHandle(), ClassName: u16(floatClass), Cursor: cursor}
+		floatBgBrush = darkBrush(ColCard)
+		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(floatProc), Instance: moduleHandle(), ClassName: u16(floatClass), Cursor: cursor, Background: floatBgBrush}
 		wc.Size = uint32(unsafe.Sizeof(wc))
 		if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
 			return nil, fmt.Errorf("registering the float class: %w", err)
@@ -88,7 +91,7 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	if h == 0 {
 		return nil, fmt.Errorf("creating the float window: %w", err)
 	}
-	f := &FloatWindow{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColCard)}}
+	f := &FloatWindow{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColCard), bgBrush: floatBgBrush}}
 	f.layout = func(c *Ctx, cw, ch float32) {
 		f.layoutContent(c, cw, ch)
 	}
@@ -151,18 +154,45 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 	}
 }
 
-// ShowNear brings the floating window up on top of other windows. The first
-// time it opens, it positions itself near (ax, ay) (or the right side of the
-// primary work area when hasAnchor is false); subsequent opens remember the
-// user's last position and size.
+// ShowNear brings the floating window up on top of other windows with a
+// subtle fade-in and enlarge (94% → 100% over ~150 ms). The first time it
+// opens, it positions itself near (ax, ay) (or the right side of the primary
+// work area when hasAnchor is false); subsequent opens remember the user's
+// last position and size.
 func (f *FloatWindow) ShowNear(ax, ay int32, hasAnchor bool) {
 	if !f.placed {
 		f.place(ax, ay, hasAnchor)
 		f.placed = true
 	}
-	procSetWindowPos.Call(f.hwnd, hwndTopmost, 0, 0, 0, 0, swpShowWindow|0x0001|0x0002) // NOSIZE|NOMOVE
+	wasHidden := !f.Visible() || (f.trans.active && f.trans.fadeOut)
+	if wasHidden {
+		f.cancelTransition()
+		var target winRect
+		hasRect := false
+		if ret, _, _ := procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&target))); ret != 0 && target.R > target.L && target.B > target.T {
+			hasRect = true
+		}
+		f.beginFadeIn(150*time.Millisecond, 0.94, target, hasRect)
+	} else {
+		f.cancelTransition()
+	}
+	procSetWindowPos.Call(f.hwnd, hwndTopmost, 0, 0, 0, 0, swpShowWindow|swpNoSize|swpNoMove)
 	procSetForegroundWindow.Call(f.hwnd)
 	f.Invalidate()
+	if wasHidden {
+		procUpdateWindow.Call(f.hwnd)
+		f.startTransitionTimer()
+	}
+}
+
+// FadeHide fades and subtly shrinks the floating window out (~100 ms) before
+// hiding it at its resting rect (used when returning to the main window).
+func (f *FloatWindow) FadeHide() {
+	if !f.Visible() {
+		return
+	}
+	f.CommitEdit()
+	f.startFadeOut(100*time.Millisecond, 0.96, nil)
 }
 
 // RestorePreDrag moves the window back to where it sat before the last drag
@@ -183,6 +213,7 @@ func (f *FloatWindow) RestorePreDrag() {
 // and hands off to native caption dragging so the user can pull it straight
 // out of the notch in one continuous motion.
 func (f *FloatWindow) ShowAtDrag(cx, cy int32) {
+	f.cancelTransition()
 	f.hasPreDrag = false
 	var cur struct{ L, T, R, B int32 }
 	procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&cur)))

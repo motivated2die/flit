@@ -72,7 +72,7 @@ func (a *App) openWindow() {
 		a.saveNotes(id)
 		a.pinnedNotes = ""
 		if a.notesFloat != nil {
-			a.notesFloat.Hide()
+			a.notesFloat.FadeHide()
 		}
 		if a.page == "" || a.page == pageHome || a.page == pageSession+id {
 			a.page = pageSession + id

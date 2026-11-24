@@ -83,6 +83,7 @@ var (
 
 var windowByHwnd = map[uintptr]*Window{}
 var windowClassDone bool
+var windowBgBrush uintptr
 
 // Assert that the Direct2D painter can draw views.
 var _ Canvas = (*Painter)(nil)
@@ -95,7 +96,8 @@ func NewWindow(title string) (*Window, error) {
 	}
 	if !windowClassDone {
 		cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(windowProc), Instance: moduleHandle(), ClassName: u16(windowClass), Cursor: cursor}
+		windowBgBrush = darkBrush(ColBase)
+		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(windowProc), Instance: moduleHandle(), ClassName: u16(windowClass), Cursor: cursor, Background: windowBgBrush}
 		wc.Size = uint32(unsafe.Sizeof(wc))
 		if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
 			return nil, fmt.Errorf("registering the window class: %w", err)
@@ -107,7 +109,7 @@ func NewWindow(title string) (*Window, error) {
 	if h == 0 {
 		return nil, fmt.Errorf("creating the window: %w", err)
 	}
-	w := &Window{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColBase)}}
+	w := &Window{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColBase), bgBrush: windowBgBrush}}
 	w.layout = func(c *Ctx, cw, ch float32) {
 		if w.Build != nil {
 			f := w.Build()
@@ -196,18 +198,45 @@ func (w *Window) setIcons() {
 }
 
 // Show brings the window up, centred on the main screen the first time.
+// When opening from hidden or fading-out, it paints its dark Direct2D UI at
+// alpha=0 first and fades in over ~120 ms so the window never flashes white.
 func (w *Window) Show() {
 	if !w.placed {
 		w.place()
 		w.placed = true
 	}
-	if ic, _, _ := procIsIconic.Call(w.hwnd); ic != 0 {
+	ic, _, _ := procIsIconic.Call(w.hwnd)
+	wasHidden := !w.Visible() || ic != 0 || (w.trans.active && w.trans.fadeOut)
+	if wasHidden {
+		w.beginFadeIn(120*time.Millisecond, 1, winRect{}, false)
+	} else {
+		w.cancelTransition()
+	}
+	if ic != 0 {
 		procShowWindow.Call(w.hwnd, swRestore)
 	} else {
 		procShowWindow.Call(w.hwnd, swShow)
 	}
 	procSetForegroundWindow.Call(w.hwnd)
 	w.Invalidate()
+	if wasHidden {
+		procUpdateWindow.Call(w.hwnd)
+		w.startTransitionTimer()
+	}
+}
+
+// FadeHide fades the window out briefly (~110 ms) before hiding it (used when
+// handing off to the pinned notes panel).
+func (w *Window) FadeHide() {
+	if !w.Visible() {
+		return
+	}
+	w.CommitEdit()
+	w.startFadeOut(110*time.Millisecond, 1, func() {
+		if w.OnHide != nil {
+			w.OnHide()
+		}
+	})
 }
 
 // Shown reports whether the window is visible and not minimised.

@@ -134,7 +134,7 @@ func (a *App) pinNotes(s *session.Session) {
 			if _, t, r, _, ok := a.win.Rect(); ok {
 				ax, ay, hasAnchor = r, t, true
 			}
-			a.win.Hide()
+			a.win.FadeHide()
 		}
 	}
 	if a.notesFloat != nil {
@@ -196,7 +196,7 @@ func (a *App) stashNotes(id string) {
 	a.pinnedNotes = ""
 	a.stashedNotes = id
 	if a.notesFloat != nil {
-		a.notesFloat.Hide()
+		a.notesFloat.FadeHide()
 	}
 	a.syncNotchCompact()
 	logx.Printf("notes of %s stashed", id)
@@ -249,7 +249,7 @@ func (a *App) unpinNotes() {
 	a.saveNotes(id)
 	a.pinnedNotes = ""
 	if a.notesFloat != nil {
-		a.notesFloat.Hide()
+		a.notesFloat.FadeHide()
 	}
 	a.page = pageSession + id
 	a.focusNotes = id
