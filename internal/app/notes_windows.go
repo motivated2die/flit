@@ -21,7 +21,7 @@ import (
 const notesSaveAfter = time.Second
 
 // notesPlaceholder is what an empty editor says.
-const notesPlaceholder = "Notes for this meeting. ## heading · - list · 1. numbered · [] task · **bold** · @flit to point flit at something"
+const notesPlaceholder = "Jot loose cues as you listen — flit covers the rest. **bold** key points · [] tasks · @flit to ask or flag what you missed"
 
 // notesState is one recording's notes being edited.
 type notesState struct {
@@ -134,7 +134,7 @@ func (a *App) pinNotes(s *session.Session) {
 			if _, t, r, _, ok := a.win.Rect(); ok {
 				ax, ay, hasAnchor = r, t, true
 			}
-			a.win.Hide()
+			a.win.FadeHide()
 		}
 	}
 	if a.notesFloat != nil {
@@ -196,7 +196,7 @@ func (a *App) stashNotes(id string) {
 	a.pinnedNotes = ""
 	a.stashedNotes = id
 	if a.notesFloat != nil {
-		a.notesFloat.Hide()
+		a.notesFloat.FadeHide()
 	}
 	a.syncNotchCompact()
 	logx.Printf("notes of %s stashed", id)
@@ -249,7 +249,7 @@ func (a *App) unpinNotes() {
 	a.saveNotes(id)
 	a.pinnedNotes = ""
 	if a.notesFloat != nil {
-		a.notesFloat.Hide()
+		a.notesFloat.FadeHide()
 	}
 	a.page = pageSession + id
 	a.focusNotes = id

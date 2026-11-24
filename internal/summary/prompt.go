@@ -73,14 +73,15 @@ func transcriptText(ts []Turn, from, to int) string {
 	return b.String()
 }
 
-// notesText is the user's notes as the model reads them: their Markdown,
-// mentions replaced by the question's number, anchored lines numbered.
-func notesText(d notes.Doc, ns []Note) string {
+// notesBlock formats the user's notes for the writer, separating untimed
+// (pre-meeting / pasted) notes from live in-meeting jottings when both exist,
+// and framing them as loose steering cues + supplemental facts.
+func notesBlock(d notes.Doc, ns []Note) string {
 	byBlock := map[int]Note{}
 	for _, n := range ns {
 		byBlock[n.Block] = n
 	}
-	var out notes.Doc
+	var pre, live notes.Doc
 	for i, b := range d.Blocks {
 		// The questions are answered on their own; the writer gets the
 		// notes without them.
@@ -88,25 +89,39 @@ func notesText(d notes.Doc, ns []Note) string {
 		if text == "" || isRuleLine(text) {
 			continue
 		}
-		if n, ok := byBlock[i]; ok {
+		if n, ok := byBlock[i]; ok && n.N > 0 {
 			text = fmt.Sprintf("[N%d] %s", n.N, text)
 		}
 		b.Text = text
-		out.Blocks = append(out.Blocks, b)
-	}
-	return strings.TrimSpace(out.Markdown())
-}
-
-func questionsText(qs []Question) string {
-	var b strings.Builder
-	for _, q := range qs {
-		if q.At == notes.Unknown {
-			fmt.Fprintf(&b, "Q%d: %s\n", q.N, q.Text)
+		if b.Typed == notes.Unknown {
+			pre.Blocks = append(pre.Blocks, b)
 		} else {
-			fmt.Fprintf(&b, "Q%d (asked at %s; the lines marked [Q%d] lead up to it): %s\n", q.N, clock(q.At), q.N, q.Text)
+			live.Blocks = append(live.Blocks, b)
 		}
 	}
+	preMD := strings.TrimSpace(pre.Markdown())
+	liveMD := strings.TrimSpace(live.Markdown())
+	if preMD == "" && liveMD == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nThe user's own notes (loose, incomplete steering cues and supplemental facts — the user often stops taking notes for long stretches while focusing on the meeting):\n")
+	if preMD != "" {
+		fmt.Fprintf(&b, "<pre_meeting_notes>\n%s\n</pre_meeting_notes>\n", preMD)
+	}
+	if liveMD != "" {
+		fmt.Fprintf(&b, "<live_notes>\n%s\n</live_notes>\n", liveMD)
+	}
 	return b.String()
+}
+
+func hasAnchoredNotes(ns []Note) bool {
+	for _, n := range ns {
+		if n.N > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func clock(d time.Duration) string { return notes.Clock(d) }
@@ -124,22 +139,31 @@ func speakersLine(ts []Turn, me string) string {
 }
 
 func system(w words) string {
-	return "You write concise, factual meeting notes from a transcript. Use only what the transcript and the user's notes say: never invent names, numbers, dates, decisions or tasks. The transcript comes from speech recognition and can misspell words. Write in " + w.Name + "."
+	return "You are a precise executive note-taker. Distill meeting transcripts into clear, scannable, strictly factual Markdown bullet notes in " + w.Name + ". Never invent facts, numbers, dates, decisions, tasks, or open questions. The transcript comes from speech recognition and may misspell names or terms."
 }
 
 // format is the output the writer is asked for, shared by both approaches.
-func format(w words, instruction string) string {
+func format(w words, dur time.Duration, hasNotes bool, mc MeetingClass, instruction string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Write the meeting notes in %s as Markdown, using only \"## \" headings, \"### \" subheadings, \"- \" bullets (nested by two spaces), \"- [ ] \" tasks and **bold**.\n", w.Name)
-	b.WriteString("Sections, in this order:\n")
-	fmt.Fprintf(&b, "1. \"## %s\": two to four sentences on what it was about and what came of it.\n", w.Summary)
-	b.WriteString("2. One \"## \" section per main topic, in the order discussed, named after the topic. Where the user's notes have a heading for a topic, use that heading. Under each, short bullets with the concrete facts: names, numbers, dates, reasons.\n")
-	fmt.Fprintf(&b, "3. \"## %s\": only what the participants explicitly agreed on. Leave it out when nothing was agreed (an interview or a chat usually has nothing).\n", w.Decisions)
-	fmt.Fprintf(&b, "4. \"## %s\": only what someone agreed or was asked to do, each as \"- [ ] **Name:** what, by when\". Leave it out when there is nothing.\n", w.Tasks)
-	fmt.Fprintf(&b, "5. \"## %s\": only questions about the meeting's subject that nobody answered and that need an answer later. A question that was answered in the conversation is not open. Leave it out when there are none.\n", w.Open)
-	b.WriteString("Integrate the user's notes; don't copy their lines or labels. No introduction, no closing remarks, no [N1] marks.\n")
+	fmt.Fprintf(&b, "Write the meeting notes in %s as Markdown using ONLY \"## \" headings, \"- \" bullets (nested by two spaces when needed), \"- [ ] \" tasks, and **bold**.\n", w.Name)
+	b.WriteString("Rules:\n")
+	b.WriteString("- Start immediately with the first \"## <Specific Topic>\" heading (no \"## Summary\", \"## Overview\", \"## Zusammenfassung\", intro, or closing remarks).\n")
+	b.WriteString("- Every section MUST use short \"- \" bullet points (~10–22 words each), NEVER prose paragraphs. Start each bullet directly with the point or speaker — never write \"The team discussed…\", \"Participants talked about…\", \"Das Team besprach…\", or \"Es wurde besprochen…\".\n")
+	b.WriteString("- Topic sections: one \"## \" heading per main topic, most important first, named specifically (never generic labels like \"Overview\", \"Discussion\", \"Updates\", \"Überblick\"). Cover the ENTIRE meeting from start to finish.\n")
+	b.WriteString("- Speaker attribution: whenever a speaker has a real name or clear role (e.g. Betty, Francina, Ergonomist), explicitly attribute ideas, proposals, concerns, and objections to them (e.g. \"- **Anna** proposed…\", \"- **Ben** flagged concern about…\"). STRICTLY FORBIDDEN: never write raw labels like \"Them 1\", \"Them 2\", or \"Them 3\" anywhere in the notes. If a speaker introduced themselves by name in the transcript, use their real name; if their name and role are both unknown, write the bullet cleanly WITHOUT any speaker label.\n")
+	b.WriteString("- Filter noise: omit small talk, greetings, personal chat (e.g. weather, weekends, plants, pets, hobbies, jokes), mic/audio checks, and warm-up exercises unless the meeting was specifically about them.\n")
+	if hasNotes {
+		b.WriteString("- Using the user's notes: treat them as loose steering hints and supplemental facts, NOT an exhaustive outline. Never skip important transcript topics just because the user took no notes on them. Retain concrete facts/numbers the user typed, pay extra attention to **bold** text and ### headings, keep open \"- [ ]\" tasks if still unresolved, and ignore pre-meeting agenda items that were never actually discussed. Rephrase in your own words — never copy their shorthand verbatim or output [N1] marks.\n")
+	}
+	fmt.Fprintf(&b, "- \"## %s\" (OPTIONAL): include ONLY explicit, finalized agreements. Brainstormed ideas, proposals, or general goals are NOT decisions. Omit this section if nothing was explicitly decided.\n", w.Decisions)
+	fmt.Fprintf(&b, "- \"## %s\" (OPTIONAL): whenever someone agreed to or was assigned a concrete follow-up or deliverable (even an individual design/prep task for the next meeting), ALWAYS list it here as \"- [ ] **Name:** what, by when\" (omit deadline if not stated) — never bury concrete assignments as plain bullets in a topic section, and never duplicate them in a separate \"Next Steps\" section. Omit only if no one committed to any work.\n", w.Tasks)
+	fmt.Fprintf(&b, "- \"## %s\" (OPTIONAL): include ONLY unresolved questions explicitly raised in the meeting that still need an answer later. Never invent follow-up questions. Omit if none.\n", w.Open)
+	if w.Name != "English" {
+		fmt.Fprintf(&b, "- Keep established English technical terms and product names in English within natural %s grammar.\n", w.Name)
+	}
+	b.WriteString(styleGuidance(mc, dur))
 	if s := strings.TrimSpace(instruction); s != "" {
-		fmt.Fprintf(&b, "The user adds this instruction, which takes precedence over the structure above: %s\n", s)
+		fmt.Fprintf(&b, "User steering hint (adjust focus, emphasis, or language accordingly while keeping factual grounding, bullet format, and speaker attribution intact — only change the structure if they explicitly ask for a different format): %s\n", s)
 	}
 	return b.String()
 }
@@ -159,6 +183,60 @@ func cueLegend(qs []Question, ns []Note, you bool) string {
 		return ""
 	}
 	return "In the transcript, " + strings.Join(parts, "; ") + ". Pay special attention to these lines.\n"
+}
+
+func hasTaskCheckboxes(md string) bool {
+	for _, b := range notes.Parse(md).Blocks {
+		if b.Kind == notes.Task {
+			return true
+		}
+	}
+	return false
+}
+
+// spellingHint extracts distinctive acronyms or proper terms from the title
+// and user notes as a compact 1-line spelling reference (Yogurt's vocab idea).
+func spellingHint(title string, d notes.Doc) string {
+	seen := map[string]bool{}
+	var terms []string
+	scan := func(s string) {
+		for _, tok := range strings.Fields(notes.PlainInline(withoutMentions(s))) {
+			tok = strings.Trim(tok, ".,;:!?()[]{}\"'*/–—-")
+			if len(tok) < 3 || len(tok) > 28 {
+				continue
+			}
+			// Keep acronyms (IPCC, DIN, ISO) or mixed/hyphenated terms (RAMSIS, Qwen3.5).
+			hasUpper, hasDigit := false, false
+			upperCount := 0
+			for _, r := range tok {
+				if r >= 'A' && r <= 'Z' {
+					hasUpper = true
+					upperCount++
+				}
+				if r >= '0' && r <= '9' {
+					hasDigit = true
+				}
+			}
+			if (upperCount >= 2 || (hasUpper && hasDigit)) && !seen[tok] {
+				seen[tok] = true
+				terms = append(terms, tok)
+				if len(terms) >= 12 {
+					return
+				}
+			}
+		}
+	}
+	scan(title)
+	for _, b := range d.Blocks {
+		scan(b.Text)
+		if len(terms) >= 12 {
+			break
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	return "Preferred spellings for terms/acronyms from the user: " + strings.Join(terms, ", ") + ".\n"
 }
 
 func hasYou(ts []Turn) bool {

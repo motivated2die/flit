@@ -43,6 +43,7 @@ const (
 func Cues(in Input, ts []Turn) ([]Question, []Note) {
 	var qs []Question
 	var ns []Note
+	anchoredCount := 0
 	for bi, b := range in.Notes.Blocks {
 		for _, m := range notes.Mentions(b.Text) {
 			at := m.At
@@ -68,10 +69,12 @@ func Cues(in Input, ts []Turn) ([]Question, []Note) {
 		if utf8.RuneCountInString(plain) < 3 || isRuleLine(plain) || b.Kind == notes.H2 || b.Kind == notes.H3 {
 			continue
 		}
-		n := Note{N: len(ns) + 1, Block: bi, Text: plain, Typed: b.Typed, Turn: -1}
+		n := Note{Block: bi, Text: plain, Typed: b.Typed, Turn: -1}
 		if b.Typed != notes.Unknown {
 			n.Turn = anchor(ts, plain, b.Typed)
 			if n.Turn >= 0 {
+				n.N = anchoredCount + 1
+				anchoredCount++
 				ts[n.Turn].Marks = append(ts[n.Turn].Marks, fmt.Sprintf("N%d", n.N))
 			}
 		}

@@ -208,12 +208,14 @@ func (f *fake) Chat(_ context.Context, r llm.Request) (llm.Response, error) {
 		r.OnProgress(llm.CallProgress{Read: total, ReadTotal: total, Wrote: 900}) // more than expected
 	}
 	switch {
+	case r.Schema != nil && strings.Contains(prompt, "Classify this meeting"):
+		return llm.Response{Text: `{"type":"decision_planning","density":"medium"}`}, nil
 	case r.Schema != nil:
-		return llm.Response{Text: `{"topics":[{"title":"Budget","points":["25.000 Euro vorgeschlagen"]}],"decisions":[{"text":"Budget beschlossen","quote":"das hat niemand gesagt"}],"tasks":[{"who":"Moritz","what":"die Zahlen schicken","due":"Freitag","quote":"Moritz schickt die Zahlen"}],"open":[]}`}, nil
+		return llm.Response{Text: `{"speakers":[{"label":"Them 1","name":"Anna"}],"topics":[{"title":"Budget","points":["Anna schlug 25.000 Euro vor"]}],"decisions":[{"text":"Budget beschlossen","quote":"das hat niemand gesagt"}],"tasks":[{"who":"Moritz","what":"die Zahlen schicken","due":"Freitag","quote":"Moritz schickt die Zahlen"}],"open":[]}`}, nil
 	case strings.Contains(prompt, "wrote this question"):
 		return llm.Response{Text: "Nein, nur vorgeschlagen."}, nil
 	default:
-		return llm.Response{Text: "## Zusammenfassung\n\nBudget besprochen.\n\n## Aufgaben\n\n- [ ] **Moritz:** Zahlen schicken, bis Freitag\n"}, nil
+		return llm.Response{Text: "## Budget\n\n- **Anna** schlug 25.000 Euro vor.\n\n## Aufgaben\n\n- [ ] **Moritz:** Zahlen schicken, bis Freitag\n"}, nil
 	}
 }
 
@@ -236,9 +238,9 @@ func TestProgress(t *testing.T) {
 				steps = append(steps, p.Step)
 			}
 		}
-		want := "ask,write"
+		want := "classify,ask,write"
 		if ap == Extract {
-			want = "ask,read,write"
+			want = "classify,ask,read,write"
 		}
 		if got := strings.Join(steps, ","); got != want {
 			t.Errorf("%s: steps %s, want %s", ap, got, want)
@@ -278,30 +280,73 @@ func TestRun(t *testing.T) {
 		if !strings.Contains(r.Markdown, "## Deine Fragen\n\n- **wurde das Budget beschlossen?** Nein, nur vorgeschlagen.\n\n## Aufgaben") {
 			t.Errorf("%s:\n%s", ap, r.Markdown)
 		}
-		calls := 2 // the question, the writer
+		calls := 3 // classify, the question, the writer
 		if ap == Extract {
-			calls = 3
+			calls = 4
 			// The decision quoted with words nobody said is dropped; the
 			// task, quoted right, stays.
 			if r.Dropped != 1 || len(r.Items) != 1 || len(r.Items[0].Tasks) != 1 {
 				t.Errorf("checks: dropped %d, items %+v", r.Dropped, r.Items)
 			}
 		}
+		if r.Class.Type != "decision_planning" {
+			t.Errorf("%s: class %+v", ap, r.Class)
+		}
 		if len(f.reqs) != calls {
 			t.Errorf("%s: %d calls", ap, len(f.reqs))
 		}
 		writer := f.reqs[len(f.reqs)-1].Messages[1].Content
-		for _, want := range []string{"Bitte sehr kurz.", "<notes>", "## Budget", "[N1] 25.000 Euro Messe?", "Write the meeting notes in German"} {
+		for _, want := range []string{"Bitte sehr kurz.", "<live_notes>", "## Budget", "[N1] 25.000 Euro Messe?", "Write the meeting notes in German", "Meeting style (planning / decision)"} {
 			if !strings.Contains(writer, want) {
 				t.Errorf("%s: the writer's prompt lacks %q", ap, want)
 			}
 		}
+		if ap == Extract && !strings.Contains(writer, "Them 1 = Anna") {
+			t.Errorf("extract writer lacks speaker glossary")
+		}
 		if strings.Contains(writer, "@flit") || strings.Contains(writer, "[Q1]") {
 			t.Errorf("%s: the writer sees the question", ap)
 		}
-		ask := f.reqs[0].Messages[1].Content
+		ask := f.reqs[1].Messages[1].Content
 		if !strings.Contains(ask, "25.000 Euro") || strings.Contains(ask, "Francina") {
 			t.Errorf("the question's excerpt is wrong:\n%s", ask)
 		}
+	}
+}
+
+func TestMissedInfoCueAndUnanchoredNotes(t *testing.T) {
+	if !isMissedInfoCue("ich habe kurz nicht aufgepasst, was war das?") {
+		t.Error("expected German missed-info cue to match")
+	}
+	if !isMissedInfoCue("missed this part???") {
+		t.Error("expected English missed-info cue to match")
+	}
+	if isMissedInfoCue("what is the budget?") {
+		t.Error("normal question falsely matched missed-info cue")
+	}
+	// Pre-meeting (untimed) notes must not receive orphan [N#] marks.
+	d := notes.Parse("- Agenda item\n- Live point\n")
+	d.Blocks[0].Typed = notes.Unknown
+	d.Blocks[1].Typed = sec(22)
+	in := meeting()
+	in.Notes = d
+	ts := in.Turns()
+	_, ns := Cues(in, ts)
+	nb := notesBlock(d, ns)
+	if !strings.Contains(nb, "<pre_meeting_notes>\n- Agenda item") {
+		t.Errorf("pre-meeting note not separated or got orphan mark:\n%s", nb)
+	}
+	if !strings.Contains(nb, "<live_notes>\n- [N1] Live point") {
+		t.Errorf("live note not anchored as [N1]:\n%s", nb)
+	}
+	// Spelling hint extracts acronyms and mixed-case/alphanumeric terms.
+	hint := spellingHint("DIN33402 Review", notes.Parse("- IPCC report & RAMSIS model\n- regular words\n"))
+	for _, want := range []string{"DIN33402", "IPCC", "RAMSIS"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("spellingHint missing %q: %q", want, hint)
+		}
+	}
+	if strings.Contains(hint, "regular") {
+		t.Errorf("spellingHint included common word: %q", hint)
 	}
 }

@@ -54,6 +54,7 @@ type CaptionRow struct {
 }
 
 func (r CaptionRow) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(r.Text, y)
 	h := c.Px(28)
 	if r.Right != nil {
 		rw := w / 3
@@ -287,7 +288,7 @@ func (b RoundButton) Layout(c *Ctx, x, y, w float32) float32 {
 	fill, fg := col(ColControl), col(ColText)
 	switch {
 	case b.Active && c.Hover == b.ID:
-		fill, fg = col(rgb(0xDC, 0xDC, 0xDC)), col(ColInk)
+		fill, fg = col(ColPrimaryHover), col(ColInk)
 	case b.Active:
 		fill, fg = col(ColText), col(ColInk)
 	case c.Hover == b.ID:
@@ -505,6 +506,7 @@ type MeetingRow struct {
 	Title       string
 	Place       string
 	Now, Past   bool
+	Recurring   bool
 	NoIcon      bool
 	// Actions sit on the right (Sized, the last one rightmost);
 	// HoverActions join them on their left while the pointer is on the row.
@@ -572,7 +574,11 @@ func (m MeetingRow) Layout(c *Ctx, x, y, w float32) float32 {
 			strong, muted = col(ColMuted), col(ColFaint)
 		}
 		if !m.NoIcon {
-			DrawIcon(cv, GlyphMeeting, icon, iconS, strong)
+			glyph := GlyphMeeting
+			if m.Recurring {
+				glyph = GlyphCalendarRepeat
+			}
+			DrawIcon(cv, glyph, icon, iconS, strong)
 		}
 		switch {
 		case m.Until == "": // all day
@@ -681,7 +687,7 @@ func (k CornerCard) Layout(c *Ctx, x, y, w float32) float32 {
 		fade := c.Px(cornerFade)
 		halo := RectF{back.L - fade, back.T - fade, back.R + fade, back.B + fade}
 		hw, hh := int(math.Ceil(float64(halo.W()))), int(math.Ceil(float64(halo.H())))
-		key := fmt.Sprintf("cornerhalo:%dx%d:%v", hw, hh, fade)
+		key := fmt.Sprintf("cornerhalo:%s:%dx%d:%v", themeTag(), hw, hh, fade)
 		c.PushClip(card)
 		c.Draw(func(cv Canvas) {
 			cv.Bitmap(key, halo.L, halo.T, hw, hh, 1, func() []byte {

@@ -73,6 +73,11 @@ func (a *App) onNotchButton(id string) {
 				a.openNotes(a.rec.sess)
 			}
 		}
+	case "notch-hide":
+		if a.rec != nil {
+			a.hideRecordingNotch = !a.hideRecordingNotch
+			a.showRecordingView(a.hideRecordingNotch)
+		}
 	case "copy":
 		a.copyTranscript(a.lastReady, false) // "Transcript copied" replaces it
 	case "open":
@@ -180,6 +185,9 @@ func (a *App) syncNotchCompact() {
 }
 
 func (a *App) syncNotchState(startCollapsed bool) {
+	if a.rec == nil {
+		a.hideRecordingNotch = false
+	}
 	if a.notch == nil {
 		return
 	}
@@ -212,15 +220,24 @@ func (a *App) showRecordingView(startCollapsed bool) {
 	if a.notch == nil || a.rec == nil {
 		return
 	}
+	toggleGlyph := ui.GlyphUp
+	if a.hideRecordingNotch {
+		toggleGlyph = ui.GlyphDown
+	}
 	a.notch.Show(ui.NotchView{
 		Mode:           ui.NotchRecording,
 		Title:          "Recording",
 		Since:          a.rec.started,
 		Collapsible:    true,
 		HoverDelay:     ui.ExpandHover, // delay expansion only while recording
+		HideCollapsed:  a.hideRecordingNotch,
 		StashedNotes:   a.stashedNotes != "",
 		StartCollapsed: startCollapsed,
-		Buttons:        []ui.NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}},
+		Buttons: []ui.NotchButton{
+			{ID: "notes", Label: "Notes"},
+			{ID: "stop", Label: "Stop"},
+			{ID: "notch-hide", Glyph: toggleGlyph},
+		},
 	})
 }
 

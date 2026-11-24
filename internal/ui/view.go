@@ -110,6 +110,13 @@ type ScrollArea struct {
 	View RectF
 }
 
+// Anchor is a subheading's label and window-coordinate Y recorded during a
+// layout pass, used by the page scrollbar to place section jump dots.
+type Anchor struct {
+	Label string
+	Y     float32
+}
+
 // Ctx is one layout pass.
 type Ctx struct {
 	Scale float32
@@ -118,11 +125,17 @@ type Ctx struct {
 	// Interaction state, kept by the window between passes.
 	Hover, Pressed string
 	Scroll         map[string]float32
+	// ScrollTo smoothly scrolls a scroll area to a target offset; SetScroll
+	// jumps immediately and cancels any running smooth scroll (dragging).
+	ScrollTo  func(id string, to float32)
+	SetScroll func(id string, to float32)
 
-	ops     []func(Canvas)
-	hits    []Hit
-	scrolls []ScrollArea
-	clips   []RectF
+	ops      []func(Canvas)
+	overlays []func(*Ctx)
+	hits     []Hit
+	scrolls  []ScrollArea
+	anchors  []Anchor
+	clips    []RectF
 	// Animating is set by nodes that change over time (a live dot, a
 	// clock), asking the window to draw again soon.
 	Animating bool
@@ -236,6 +249,21 @@ func (c *Ctx) F(f Font) Font { f.Size *= c.Scale; return f }
 
 // Draw records a drawing step.
 func (c *Ctx) Draw(f func(Canvas)) { c.ops = append(c.ops, f) }
+
+// Overlay defers fn until the end of the page layout pass so popovers paint
+// and hit-test above all other page content.
+func (c *Ctx) Overlay(fn func(*Ctx)) { c.overlays = append(c.overlays, fn) }
+
+// FlushOverlays runs all deferred overlays in registration order.
+func (c *Ctx) FlushOverlays() {
+	for len(c.overlays) > 0 {
+		ops := c.overlays
+		c.overlays = nil
+		for _, fn := range ops {
+			fn(c)
+		}
+	}
+}
 
 // liveArea is a region the window repaints on its own, often.
 type liveArea struct {
@@ -363,6 +391,18 @@ func (c *Ctx) PopClip() {
 // AddScroll registers a scrollable region.
 func (c *Ctx) AddScroll(a ScrollArea) { c.scrolls = append(c.scrolls, a) }
 
+// AddAnchor records a page subheading at window-coordinate y for the
+// scrollbar's section jump dots.
+func (c *Ctx) AddAnchor(label string, y float32) {
+	if label == "" {
+		return
+	}
+	c.anchors = append(c.anchors, Anchor{Label: label, Y: y})
+}
+
+// Anchors returns the subheading anchors recorded during this layout pass.
+func (c *Ctx) Anchors() []Anchor { return c.anchors }
+
 // Paint replays the recorded drawing.
 func (c *Ctx) Paint(cv Canvas) {
 	for _, op := range c.ops {
@@ -415,4 +455,7 @@ func (c *Ctx) ScrollAt(x, y float32) (ScrollArea, bool) {
 func (c *Ctx) Hits() []Hit { return c.hits }
 
 // Lay out a whole tree: Root lays out n over a w×h area.
-func Root(c *Ctx, n Node, w, h float32) { n.Layout(c, 0, 0, w) }
+func Root(c *Ctx, n Node, w, h float32) {
+	n.Layout(c, 0, 0, w)
+	c.FlushOverlays()
+}

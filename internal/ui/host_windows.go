@@ -20,6 +20,8 @@ type host struct {
 	scale   float32 // effective scale = dpi * zoom
 	metrics Metrics
 	bg      ColorF
+	bgBrush uintptr // dark GDI brush for WM_ERASEBKGND before first paint
+	trans   transition
 
 	hover, pressed string
 	scroll         map[string]float32
@@ -211,6 +213,12 @@ func (h *host) paint() {
 		h.surf = s
 	}
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
+	c.ScrollTo = h.scrollSmoothly
+	c.SetScroll = func(id string, to float32) {
+		delete(h.scrollTo, id)
+		h.scroll[id] = to
+		h.Invalidate()
+	}
 	c.Edit, c.StartEdit = h.edit, h.startEdit
 	c.Sel = h.sel
 	c.Focus = h.focus
@@ -280,6 +288,9 @@ func (h *host) setLive(on bool) {
 func (h *host) stopTimers() {
 	h.setTicking(false)
 	h.setLive(false)
+	if h.trans.active {
+		h.cancelTransition()
+	}
 }
 
 // paintLive repaints only the live regions of the last layout, onto the
@@ -345,6 +356,11 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		h.paint()
 		return 0, true
 	case wmEraseBkgnd:
+		if h.surf == nil && h.bgBrush != 0 && wp != 0 {
+			var rc winRect
+			procGetClientRect.Call(h.hwnd, uintptr(unsafe.Pointer(&rc)))
+			procFillRect.Call(wp, uintptr(unsafe.Pointer(&rc)), h.bgBrush)
+		}
 		return 1, true // all painted in WM_PAINT; no flicker
 	case wmSize:
 		h.Invalidate()
@@ -359,6 +375,8 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 			h.paintLive()
 		case timerSelScroll:
 			h.scrollWhileSelecting()
+		case timerTransition:
+			h.stepTransition()
 		}
 		return 0, true
 	case wmMouseMove:

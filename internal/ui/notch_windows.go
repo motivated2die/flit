@@ -171,6 +171,7 @@ func (n *Notch) Show(v NotchView) {
 		n.setTransparent(n.col.Collapsed && !v.StashedNotes && v.Mode != NotchStashed)
 	} else if v.StartCollapsed && v.Collapsible && !n.col.Collapsed {
 		n.col.Collapse()
+		n.hover, n.hoverBtn, n.pressBtn = false, "", ""
 		n.setTransparent(!v.StashedNotes && v.Mode != NotchStashed)
 	} else if v.StashedNotes != n.view.StashedNotes {
 		n.setTransparent(n.col.Collapsed && !v.StashedNotes && v.Mode != NotchStashed)
@@ -237,6 +238,13 @@ func (n *Notch) CollapseNow() {
 }
 
 // SetZoom changes the notch's UI scale multiplier (e.g. 0.8, 1.0, 1.1, 1.25).
+// RefreshTheme repaints the notch if it is currently visible.
+func (n *Notch) RefreshTheme() {
+	if n.Visible() {
+		n.present(1)
+	}
+}
+
 func (n *Notch) SetZoom(z float32) {
 	if z <= 0 {
 		z = 1
@@ -298,11 +306,17 @@ func (n *Notch) layout(now time.Time) NotchLayout {
 	return Layout(n.view, n.scale, now, Measure)
 }
 
+// hiddenCollapsed reports whether the collapsed state is fully hidden instead
+// of showing the small capsule (stashed notes always keep their grab handle).
+func (n *Notch) hiddenCollapsed() bool {
+	return n.view.HideCollapsed && !n.view.StashedNotes && n.view.Mode != NotchStashed
+}
+
 func (n *Notch) currentSize(now time.Time) (float32, float32) {
 	// With a little overshoot: it settles into its new size.
 	t := float32(EaseOutBack(float64(now.Sub(n.resizeStart))/float64(notchResize), notchBounceResize))
 	w, h := Lerp(n.fromW, n.toW, t), Lerp(n.fromH, n.toH, t)
-	return max(1, min(w, notchMaxW*n.scale)), max(1, h)
+	return max(1, min(w, notchMaxW*n.scale)), max(0, h)
 }
 
 func (n *Notch) currentWidth(now time.Time) float32 {
@@ -331,6 +345,9 @@ func (n *Notch) overCollapsed(w, h float32) bool {
 	var pt point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 	cx := float32(n.work.L+n.work.R) / 2
+	if n.hiddenCollapsed() {
+		w = max(w, 64*n.scale)
+	}
 	m := 6 * n.scale
 	r := RectF{cx - w/2 - m, float32(n.work.T) - m, cx + w/2 + m, float32(n.work.T) + h + m}
 	return r.Contains(float32(pt.X), float32(pt.Y))
@@ -426,11 +443,13 @@ func (n *Notch) tick() {
 	moving := n.phase == phShowing || n.phase == phHiding || now.Sub(n.resizeStart) < notchResize || counting ||
 		(n.view.Mode == NotchWorking && n.progress >= 0 && absf(target-n.progress) > 0.002)
 	// A collapsed, still capsule needs no new frames: only the pointer is
-	// polled. The live dot and the prompt's dot always move.
-	live := n.view.Mode == NotchRecording || n.view.Mode == NotchPrompt || (n.view.Mode == NotchWorking && n.view.Progress < 0)
+	// polled. The live dot and the prompt's dot always move (except when the
+	// collapsed recording capsule is completely hidden).
+	hidden := n.hiddenCollapsed()
+	live := (n.view.Mode == NotchRecording && !(n.col.Collapsed && hidden)) || n.view.Mode == NotchPrompt || (n.view.Mode == NotchWorking && n.view.Progress < 0)
 	if moving || live || n.dirty || hp > 0 || !n.col.Collapsed {
 		f := notchFrame{view: n.view, layout: lay, scale: n.scale, slide: slide, rise: rise, width: width, height: height, content: content,
-			collapsed: n.col.Collapsed, hover: n.hover, hoverProgress: hp,
+			collapsed: n.col.Collapsed, hidden: hidden, hover: n.hover, hoverProgress: hp,
 			hoverBtn: n.hoverBtn, pressBtn: n.pressBtn, levels: n.levels, progress: n.progress, now: now, born: n.born}
 		if err := renderNotch(n.surf, f); err == nil {
 			n.present(slide)

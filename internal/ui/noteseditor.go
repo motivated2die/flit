@@ -11,7 +11,7 @@ import (
 // NotesEditor edits a recording's notes in place (docs/research/notes-editor.md):
 // each block drawn as Markdown usually renders it (headings 2 and 3,
 // bullets and numbers by level, checkboxes), inline emphasis styled with
-// its markers kept faint, @flit mentions as chips. The text is edited by a
+// its markers hidden, @flit mentions as chips. The text is edited by a
 // notes.Editor the app keeps; the window routes keys and the pointer here
 // while the editor has the keyboard (Ctx.Editor).
 type NotesEditor struct {
@@ -98,32 +98,61 @@ type blockGeom struct {
 	x, top, w, bottom float32
 	lines             *TextLines // nil for an empty line
 	lineH             float32
+	disp              blockDisplay
 }
 
-// caret is where offset o sits in the block: x, and its line's top and
-// height (relative to the window).
+func (g blockGeom) toDisp(srcO int) int {
+	if len(g.disp.srcToDisp) == 0 {
+		return srcO
+	}
+	if srcO < 0 {
+		return 0
+	}
+	if srcO >= len(g.disp.srcToDisp) {
+		return g.disp.srcToDisp[len(g.disp.srcToDisp)-1]
+	}
+	return g.disp.srcToDisp[srcO]
+}
+
+func (g blockGeom) toSrc(dispO int) int {
+	if len(g.disp.dispToSrc) == 0 {
+		return dispO
+	}
+	if dispO < 0 {
+		return 0
+	}
+	if dispO >= len(g.disp.dispToSrc) {
+		return g.disp.dispToSrc[len(g.disp.dispToSrc)-1]
+	}
+	return g.disp.dispToSrc[dispO]
+}
+
+// caret is where source offset o sits in the block: x, and its line's top
+// and height (relative to the window).
 func (g blockGeom) caret(o int) (x, top, h float32) {
 	if g.lines == nil || len(g.lines.Lines) == 0 {
 		return g.x, g.top, g.lineH
 	}
+	d := g.toDisp(o)
 	ls := g.lines.Lines
 	l := ls[len(ls)-1]
 	for _, ln := range ls {
-		if o >= ln.From && o < ln.To {
+		if d >= ln.From && d < ln.To {
 			l = ln
 			break
 		}
 	}
-	return g.x + l.x(o), g.top + l.Top, l.H
+	return g.x + l.x(d), g.top + l.Top, l.H
 }
 
-// lineIndex is the visual line of the block offset o is on.
+// lineIndex is the visual line of the block source offset o is on.
 func (g blockGeom) lineIndex(o int) int {
 	if g.lines == nil {
 		return 0
 	}
+	d := g.toDisp(o)
 	for i, ln := range g.lines.Lines {
-		if o >= ln.From && o < ln.To {
+		if d >= ln.From && d < ln.To {
 			return i
 		}
 	}
@@ -137,12 +166,12 @@ func (g blockGeom) lineCount() int {
 	return len(g.lines.Lines)
 }
 
-// posAt is the offset nearest (x, y) in the block.
+// posAt is the source offset nearest (x, y) in the block.
 func (g blockGeom) posAt(x, y float32) int {
 	if g.lines == nil {
 		return 0
 	}
-	return g.lines.PosAt(x-g.x, y-g.top)
+	return g.toSrc(g.lines.PosAt(x-g.x, y-g.top))
 }
 
 func blockFont(k notes.Kind) Font {
@@ -171,24 +200,46 @@ func gapBefore(prev, b notes.Block) float32 {
 	return 10
 }
 
-// styles are a line's inline styles: emphasis, faint markers, mentions;
-// a done task struck through and muted.
-func editorStyles(b notes.Block) []TextStyle {
+// blockDisplay is a block's visible text and styles with emphasis markers
+// (** * __ _) hidden, plus byte-offset maps between the stored Markdown
+// (b.Text) and the drawn string.
+type blockDisplay struct {
+	text      string
+	styles    []TextStyle
+	srcToDisp []int // len(b.Text)+1
+	dispToSrc []int // len(text)+1
+}
+
+// buildDisplay builds the drawn text, inline styles (bold, italic, mentions,
+// done-task strike) and offset maps for one block.
+func buildDisplay(b notes.Block) blockDisplay {
 	faint, muted, text := col(ColFaint), col(ColMuted), col(ColText)
 	clear := RGBA(ColText, 0)
+	srcToDisp := make([]int, len(b.Text)+1)
+	dispToSrc := make([]int, 0, len(b.Text)+1)
+	var disp strings.Builder
+	disp.Grow(len(b.Text))
 	var out []TextStyle
-	if b.Kind == notes.Task && b.Done {
-		out = append(out, TextStyle{From: 0, To: len(b.Text), Strike: true, Color: &muted})
-	}
 	for _, sp := range notes.Inline(b.Text) {
-		st := TextStyle{From: sp.From, To: sp.To, Bold: sp.Bold, Italic: sp.Italic}
+		if sp.Role == notes.Marker && !sp.InMention {
+			// Hide emphasis markers (** * __ _) completely.
+			d := disp.Len()
+			for k := sp.From; k < sp.To; k++ {
+				srcToDisp[k] = d
+			}
+			continue
+		}
+		dFrom := disp.Len()
+		for k := sp.From; k < sp.To; k++ {
+			srcToDisp[k] = disp.Len()
+			dispToSrc = append(dispToSrc, k)
+			disp.WriteByte(b.Text[k])
+		}
+		dTo := disp.Len()
+		st := TextStyle{From: dFrom, To: dTo, Bold: sp.Bold, Italic: sp.Italic}
 		switch sp.Role {
 		case notes.Marker:
-			if sp.InMention {
-				st.Color = &clear // the chip's brackets: room, not ink
-			} else {
-				st.Color = &faint
-			}
+			st.Color = &clear // the chip's brackets: room, not ink
 		case notes.Mention:
 			st.Bold, st.Color = true, &text
 		case notes.Meta:
@@ -198,7 +249,12 @@ func editorStyles(b notes.Block) []TextStyle {
 			out = append(out, st)
 		}
 	}
-	return out
+	srcToDisp[len(b.Text)] = disp.Len()
+	dispToSrc = append(dispToSrc, len(b.Text))
+	if b.Kind == notes.Task && b.Done && disp.Len() > 0 {
+		out = append([]TextStyle{{From: 0, To: disp.Len(), Strike: true, Color: &muted}}, out...)
+	}
+	return blockDisplay{text: disp.String(), styles: out, srcToDisp: srcToDisp, dispToSrc: dispToSrc}
 }
 
 // editorLines lays a line out (nil for an empty one, or without metrics
@@ -242,18 +298,18 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			inset = float32(b.Indent)*indentW + markW
 		}
 		tx, tw := x+inset, max(c.Px(40), w-inset)
-		styles := editorStyles(b)
-		lines := editorLines(c, b.Text, f, tw, styles)
+		disp := buildDisplay(b)
+		lines := editorLines(c, disp.text, f, tw, disp.styles)
 		lineH := c.M.ParagraphHeight("Ag", f, c.Px(1000))
 		h := lineH
 		if lines != nil && len(lines.Lines) > 0 {
 			last := lines.Lines[len(lines.Lines)-1]
 			h = max(h, last.Top+last.H)
 		}
-		g := blockGeom{x: tx, top: top, w: tw, bottom: top + h, lines: lines, lineH: lineH}
+		g := blockGeom{x: tx, top: top, w: tw, bottom: top + h, lines: lines, lineH: lineH, disp: disp}
 		geoms[i] = g
 		if c.Visible(RectF{x, top, x + w, top + h}) {
-			n.drawBlock(c, i, b, g, f, styles, nums[i], x+float32(b.Indent)*indentW, markW, focused, selA, selB)
+			n.drawBlock(c, i, b, g, f, nums[i], x+float32(b.Indent)*indentW, markW, focused, selA, selB)
 		}
 		top += h
 	}
@@ -420,9 +476,39 @@ func (n NotesEditor) Layout(c *Ctx, x, y, w float32) float32 {
 			keepGoal := false
 			switch {
 			case vk == vkLeft:
+				prevB := ed.Caret.B
+				prevD := -1
+				if !ctrl && prevB < len(geoms) {
+					prevD = geoms[prevB].toDisp(ed.Caret.O)
+				}
 				ed.Left(ctrl, m.Shift)
+				if !ctrl && prevD >= 0 && ed.Caret.B == prevB && ed.Caret.B < len(geoms) {
+					for ed.Caret.B == prevB && ed.Caret.O > 0 && geoms[prevB].toDisp(ed.Caret.O) == prevD {
+						ed.Left(false, m.Shift)
+					}
+				}
 			case vk == vkRight:
+				prevB := ed.Caret.B
+				prevD := -1
+				if !ctrl && prevB < len(geoms) {
+					prevD = geoms[prevB].toDisp(ed.Caret.O)
+				}
 				ed.Right(ctrl, m.Shift)
+				if !ctrl && prevD >= 0 && ed.Caret.B == prevB && ed.Caret.B < len(geoms) {
+					g := geoms[prevB]
+					// Skip past hidden emphasis markers so each Right press moves one visible char.
+					if g.toDisp(ed.Caret.O) == prevD {
+						for ed.Caret.B == prevB && ed.Caret.O < len(ed.Doc.Blocks[prevB].Text) && g.toDisp(ed.Caret.O) == prevD {
+							ed.Right(false, m.Shift)
+						}
+					}
+					if ed.Caret.B == prevB {
+						d := g.toDisp(ed.Caret.O)
+						if target := g.toSrc(d); target > ed.Caret.O {
+							ed.MoveTo(notes.Pos{B: prevB, O: target}, m.Shift)
+						}
+					}
+				}
 			case vk == vkUp || vk == vkDown:
 				d := -1
 				if vk == vkDown {
@@ -535,7 +621,7 @@ func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH, y0, areaB, clipTop float32,
 		fade := c.Px(18)
 		halo := RectF{lane.L - fade, lane.T - fade, lane.R + fade, lane.B + fade}
 		hw, hh := int(math.Ceil(float64(halo.W()))), int(math.Ceil(float64(halo.H())))
-		key := fmt.Sprintf("toolhalo:%dx%d:%v", hw, hh, fade)
+		key := fmt.Sprintf("toolhalo:%s:%dx%d:%v", themeTag(), hw, hh, fade)
 		c.PushClip(cardRect)
 		c.Draw(func(cv Canvas) {
 			// Cover the 8 px top margin above the docked lane so scrolled lines
@@ -649,7 +735,7 @@ func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH, y0, areaB, clipTop float32,
 }
 
 // drawBlock draws one block: selection, mention chips, its marker, its text.
-func (n NotesEditor) drawBlock(c *Ctx, i int, b notes.Block, g blockGeom, f Font, styles []TextStyle, num int, markX, markW float32, focused bool, selA, selB notes.Pos) {
+func (n NotesEditor) drawBlock(c *Ctx, i int, b notes.Block, g blockGeom, f Font, num int, markX, markW float32, focused bool, selA, selB notes.Pos) {
 	ed := n.Ed
 	var sel []RectF
 	if ed.HasSel() && i >= selA.B && i <= selB.B {
@@ -661,7 +747,7 @@ func (n NotesEditor) drawBlock(c *Ctx, i int, b notes.Block, g blockGeom, f Font
 			to = selB.O
 		}
 		if g.lines != nil {
-			for _, r := range g.lines.Rects(from, to) {
+			for _, r := range g.lines.Rects(g.toDisp(from), g.toDisp(to)) {
 				sel = append(sel, RectF{g.x + r.L, g.top + r.T, g.x + r.R, g.top + r.B})
 			}
 		}
@@ -679,7 +765,7 @@ func (n NotesEditor) drawBlock(c *Ctx, i int, b notes.Block, g blockGeom, f Font
 		if focused && ed.Caret.B == i && ed.Caret.O > m.From && ed.Caret.O < m.To {
 			editing = true
 		}
-		for _, r := range g.lines.Rects(m.From, m.To) {
+		for _, r := range g.lines.Rects(g.toDisp(m.From), g.toDisp(m.To)) {
 			chips = append(chips, RectF{g.x + r.L - c.Px(1), g.top + r.T + c.Px(1), g.x + r.R + c.Px(1), g.top + r.B - c.Px(1)})
 		}
 	}
@@ -716,8 +802,8 @@ func (n NotesEditor) drawBlock(c *Ctx, i int, b notes.Block, g blockGeom, f Font
 			}
 			DrawIcon(cv, icon, RectF{line.L, line.T, line.R - c.Px(4), line.B}, c.Px(16), color)
 		}
-		if b.Text != "" {
-			cv.StyledParagraph(b.Text, RectF{g.x, g.top, g.x + g.w, g.bottom + c.Px(2)}, f, col(ColText), styles)
+		if g.disp.text != "" {
+			cv.StyledParagraph(g.disp.text, RectF{g.x, g.top, g.x + g.w, g.bottom + c.Px(2)}, f, col(ColText), g.disp.styles)
 		}
 	})
 }

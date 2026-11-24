@@ -15,8 +15,10 @@ type notchFrame struct {
 	width  float32 // the capsule's current width (animating to layout.W)
 	height float32 // its current height (animating between collapsed and open)
 	// collapsed draws the small capsule's cue instead of the content;
+	// hidden means the collapsed state is fully hidden (zero height) until hovered.
 	// hoverProgress (0..1) is how far resting the pointer on it has come.
 	collapsed     bool
+	hidden        bool
 	hover         bool
 	hoverProgress float64
 	content       float32 // content opacity while resizing
@@ -28,19 +30,17 @@ type notchFrame struct {
 	born          time.Time // when the notch appeared (for the pulse's phase)
 }
 
-var (
-	notchFill       = RGBA(ColBase, 0.97)
-	notchFillReady  = RGBA(ColCardHover, 0.97)
-	notchEdge       = RGBA(ColEdge, 1)
-	notchTitle      = RGBA(ColText, 1)
-	notchMuted      = RGBA(ColMuted, 1)
-	notchButton     = RGBA(ColControl, 1)
-	notchButtonHov  = RGBA(ColControlHi, 1)
-	notchPrimary    = RGBA(ColText, 1)
-	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xD8), 1)
-	notchOnPrimary  = RGBA(ColInk, 1)
-	notchTrack      = RGBA(ColText, 0.18)
-)
+func notchFill() ColorF       { return RGBA(ColBase, 0.97) }
+func notchFillReady() ColorF  { return RGBA(ColCardHover, 0.97) }
+func notchEdge() ColorF       { return RGBA(ColEdge, 1) }
+func notchTitle() ColorF      { return RGBA(ColText, 1) }
+func notchMuted() ColorF      { return RGBA(ColMuted, 1) }
+func notchButton() ColorF     { return RGBA(ColControl, 1) }
+func notchButtonHov() ColorF  { return RGBA(ColControlHi, 1) }
+func notchPrimary() ColorF    { return RGBA(ColText, 1) }
+func notchPrimaryHov() ColorF { return RGBA(ColPrimaryHover, 1) }
+func notchOnPrimary() ColorF  { return RGBA(ColInk, 1) }
+func notchTrack() ColorF      { return RGBA(ColText, 0.18) }
 
 // notchSurfaceSize is the fixed size of the window: the widest capsule
 // plus room for the top-edge flares and the shadow below and at the sides.
@@ -64,10 +64,10 @@ func renderNotch(s *Surface, f notchFrame) error {
 	ox, oy := f.capsuleOrigin(s.W)
 	h := f.height
 	w := f.width
-	fill := notchFill
-	edge := notchEdge
+	fill := notchFill()
+	edge := notchEdge()
 	if f.view.Mode == NotchStashDrop && f.view.Highlight {
-		fill = notchFillReady
+		fill = notchFillReady()
 		edge = RGBA(ColText, 0.35)
 	}
 	if f.collapsed && f.hoverProgress > 0 {
@@ -75,8 +75,15 @@ func renderNotch(s *Surface, f notchFrame) error {
 		// edge brightens, so the expansion is seen coming.
 		hp := float32(EaseOut(f.hoverProgress))
 		grow := hp * 5 * f.scale
-		ox, w, h = ox-grow, w+2*grow, h+hp*3*f.scale
+		dh := hp * 3 * f.scale
+		if f.hidden {
+			dh = hp * 5 * f.scale
+		}
+		ox, w, h = ox-grow, w+2*grow, h+dh
 		edge = RGBA(ColText, 0.15+0.45*hp)
+	}
+	if h <= 0.5 {
+		return p.End()
 	}
 	// The blob hangs from the top edge (clamped to y <= 0 so a downward bounce
 	// keeps the flares anchored to the top of the screen) with concave flares
@@ -107,7 +114,9 @@ func renderNotch(s *Surface, f notchFrame) error {
 		return p.End()
 	}
 	if f.collapsed || f.view.Mode == NotchStashed {
-		f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
+		if !f.hidden {
+			f.drawCollapsed(p, RectF{capsule.L, oy, capsule.R, capsule.B}, a)
+		}
 		return p.End()
 	}
 	// Content keeps its final layout and is centred in the capsule while
@@ -121,12 +130,12 @@ func renderNotch(s *Surface, f notchFrame) error {
 	f.drawIcon(p, at(f.layout.Icon), fade)
 	link := f.layout.LinkID != "" && f.hoverBtn == f.layout.LinkID
 	if f.view.Title != "" {
-		p.Text(f.view.Title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle))
+		p.Text(f.view.Title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle()))
 	}
 	if d := f.view.DetailText(f.now); d != "" {
-		dc := notchMuted
+		dc := notchMuted()
 		if link {
-			dc = notchTitle
+			dc = notchTitle()
 		}
 		p.Text(d, at(f.layout.Detail), scaled(notchDetailFont), fade(dc))
 	}
@@ -142,20 +151,24 @@ func renderNotch(s *Surface, f notchFrame) error {
 	for i, br := range f.layout.Buttons {
 		rc := at(br)
 		id := f.layout.IDs[i]
-		fill, text := notchButton, notchTitle
+		fill, text := notchButton(), notchTitle()
 		if f.layout.Primary[i] {
-			fill, text = notchPrimary, notchOnPrimary
+			fill, text = notchPrimary(), notchOnPrimary()
 			if id == f.hoverBtn {
-				fill = notchPrimaryHov
+				fill = notchPrimaryHov()
 			}
 		} else if id == f.hoverBtn {
-			fill = notchButtonHov
+			fill = notchButtonHov()
 		}
 		if id == f.pressBtn {
 			rc = RectF{rc.L + 1, rc.T + 1, rc.R - 1, rc.B - 1}
 		}
 		p.RoundRect(rc, rc.H()/2, fade(fill))
-		p.Text(f.layout.Labels[i], rc, scaled(notchButtonFont), fade(text))
+		if i < len(f.layout.Glyphs) && f.layout.Glyphs[i] != "" && f.layout.Labels[i] == "" {
+			DrawIcon(p, f.layout.Glyphs[i], rc, 14*f.scale, fade(text))
+		} else {
+			p.Text(f.layout.Labels[i], rc, scaled(notchButtonFont), fade(text))
+		}
 	}
 	return p.End()
 }
@@ -174,7 +187,7 @@ func (f notchFrame) drawIcon(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		p.Circle(cx, cy, rad*0.5, fade(RGBA(ColText, 1)))
 	case NotchWorking:
 		inner, outer := rad*0.62, rad
-		p.Arc(cx, cy, inner, outer, 0, 2*math.Pi, fade(notchTrack))
+		p.Arc(cx, cy, inner, outer, 0, 2*math.Pi, fade(notchTrack()))
 		if f.progress >= 0 {
 			p.Arc(cx, cy, inner, outer, 0, 2*math.Pi*min(1, f.progress), fade(RGBA(ColText, 1)))
 		} else {
@@ -232,18 +245,21 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		dx := box.L + end
 		p.Circle(dx, cy, 4.2*s*(0.8+0.3*pulse), fade(RGBA(ColLive, 0.25*pulse)))
 		p.Circle(dx, cy, 2.6*s, fade(RGBA(ColLive, 0.8+0.2*pulse)))
-		lv := min(1, f.levels[0])
 		bh := 2 * s
 		bar := RectF{dx + 5*s, cy - bh/2, box.R - end, cy + bh/2}
 		bw := bar.W()
-		p.RoundRect(bar, bh/2, fade(notchTrack))
-		if lv > 0 {
-			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*lv), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
+		p.RoundRect(bar, bh/2, fade(notchTrack()))
+		// Meeting audio (them) extends right-to-left underneath the personal mic bar.
+		if them := min(1, f.levels[1]); them > 0 {
+			p.RoundRect(RectF{bar.R - max(bh, bw*them), bar.T, bar.R, bar.B}, bh/2, fade(RGBA(ColMuted, 0.9)))
+		}
+		if me := min(1, f.levels[0]); me > 0 {
+			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*me), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
 		}
 	case NotchWorking:
 		bw, bh := box.W()-14*s, 3*s
 		bar := RectF{cx - bw/2, cy - bh/2, cx + bw/2, cy + bh/2}
-		p.RoundRect(bar, bh/2, fade(notchTrack))
+		p.RoundRect(bar, bh/2, fade(notchTrack()))
 		if f.progress > 0 {
 			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*min(1, f.progress)), bar.B}, bh/2, fade(RGBA(ColText, 1)))
 		}
@@ -258,7 +274,7 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		tf.Size *= s
 		p.Text(NotchFinished, at(l.Word), tf, fade(RGBA(ColText, 0.92)))
 	default:
-		p.Circle(cx, cy, 2.4*s, fade(notchMuted))
+		p.Circle(cx, cy, 2.4*s, fade(notchMuted()))
 	}
 }
 
@@ -285,7 +301,7 @@ func (f notchFrame) drawLevels(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		if i == 1 {
 			col = RGBA(ColMuted, 0.9)
 		}
-		p.RoundRect(RectF{x, rc.B - rc.H(), x + bw, rc.B}, bw/2, fade(notchTrack))
+		p.RoundRect(RectF{x, rc.B - rc.H(), x + bw, rc.B}, bw/2, fade(notchTrack()))
 		p.RoundRect(RectF{x, rc.B - h, x + bw, rc.B}, bw/2, fade(col))
 	}
 }

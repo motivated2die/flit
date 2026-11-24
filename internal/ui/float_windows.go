@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -67,6 +68,7 @@ const (
 
 var floatByHwnd = map[uintptr]*FloatWindow{}
 var floatClassDone bool
+var floatBgBrush uintptr
 
 // NewFloatWindow creates the (hidden) always-on-top floating window.
 func NewFloatWindow(title string) (*FloatWindow, error) {
@@ -76,7 +78,8 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	}
 	if !floatClassDone {
 		cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(floatProc), Instance: moduleHandle(), ClassName: u16(floatClass), Cursor: cursor}
+		floatBgBrush = darkBrush(ColCard)
+		wc := wndClassEx{Style: csHRedraw | csVRedraw, WndProc: windowsNewCallback(floatProc), Instance: moduleHandle(), ClassName: u16(floatClass), Cursor: cursor, Background: floatBgBrush}
 		wc.Size = uint32(unsafe.Sizeof(wc))
 		if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
 			return nil, fmt.Errorf("registering the float class: %w", err)
@@ -88,7 +91,7 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	if h == 0 {
 		return nil, fmt.Errorf("creating the float window: %w", err)
 	}
-	f := &FloatWindow{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColCard)}}
+	f := &FloatWindow{host: host{hwnd: h, metrics: m, scroll: map[string]float32{}, bg: col(ColCard), bgBrush: floatBgBrush}}
 	f.layout = func(c *Ctx, cw, ch float32) {
 		f.layoutContent(c, cw, ch)
 	}
@@ -98,12 +101,40 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	if procDwmSetWindowAttr.Find() == nil {
 		round := uint32(2) // DWMWCP_ROUND
 		procDwmSetWindowAttr.Call(h, dwmwaCornerPref, uintptr(unsafe.Pointer(&round)), 4)
-		dark := uint32(1)
-		procDwmSetWindowAttr.Call(h, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
-		border := colorref(ColEdge)
-		procDwmSetWindowAttr.Call(h, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
+		f.applyDWMTheme()
 	}
 	return f, nil
+}
+
+func (f *FloatWindow) applyDWMTheme() {
+	if procDwmSetWindowAttr.Find() != nil {
+		return
+	}
+	dark := uint32(1)
+	if IsLight() {
+		dark = 0
+	}
+	procDwmSetWindowAttr.Call(f.hwnd, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
+	border := colorref(ColEdge)
+	procDwmSetWindowAttr.Call(f.hwnd, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
+}
+
+// RefreshTheme updates the floating window's background brush, DWM border,
+// and repaints in the active theme.
+func (f *FloatWindow) RefreshTheme() {
+	f.bg = col(ColCard)
+	b := darkBrush(ColCard)
+	if b != 0 {
+		old := floatBgBrush
+		floatBgBrush = b
+		f.bgBrush = b
+		setClassBgBrush(f.hwnd, b)
+		if old != 0 {
+			procDeleteObject.Call(old)
+		}
+	}
+	f.applyDWMTheme()
+	f.Invalidate()
 }
 
 func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
@@ -143,26 +174,59 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 	}
 	if maxScroll > 0 {
 		top := c.Px(8)
-		track := h - 2*top
-		th := max(c.Px(28), track*h/(ph+2*pad))
-		ty := top + (track-th)*min(1, off/maxScroll)
-		bar := RectF{w - c.Px(scrollbarW+3), ty, w - c.Px(3), ty + th}
-		c.Draw(func(cv Canvas) { cv.RoundRect(bar, bar.W()/2, RGBA(ColText, 0.18)) })
+		drawScrollbar(c, scrollbarConfig{
+			ScrollID:   floatScrollID,
+			RightX:     w - c.Px(3),
+			TrackTop:   top,
+			TrackH:     h - 2*top,
+			ViewH:      h,
+			ContentH:   ph + 2*pad,
+			ContentTop: pad,
+			Offset:     off,
+			MaxScroll:  maxScroll,
+		})
 	}
 }
 
-// ShowNear brings the floating window up on top of other windows. The first
-// time it opens, it positions itself near (ax, ay) (or the right side of the
-// primary work area when hasAnchor is false); subsequent opens remember the
-// user's last position and size.
+// ShowNear brings the floating window up on top of other windows with a
+// subtle fade-in and enlarge (94% → 100% over ~150 ms). The first time it
+// opens, it positions itself near (ax, ay) (or the right side of the primary
+// work area when hasAnchor is false); subsequent opens remember the user's
+// last position and size.
 func (f *FloatWindow) ShowNear(ax, ay int32, hasAnchor bool) {
 	if !f.placed {
 		f.place(ax, ay, hasAnchor)
 		f.placed = true
 	}
-	procSetWindowPos.Call(f.hwnd, hwndTopmost, 0, 0, 0, 0, swpShowWindow|0x0001|0x0002) // NOSIZE|NOMOVE
+	wasHidden := !f.Visible() || (f.trans.active && f.trans.fadeOut)
+	if wasHidden {
+		f.cancelTransition()
+		var target winRect
+		hasRect := false
+		if ret, _, _ := procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&target))); ret != 0 && target.R > target.L && target.B > target.T {
+			hasRect = true
+		}
+		f.beginFadeIn(150*time.Millisecond, 0.94, target, hasRect)
+	} else {
+		f.cancelTransition()
+	}
+	procSetWindowPos.Call(f.hwnd, hwndTopmost, 0, 0, 0, 0, swpShowWindow|swpNoSize|swpNoMove)
 	procSetForegroundWindow.Call(f.hwnd)
 	f.Invalidate()
+	if wasHidden {
+		procUpdateWindow.Call(f.hwnd)
+		f.startTransitionTimer()
+	}
+}
+
+// FadeHide fades and subtly shrinks the floating window out (~100 ms) before
+// hiding it at its resting rect (used when returning to the main window).
+func (f *FloatWindow) FadeHide() {
+	if !f.Visible() {
+		return
+	}
+	f.CommitEdit()
+	f.startFadeOut(100*time.Millisecond, 0.96, nil)
 }
 
 // RestorePreDrag moves the window back to where it sat before the last drag
@@ -183,6 +247,7 @@ func (f *FloatWindow) RestorePreDrag() {
 // and hands off to native caption dragging so the user can pull it straight
 // out of the notch in one continuous motion.
 func (f *FloatWindow) ShowAtDrag(cx, cy int32) {
+	f.cancelTransition()
 	f.hasPreDrag = false
 	var cur struct{ L, T, R, B int32 }
 	procGetWindowRect.Call(f.hwnd, uintptr(unsafe.Pointer(&cur)))

@@ -151,6 +151,9 @@ func (t TextField) Layout(c *Ctx, x, y, w float32) float32 {
 	} else if text == "" {
 		text, color = t.Placeholder, col(ColFaint)
 	}
+	if t.Title && strings.TrimSpace(text) != "" {
+		c.AddAnchor(strings.TrimSpace(text), y)
+	}
 	clear := RectF{}
 	hasText := t.Value != "" || (edit != nil && len(edit.Text) > 0)
 	if t.OnClear != nil && hasText {

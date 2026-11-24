@@ -24,52 +24,55 @@ var (
 // Icons: Tabler icons embedded from icons/ (icon.go), by file name. Every
 // "Glyph" field of a widget takes one of these.
 const (
-	GlyphHome       = "home"
-	GlyphHistory    = "history"
-	GlyphSettings   = "settings"
-	GlyphFolder     = "folder"
-	GlyphCopy       = "copy"
-	GlyphMic        = "microphone"
-	GlyphStop       = "player-stop"
-	GlyphRecord     = "player-record-filled"
-	GlyphDocument   = "file-text"
-	GlyphBack       = "arrow-left"
-	GlyphChevron    = "chevron-right"
-	GlyphRefresh    = "refresh"
-	GlyphCheck      = "check"
-	GlyphWarning    = "alert-triangle"
-	GlyphGlobe      = "world"
-	GlyphEdit       = "pencil"
-	GlyphCalendar   = "calendar"
-	GlyphMeeting    = "calendar-event" // a meeting in a list
-	GlyphOpenLink   = "external-link"
-	GlyphPlay       = "player-play-filled"
-	GlyphPause      = "player-pause-filled"
-	GlyphDelete     = "trash"
-	GlyphArticle    = "file-text" // a meeting with notes / Meetings nav
-	GlyphFileSignal = "file-signal"
-	GlyphFileTextAI = "file-text-ai"
-	GlyphSearch     = "search"
-	GlyphPeople     = "users"
-	GlyphPower      = "power"
-	GlyphUp         = "chevron-up"
-	glyphPlayLine   = "player-play" // outline, for quiet buttons
-	glyphPauseLine  = "player-pause"
-	GlyphDown       = "chevron-down"
-	GlyphUpdate     = "download"
-	GlyphNotes      = "notes"
-	GlyphTask       = "square"
-	GlyphTaskDone   = "square-check"
-	GlyphBold       = "bold"
-	GlyphItalic     = "italic"
-	GlyphList       = "list"
-	GlyphNumbered   = "list-numbers"
-	GlyphH2         = "h-2"
-	GlyphH3         = "h-3"
-	GlyphAt         = "at"
-	GlyphPin        = "pin"
-	glyphMinimize   = "minus"
-	glyphClose      = "x"
+	GlyphHome           = "home"
+	GlyphHistory        = "history"
+	GlyphSettings       = "settings"
+	GlyphFolder         = "folder"
+	GlyphCopy           = "copy"
+	GlyphMic            = "microphone"
+	GlyphStop           = "player-stop"
+	GlyphRecord         = "player-record-filled"
+	GlyphDocument       = "file-text"
+	GlyphBack           = "arrow-left"
+	GlyphChevron        = "chevron-right"
+	GlyphRefresh        = "refresh"
+	GlyphCheck          = "check"
+	GlyphWarning        = "alert-triangle"
+	GlyphGlobe          = "world"
+	GlyphEdit           = "pencil"
+	GlyphCalendar       = "calendar"
+	GlyphMeeting        = "calendar-event"  // a meeting in a list
+	GlyphCalendarRepeat = "calendar-repeat" // a recurring meeting
+	GlyphOpenLink       = "external-link"
+	GlyphPlay           = "player-play-filled"
+	GlyphPause          = "player-pause-filled"
+	GlyphDelete         = "trash"
+	GlyphArticle        = "file-text" // a meeting with notes / Meetings nav
+	GlyphFileSignal     = "file-signal"
+	GlyphFileTextAI     = "file-text-ai"
+	GlyphSearch         = "search"
+	GlyphPeople         = "users"
+	GlyphPower          = "power"
+	GlyphUp             = "chevron-up"
+	glyphPlayLine       = "player-play" // outline, for quiet buttons
+	glyphPauseLine      = "player-pause"
+	GlyphDown           = "chevron-down"
+	GlyphUpdate         = "download"
+	GlyphNotes          = "notes"
+	GlyphTask           = "square"
+	GlyphTaskDone       = "square-check"
+	GlyphBold           = "bold"
+	GlyphItalic         = "italic"
+	GlyphList           = "list"
+	GlyphNumbered       = "list-numbers"
+	GlyphH2             = "h-2"
+	GlyphH3             = "h-3"
+	GlyphAt             = "at"
+	GlyphPin            = "pin"
+	GlyphSun            = "sun"
+	GlyphMoon           = "moon"
+	glyphMinimize       = "minus"
+	glyphClose          = "x"
 )
 
 func col(c interface{ RGBA() (r, g, b, a uint32) }) ColorF { return RGBA(c, 1) }
@@ -183,6 +186,7 @@ func (s Space) Layout(c *Ctx, x, y, w float32) float32 { return c.Px(float32(s))
 type Title string
 
 func (t Title) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(string(t), y)
 	h := c.Px(34)
 	r := RectF{x, y, x + w, y + h}
 	c.Draw(func(cv Canvas) { cv.Text(string(t), r, c.F(fontTitle), col(ColText)) })
@@ -193,6 +197,7 @@ func (t Title) Layout(c *Ctx, x, y, w float32) float32 {
 type Caption string
 
 func (t Caption) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(string(t), y)
 	h := c.Px(22)
 	r := RectF{x + c.Px(2), y, x + w, y + h}
 	c.Draw(func(cv Canvas) { cv.Text(strings.ToUpper(string(t)), r, c.F(fontCaption), col(ColFaint)) })
@@ -390,7 +395,7 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	case b.Disabled:
 		fill, text = RGBA(ColControl, 0.5), col(ColFaint)
 	case b.Primary && c.Hover == b.ID:
-		fill, text = col(rgb(0xDC, 0xDC, 0xDC)), col(ColInk)
+		fill, text = col(ColPrimaryHover), col(ColInk)
 	case b.Primary:
 		fill, text = col(ColText), col(ColInk)
 	case (b.Danger || b.HoverDanger) && c.Hover == b.ID:

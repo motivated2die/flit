@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -172,7 +173,7 @@ func (a *App) testCalendar() {
 // --- matching -------------------------------------------------------------
 
 func infoOf(m calendar.Meeting) session.MeetingInfo {
-	return session.MeetingInfo{UID: m.UID, Title: m.Title, Start: m.Start, End: m.End, Location: m.Location, Link: m.Link, Provider: m.Provider}
+	return session.MeetingInfo{UID: m.UID, Title: m.Title, Start: m.Start, End: m.End, Recurring: m.Recurring, Location: m.Location, Link: m.Link, Provider: m.Provider}
 }
 
 // matchMeeting names a recording after its calendar meeting, or offers the
@@ -226,7 +227,7 @@ func (a *App) detectedName(provider, windowTitle string) (string, bool) {
 // recording, others with a link offer Join.
 func (a *App) meetingRow(m calendar.Meeting, id string, now time.Time) ui.Node {
 	row := ui.MeetingRow{ID: id, Title: m.Title, Place: placeText(m), Past: !m.End.After(now),
-		Now: !m.Start.After(now) && m.End.After(now) && !m.AllDay}
+		Now: !m.Start.After(now) && m.End.After(now) && !m.AllDay, Recurring: m.Recurring}
 	if m.AllDay {
 		row.Time = "All day"
 	} else {
@@ -524,11 +525,11 @@ func (a *App) calendarSettings() []ui.Node {
 	return []ui.Node{ui.Caption("Calendar"), ui.Card{Gap: 8, Items: card}}
 }
 
-// meetingCard is a recording's calendar meeting, or the question which
-// one it was.
+// meetingCard asks which meeting a recording belongs to when calendar events
+// overlapped. Once a recording is linked to a meeting, its details live in
+// meetingBadge beside the page title instead of duplicating the title here.
 func (a *App) meetingCard(s *session.Session) ui.Node {
-	switch {
-	case len(s.Meta.MeetingChoices) > 0 && !s.Meta.MeetingChosen:
+	if len(s.Meta.MeetingChoices) > 0 && !s.Meta.MeetingChosen {
 		rows := []ui.Node{ui.Label{Text: "Which meeting was this?", Strong: true},
 			ui.Para{Text: "Your calendar has more than one meeting at this time.", Muted: true, Small: true}}
 		for i, c := range s.Meta.MeetingChoices {
@@ -539,13 +540,102 @@ func (a *App) meetingCard(s *session.Session) ui.Node {
 		}
 		rows = append(rows, ui.ChoiceRow{ID: "session:choice:none", Title: "None of these", Level: -1, OnClick: func() { a.chooseMeeting(s, nil) }})
 		return ui.Card{Gap: 2, Items: rows}
-	case s.Meta.Meeting != nil:
-		m := s.Meta.Meeting
-		detail := "From your calendar · " + m.Start.Local().Format("Mon 2 Jan, 15:04") + "–" + m.End.Local().Format("15:04") + placeSuffix(*m)
-		return ui.SettingRow{Label: m.Title, Detail: detail,
-			Control: ui.Link{ID: "session:notmeeting", Label: "Not this meeting", Glyph: ui.GlyphBack, OnClick: func() { a.chooseMeeting(s, nil) }}}
 	}
 	return nil
+}
+
+// meetingBadge is the calendar icon to the left of a recording's title, with a
+// hover popover showing the linked calendar entry and (for recurring series)
+// links to up to three previous recorded meetings in the same series.
+func (a *App) meetingBadge(s *session.Session) ui.Node {
+	if s == nil || s.Meta.Meeting == nil {
+		return nil
+	}
+	m := s.Meta.Meeting
+	prev := previousInSeries(a.sessions, s, 3)
+	recurring := m.Recurring || hasOtherInSeries(a.sessions, s)
+	glyph := ui.GlyphMeeting
+	header := "From your calendar"
+	if recurring {
+		glyph = ui.GlyphCalendarRepeat
+		header = "Recurring meeting"
+	}
+	when := m.Start.Local().Format("Mon 2 Jan, 15:04") + "–" + m.End.Local().Format("15:04")
+	place := placeText(calendar.Meeting{Location: m.Location, Link: m.Link, Provider: m.Provider})
+	var links []ui.PopoverLink
+	curYear := s.Meta.Started.Local().Year()
+	for _, p := range prev {
+		pid := p.Meta.ID
+		name := p.Meta.Title
+		if name == "" {
+			name = defaultTitle(p)
+		}
+		dateFmt := "2 Jan"
+		if p.Meta.Started.Local().Year() != curYear {
+			dateFmt = "2 Jan 2006"
+		}
+		links = append(links, ui.PopoverLink{
+			ID:      pid,
+			Title:   name,
+			Detail:  p.Meta.Started.Local().Format(dateFmt),
+			OnClick: func() { a.go_(pageSession + pid) },
+		})
+	}
+	return ui.CalendarBadge{
+		ID:        "session:cal",
+		Glyph:     glyph,
+		Header:    header,
+		Title:     m.Title,
+		When:      when,
+		Place:     place,
+		Action:    "Not this meeting",
+		OnAction:  func() { a.chooseMeeting(s, nil) },
+		PrevTitle: "Previous meetings",
+		Prev:      links,
+	}
+}
+
+// previousInSeries returns up to limit earlier recordings sharing s's calendar
+// series UID, newest first. Matching by UID survives renaming or rescheduling
+// individual occurrences.
+func previousInSeries(sessions []*session.Session, s *session.Session, limit int) []*session.Session {
+	if s == nil || s.Meta.Meeting == nil || s.Meta.Meeting.UID == "" || limit <= 0 {
+		return nil
+	}
+	uid := s.Meta.Meeting.UID
+	var out []*session.Session
+	for _, other := range sessions {
+		if other == nil || other.Meta.ID == s.Meta.ID {
+			continue
+		}
+		if other.Meta.Meeting == nil || other.Meta.Meeting.UID != uid {
+			continue
+		}
+		if !other.Meta.Started.Before(s.Meta.Started) {
+			continue
+		}
+		out = append(out, other)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Meta.Started.After(out[j].Meta.Started) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// hasOtherInSeries reports whether any other recording shares s's calendar UID
+// (handles recurring recordings saved before MeetingInfo.Recurring existed).
+func hasOtherInSeries(sessions []*session.Session, s *session.Session) bool {
+	if s == nil || s.Meta.Meeting == nil || s.Meta.Meeting.UID == "" {
+		return false
+	}
+	uid := s.Meta.Meeting.UID
+	for _, other := range sessions {
+		if other != nil && other.Meta.ID != s.Meta.ID && other.Meta.Meeting != nil && other.Meta.Meeting.UID == uid {
+			return true
+		}
+	}
+	return false
 }
 
 func placeSuffix(m session.MeetingInfo) string {

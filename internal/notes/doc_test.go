@@ -166,7 +166,13 @@ func TestInline(t *testing.T) {
 	for in, want := range map[string]string{
 		"plain":                  "plain",
 		"a **b** c":              "a [**]B(b)[**] c",
+		"a **b ** c":             "a [**]B(b )[**] c",
+		"a ** b** c":             "a [**]B( b)[**] c",
+		"a ** b ** c":            "a [**]B( b )[**] c",
 		"a *b* c":                "a [*]I(b)[*] c",
+		"a *b * c":               "a [*]I(b )[*] c",
+		"a * b* c":               "a [*]I( b)[*] c",
+		"**   **":                "**   **",
 		"__b__ and _i_":          "[__]B(b)[__] and [_]I(i)[_]",
 		"**bold *both* bold**":   "[**]B(bold )[*]BI(both)[*]B( bold)[**]",
 		"snake_case_name":        "snake_case_name",
