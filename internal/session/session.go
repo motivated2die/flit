@@ -83,13 +83,14 @@ type Meta struct {
 
 // MeetingInfo is a calendar meeting as a recording keeps it.
 type MeetingInfo struct {
-	UID      string    `json:"uid,omitempty"`
-	Title    string    `json:"title"`
-	Start    time.Time `json:"start"`
-	End      time.Time `json:"end"`
-	Location string    `json:"location,omitempty"`
-	Link     string    `json:"link,omitempty"`
-	Provider string    `json:"provider,omitempty"`
+	UID       string    `json:"uid,omitempty"`
+	Title     string    `json:"title"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	Recurring bool      `json:"recurring,omitempty"`
+	Location  string    `json:"location,omitempty"`
+	Link      string    `json:"link,omitempty"`
+	Provider  string    `json:"provider,omitempty"`
 }
 
 // DeviceUse is a device a track was recorded from, from a moment on.

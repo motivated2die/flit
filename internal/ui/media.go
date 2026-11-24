@@ -506,6 +506,7 @@ type MeetingRow struct {
 	Title       string
 	Place       string
 	Now, Past   bool
+	Recurring   bool
 	NoIcon      bool
 	// Actions sit on the right (Sized, the last one rightmost);
 	// HoverActions join them on their left while the pointer is on the row.
@@ -573,7 +574,11 @@ func (m MeetingRow) Layout(c *Ctx, x, y, w float32) float32 {
 			strong, muted = col(ColMuted), col(ColFaint)
 		}
 		if !m.NoIcon {
-			DrawIcon(cv, GlyphMeeting, icon, iconS, strong)
+			glyph := GlyphMeeting
+			if m.Recurring {
+				glyph = GlyphCalendarRepeat
+			}
+			DrawIcon(cv, glyph, icon, iconS, strong)
 		}
 		switch {
 		case m.Until == "": // all day

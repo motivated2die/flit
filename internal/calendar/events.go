@@ -15,15 +15,16 @@ import (
 // Meeting is one occurrence of a calendar event: what flit shows and
 // matches recordings with. Descriptions are not kept.
 type Meeting struct {
-	UID      string    `json:"uid"`
-	Title    string    `json:"title"`
-	Start    time.Time `json:"start"`
-	End      time.Time `json:"end"`
-	AllDay   bool      `json:"allDay,omitempty"`
-	Location string    `json:"location,omitempty"` // a place in words ("" when it was only a link)
-	Link     string    `json:"link,omitempty"`     // a meeting link (or the location's link)
-	Provider string    `json:"provider,omitempty"` // the link's meeting app: zoom, teams, meet, webex
-	Free     bool      `json:"free,omitempty"`     // marked as not busy (TRANSP:TRANSPARENT)
+	UID       string    `json:"uid"`
+	Title     string    `json:"title"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	AllDay    bool      `json:"allDay,omitempty"`
+	Recurring bool      `json:"recurring,omitempty"`
+	Location  string    `json:"location,omitempty"` // a place in words ("" when it was only a link)
+	Link      string    `json:"link,omitempty"`     // a meeting link (or the location's link)
+	Provider  string    `json:"provider,omitempty"` // the link's meeting app: zoom, teams, meet, webex
+	Free      bool      `json:"free,omitempty"`     // marked as not busy (TRANSP:TRANSPARENT)
 }
 
 // Key identifies an occurrence (a series' events share the UID).
@@ -35,7 +36,7 @@ type event struct {
 	start                                civil
 	zone                                 zone
 	startT, endT                         time.Time
-	allDay, cancelled, free              bool
+	allDay, cancelled, free, recurring   bool
 	rule                                 *rule
 	exdates                              map[int64]bool // instants (Unix seconds); dates for all-day: local midnight
 	recurrenceID                         time.Time      // set on an override of one occurrence
@@ -142,6 +143,7 @@ func readEvent(c *component, zs *zones) (event, bool) {
 			ev.recurrenceID = rz.at(t)
 		}
 	}
+	ev.recurring = ev.rule != nil || !ev.recurrenceID.IsZero() || len(c.all("RDATE")) > 0
 	var loc, desc string
 	if p, ok := c.get("LOCATION"); ok {
 		loc = strings.TrimSpace(text(p.value))
@@ -323,7 +325,7 @@ func (f *Feed) Meetings(from, to time.Time) []Meeting {
 				return
 			}
 			out = append(out, Meeting{UID: ev.uid, Title: ev.title, Start: t, End: end, AllDay: ev.allDay,
-				Location: ev.location, Link: ev.link, Provider: ev.provider, Free: ev.free})
+				Recurring: ev.recurring, Location: ev.location, Link: ev.link, Provider: ev.provider, Free: ev.free})
 		}
 		if ev.rule == nil || !ev.recurrenceID.IsZero() {
 			add(ev.startT)

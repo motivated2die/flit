@@ -490,6 +490,7 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 	}
 	c.PushClip(view)
 	ph := f.Page.Layout(c, colX, pad-off, pw)
+	c.FlushOverlays()
 	c.PopClip()
 	if f.Dock != nil {
 		f.drawDock(c, dk)

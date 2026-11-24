@@ -580,7 +580,11 @@ func (a *App) sessionPage(id string) ui.Node {
 	}
 	title := ui.TextField{ID: "session:title", Title: true, Value: s.Meta.Title, Placeholder: defaultTitle(s), MaxLen: 80,
 		OnCommit: func(t string) { a.renameSession(s, t) }, Focus: focusTitle, Next: "notes:" + id}
-	items := []ui.Node{back, title,
+	var titleRow ui.Node = title
+	if badge := a.meetingBadge(s); badge != nil {
+		titleRow = ui.HStack{Gap: 10, Items: []ui.Node{badge, ui.VStack{Items: []ui.Node{title}}}}
+	}
+	items := []ui.Node{back, titleRow,
 		ui.Label{Text: a.facts(s) + " · " + a.stateText(s), Muted: true}}
 	if card := a.meetingCard(s); card != nil {
 		items = append(items, card)
