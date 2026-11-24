@@ -656,8 +656,8 @@ func loadHeldoutCases(root string) ([]benchCase, error) {
 			notesMD: "- neue Methoden / Grabungen\n" +
 				"- **Digitalisierung** & 3D?\n",
 			times: map[string]int{
-				"neue Methoden / Grabungen":   110,
-				"**Digitalisierung** & 3D?":   320,
+				"neue Methoden / Grabungen": 110,
+				"**Digitalisierung** & 3D?": 320,
 			},
 		},
 		{

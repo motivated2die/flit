@@ -321,3 +321,45 @@ func TestNotesEditorVerticalBeforeRepaint(t *testing.T) {
 		t.Errorf("Down after shrink: caret %v out of %d blocks", ed.Caret, len(ed.Doc.Blocks))
 	}
 }
+
+func TestNotesEditorHidesEmphasisMarkers(t *testing.T) {
+	b := notes.Block{Kind: notes.Para, Text: "a **bold ** and *it* [@flit: q]"}
+	d := buildDisplay(b)
+	want := "a bold  and it [@flit: q]"
+	if d.text != want {
+		t.Fatalf("display text = %q, want %q", d.text, want)
+	}
+	var gotBold, gotItalic string
+	for _, st := range d.styles {
+		if st.Bold && !st.Italic && d.text[st.From:st.To] != "@flit" {
+			gotBold = d.text[st.From:st.To]
+		}
+		if st.Italic {
+			gotItalic = d.text[st.From:st.To]
+		}
+	}
+	if gotBold != "bold " || gotItalic != "it" {
+		t.Errorf("styled ranges: bold=%q italic=%q", gotBold, gotItalic)
+	}
+
+	// Arrow Right/Left steps across hidden markers without dead keypresses.
+	ed := notes.NewEditor(notes.Parse("a **bc** d"))
+	ed.MoveTo(notes.Pos{B: 0, O: 0}, false)
+	c, _ := layoutEditor(ed, true)
+	tg, _ := c.editorByID("notes")
+	e := env()
+	// Display string is "a bc d" (6 visible chars): 6 Right presses reach the end.
+	for range 6 {
+		tg.Key(vkRight, Mods{}, e)
+	}
+	if ed.Caret.O != len("a **bc** d") {
+		t.Errorf("after 6 Right presses: caret O=%d, want %d", ed.Caret.O, len("a **bc** d"))
+	}
+	// 6 Left presses return to 0.
+	for range 6 {
+		tg.Key(vkLeft, Mods{}, e)
+	}
+	if ed.Caret.O != 0 {
+		t.Errorf("after 6 Left presses: caret O=%d, want 0", ed.Caret.O)
+	}
+}

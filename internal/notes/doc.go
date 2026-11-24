@@ -490,13 +490,18 @@ func Inline(s string) []Span {
 }
 
 // emphasis styles s[from:to]: **bold** (or __bold__) and *italic* (or
-// _italic_), markers as Marker spans. A delimiter opens before a non-space
-// and closes after one; underscores don't work inside words (snake_case).
+// _italic_), markers as Marker spans. Star delimiters may have a leading or
+// trailing space inside the span (e.g. "**bold **", "*italic *"), while
+// space-isolated single '*' (like "2 * 3 * 4") stay plain text and
+// underscores respect word boundaries (snake_case).
 func emphasis(s string, from, to int) []Span {
 	if from >= to {
 		return nil
 	}
-	type mark struct{ at, n int }
+	type mark struct {
+		at, n     int
+		spaceBoth bool
+	}
 	var out []Span
 	bold, italic := false, false
 	// Find matching pairs first, so an unclosed delimiter stays text.
@@ -521,13 +526,19 @@ func emphasis(s string, from, to int) []Span {
 		if i+n >= to {
 			next = ' '
 		}
-		canOpen := !unicode.IsSpace(next) && (c == '*' || !isWordRune(prev))
-		canClose := !unicode.IsSpace(prev) && i > from && (c == '*' || !isWordRune(next))
-		m := mark{i, n}
+		spaceBoth := unicode.IsSpace(prev) && unicode.IsSpace(next)
+		canOpen := (c == '*' && i+n < to) || (c == '_' && !isWordRune(prev) && !unicode.IsSpace(next))
+		canClose := i > from && (c == '*' || (c == '_' && !isWordRune(next) && !unicode.IsSpace(prev)))
+		m := mark{i, n, spaceBoth}
 		closed := false
 		if canClose {
 			for k := len(stack) - 1; k >= 0; k-- {
 				if s[stack[k].at] == c && stack[k].n == n {
+					// Reject whitespace-only spans ("**  **") and arithmetic
+					// like "2 * 3 * 4" where both single '*' are space-isolated.
+					if strings.TrimSpace(s[stack[k].at+n:i]) == "" || (n == 1 && stack[k].spaceBoth && m.spaceBoth) {
+						continue
+					}
 					pairs = append(pairs, [2]mark{stack[k], m})
 					stack = stack[:k]
 					closed = true
