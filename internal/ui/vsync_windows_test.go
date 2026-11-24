@@ -346,3 +346,52 @@ func TestLiveDotRippleAndSoftDiscPixels(t *testing.T) {
 		t.Fatalf("after liveRippleDur ambient Animating=false, want true")
 	}
 }
+
+func TestNotchSpringLiquidOvershootAndInterrupt(t *testing.T) {
+	// Drop-in spring should have a subtle liquid micro-overshoot (~2-5%) and settle at 1.
+	var s spring1D
+	s.snap(0)
+	s.target = 1
+	maxPos := 0.0
+	settled := false
+	for i := 0; i < 200; i++ {
+		moving := s.step(1.0/144.0, notchRiseOmega, notchRiseZeta, 0.002, 0.05)
+		if s.pos > maxPos {
+			maxPos = s.pos
+		}
+		if !moving {
+			settled = true
+			break
+		}
+	}
+	if !settled || s.pos != 1 || s.vel != 0 {
+		t.Fatalf("rise spring did not settle cleanly: settled=%v pos=%v vel=%v", settled, s.pos, s.vel)
+	}
+	if maxPos <= 1.005 || maxPos >= 1.12 {
+		t.Fatalf("rise spring overshoot maxPos = %v, want subtle liquid overshoot in (1.005, 1.12)", maxPos)
+	}
+
+	// Mid-flight interruption: expanding from 46 -> 300, reversed back to 46 mid-way,
+	// should preserve velocity smoothly and settle cleanly at 46.
+	var w spring1D
+	w.snap(46)
+	w.target = 300
+	for i := 0; i < 12; i++ {
+		w.step(1.0/144.0, notchExpandWOmega, notchExpandWZeta, 0.25, 8)
+	}
+	midPos, midVel := w.pos, w.vel
+	if midPos <= 46 || midVel <= 0 {
+		t.Fatalf("expected positive expansion mid-flight, got pos=%v vel=%v", midPos, midVel)
+	}
+	w.target = 46
+	settled = false
+	for i := 0; i < 250; i++ {
+		if !w.step(1.0/144.0, notchShrinkWOmega, notchShrinkWZeta, 0.25, 8) {
+			settled = true
+			break
+		}
+	}
+	if !settled || w.pos != 46 || w.vel != 0 {
+		t.Fatalf("interrupted width spring did not settle cleanly: settled=%v pos=%v vel=%v", settled, w.pos, w.vel)
+	}
+}

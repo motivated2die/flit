@@ -94,6 +94,11 @@ type Notch struct {
 	fromW, toW  float32
 	fromH, toH  float32
 	resizeStart time.Time
+	wSp, hSp    spring1D
+	riseSp      spring1D
+	springTick  time.Time
+	vsync       vsyncPacer
+	vsyncOn     bool
 
 	col           Collapser
 	transparent   bool    // collapsed: clicks go through to what lies behind
@@ -182,8 +187,14 @@ func (n *Notch) Show(v NotchView) {
 	target := n.layout(now)
 	if wasVisible {
 		n.fromW, n.toW, n.fromH, n.toH, n.resizeStart = oldW, target.W, oldH, target.H, now
+		n.wSp.target, n.hSp.target = float64(target.W), float64(target.H)
 	} else {
 		n.fromW, n.toW, n.fromH, n.toH = target.W, target.W, target.H, target.H
+		n.wSp.snap(float64(target.W))
+		n.hSp.snap(float64(target.H))
+		n.riseSp.snap(0)
+		n.riseSp.target = 1
+		n.springTick = now
 		n.phase, n.phaseStart = phShowing, now
 		if n.born.IsZero() {
 			n.born = now
@@ -258,6 +269,8 @@ func (n *Notch) SetZoom(z float32) {
 		now := time.Now()
 		lay := n.layout(now)
 		n.fromW, n.toW, n.fromH, n.toH = lay.W, lay.W, lay.H, lay.H
+		n.wSp.snap(float64(lay.W))
+		n.hSp.snap(float64(lay.H))
 		n.dirty = true
 		n.tick()
 		return
@@ -313,9 +326,10 @@ func (n *Notch) hiddenCollapsed() bool {
 }
 
 func (n *Notch) currentSize(now time.Time) (float32, float32) {
-	// With a little overshoot: it settles into its new size.
-	t := float32(EaseOutBack(float64(now.Sub(n.resizeStart))/float64(notchResize), notchBounceResize))
-	w, h := Lerp(n.fromW, n.toW, t), Lerp(n.fromH, n.toH, t)
+	if n.wSp.pos == 0 && n.toW > 0 {
+		return max(1, min(n.toW, notchMaxW*n.scale)), max(0, n.toH)
+	}
+	w, h := float32(n.wSp.pos), float32(n.hSp.pos)
 	return max(1, min(w, notchMaxW*n.scale)), max(0, h)
 }
 
@@ -359,13 +373,17 @@ func (n *Notch) tick() {
 		return
 	}
 	now := time.Now()
+	dt := now.Sub(n.springTick).Seconds()
+	n.springTick = now
 	var slide, rise float64
 	switch n.phase {
 	case phShowing:
-		slide = float64(now.Sub(n.phaseStart)) / float64(notchSlideIn)
-		rise = EaseOutBack(slide, notchBounceIn) // drops a touch past its place, then settles
-		if slide >= 1 {
+		n.riseSp.target = 1
+		if !n.riseSp.step(dt, notchRiseOmega, notchRiseZeta, 0.002, 0.05) {
 			n.phase, slide, rise = phShown, 1, 1
+		} else {
+			rise = n.riseSp.pos
+			slide = max(0, min(1, rise))
 		}
 	case phShown:
 		slide, rise = 1, 1
@@ -376,10 +394,12 @@ func (n *Notch) tick() {
 			}
 		}
 	case phHiding:
-		slide = 1 - float64(now.Sub(n.phaseStart))/float64(notchSlideOut)
-		rise = EaseOut(slide) // in time: slow at first, then quickly up and away
-		if slide <= 0 {
+		p := float64(now.Sub(n.phaseStart)) / float64(notchSlideOut)
+		slide = 1 - p
+		rise = 1 - EaseIn(p) // brisk tuck upward and away
+		if p >= 1 {
 			n.phase = phHidden
+			n.setVsync(false)
 			n.setTimer(0)
 			procShowWindow.Call(n.hwnd, swHide)
 			return
@@ -431,16 +451,28 @@ func (n *Notch) tick() {
 	if lay.W != n.toW || lay.H != n.toH { // collapsed/opened, the clock widened
 		n.fromW, n.fromH = curW, curH
 		n.toW, n.toH, n.resizeStart = lay.W, lay.H, now
+		n.wSp.target, n.hSp.target = float64(lay.W), float64(lay.H)
 	}
+	wOmega, wZeta := notchExpandWOmega, notchExpandWZeta
+	if n.wSp.target < n.wSp.pos {
+		wOmega, wZeta = notchShrinkWOmega, notchShrinkWZeta
+	}
+	hOmega, hZeta := notchExpandHOmega, notchExpandHZeta
+	if n.hSp.target < n.hSp.pos {
+		hOmega, hZeta = notchShrinkHOmega, notchShrinkHZeta
+	}
+	resizingW := n.wSp.step(dt, wOmega, wZeta, 0.25, 8)
+	resizingH := n.hSp.step(dt, hOmega, hZeta, 0.25, 8)
+	resizing := resizingW || resizingH
 	width, height := n.currentSize(now)
 	content := float32(1)
-	if resizing := now.Sub(n.resizeStart) < notchResize && (n.fromW != n.toW || n.fromH != n.toH); resizing && n.view.Mode != NotchStashDrop {
+	if resizing && (n.fromW != n.toW || n.fromH != n.toH) && n.view.Mode != NotchStashDrop {
 		// The content fades in on an S-curve as the shape nears its size.
-		content = float32(Smoothstep(0.3, 0.85, float64(now.Sub(n.resizeStart))/float64(notchResize)))
+		content = float32(Smoothstep(0.25, 0.8, float64(now.Sub(n.resizeStart))/float64(notchResize)))
 	}
 	cd := n.view.CountdownAt(now)
 	counting := cd >= 0 && cd < 1
-	moving := n.phase == phShowing || n.phase == phHiding || now.Sub(n.resizeStart) < notchResize || counting ||
+	moving := n.phase == phShowing || n.phase == phHiding || resizing || counting ||
 		(n.view.Mode == NotchWorking && n.progress >= 0 && absf(target-n.progress) > 0.002)
 	// A collapsed, still capsule needs no new frames: only the pointer is
 	// polled. The live dot and the prompt's dot always move (except when the
@@ -459,11 +491,26 @@ func (n *Notch) tick() {
 
 	switch {
 	case moving || hp > 0:
-		n.setTimer(frameFast)
+		n.setTimer(0)
+		n.setVsync(true)
 	case live || n.view.AutoHide > 0 || n.view.Collapsible:
+		n.setVsync(false)
 		n.setTimer(frameSlow)
 	default:
+		n.setVsync(false)
 		n.setTimer(0)
+	}
+}
+
+func (n *Notch) setVsync(on bool) {
+	if on == n.vsyncOn {
+		return
+	}
+	n.vsyncOn = on
+	if on {
+		n.vsync.start(n.hwnd)
+	} else {
+		n.vsync.stopPacer()
 	}
 }
 
@@ -531,6 +578,14 @@ func notchProc(hwnd uintptr, m uint32, w, l uintptr) uintptr {
 	switch m {
 	case wmTimer:
 		n.tick()
+		return 0
+	case wmVsync:
+		n.vsync.ack()
+		n.tick()
+		return 0
+	case wmDestroy:
+		n.setVsync(false)
+		n.setTimer(0)
 		return 0
 	case wmMouseActivate:
 		return maNoActivate
