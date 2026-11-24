@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 	"unsafe"
@@ -147,7 +146,7 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 		return
 	}
 	pad := c.Px(floatPad)
-	off := float32(math.Round(float64(c.Scroll[floatScrollID])))
+	off := c.Scroll[floatScrollID]
 	view := RectF{0, 0, w, h}
 	c.PushClip(view)
 	ph := node.Layout(c, pad, pad-off, w-2*pad)

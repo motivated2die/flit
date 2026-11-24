@@ -26,6 +26,9 @@ type Window struct {
 	// Whether a popover is open, and since when (it fades in).
 	modalOn bool
 	modalAt time.Time
+	// Whether a recording is live, and since when (triggers the sidebar dot ripple).
+	liveOn bool
+	liveAt time.Time
 
 	// Build returns what to show; it is called on every repaint.
 	Build func() Frame
@@ -137,6 +140,17 @@ func NewWindow(title string) (*Window, error) {
 			if f.Modal != nil {
 				f.ModalAt = w.modalAt
 			}
+			if f.Live != w.liveOn {
+				w.liveOn = f.Live
+				if f.Live {
+					w.liveAt = c.Now
+				} else {
+					w.liveAt = time.Time{}
+				}
+			}
+			if f.Live {
+				f.LiveAt = w.liveAt
+			}
 			f.Layout(c, cw, ch)
 		}
 	}
@@ -169,8 +183,30 @@ func darkFrame(hwnd uintptr, caption interface{ RGBA() (r, g, b, a uint32) }) {
 	set(dwmwaBorderColor, colorref(ColEdge))
 }
 
+// CaptureThemeRipple snapshots the window's current theme before switching so
+// the upcoming RefreshTheme animates as a circular ripple expanding from the
+// sidebar's sun/moon toggle.
+func (w *Window) CaptureThemeRipple() {
+	cx, cy := w.scale*(sidebarW-36), float32(0)
+	if _, ch := w.clientSize(); ch > 0 {
+		cy = float32(ch) - w.scale*(statusLineH/2)
+	}
+	if w.last != nil {
+		if hit, ok := w.last.HitByID("theme:toggle"); ok {
+			cx = (hit.R.L + hit.R.R) / 2
+			cy = (hit.R.T + hit.R.B) / 2
+		}
+	}
+	w.captureThemeRipple(cx, cy)
+	if w.ripple.armed() {
+		w.ripple.oldBorder = ColEdge
+	}
+}
+
 // RefreshTheme updates the window's background brush, DWM frame attributes,
-// and triggers an immediate repaint in the active theme.
+// and triggers an immediate repaint in the active theme. When a theme ripple
+// is armed, the DWM border colour cross-fades with the ripple and final DWM
+// frame attributes apply on completion.
 func (w *Window) RefreshTheme() {
 	w.bg = col(ColBase)
 	b := darkBrush(ColBase)
@@ -183,7 +219,22 @@ func (w *Window) RefreshTheme() {
 			procDeleteObject.Call(old)
 		}
 	}
-	darkFrame(w.hwnd, ColSidebar)
+	if w.ripple.armed() {
+		w.ripple.newBorder = ColEdge
+		w.ripple.hasBorder = true
+		wantDark := uint32(1)
+		if IsLight() {
+			wantDark = 0
+		}
+		w.ripple.onMid = func() {
+			if procDwmSetWindowAttr.Find() == nil {
+				procDwmSetWindowAttr.Call(w.hwnd, dwmwaDarkMode, uintptr(unsafe.Pointer(&wantDark)), 4)
+			}
+		}
+		w.ripple.onDone = func() { darkFrame(w.hwnd, ColSidebar) }
+	} else {
+		darkFrame(w.hwnd, ColSidebar)
+	}
 	w.Invalidate()
 }
 

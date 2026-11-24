@@ -61,6 +61,9 @@ func (r *recorder) PopClip()                    { r.clips-- }
 func (r *recorder) Bitmap(key string, _, _ float32, _, _ int, _ float32, _ func() []byte) {
 	r.bitmaps = append(r.bitmaps, key)
 }
+func (r *recorder) ScaledBitmap(key string, _ RectF, _, _ int, _ float32, _ func() []byte) {
+	r.bitmaps = append(r.bitmaps, key)
+}
 
 func ctx(hover string, scroll map[string]float32) *Ctx {
 	return NewCtx(1, fakeMetrics{}, time.Now(), hover, "", scroll)

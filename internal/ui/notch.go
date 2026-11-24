@@ -219,18 +219,78 @@ func (l NotchLayout) HitButton(x, y float32) string {
 	return ""
 }
 
-// Easing and timing of the notch's movements: it drops in and changes
-// shape with a little overshoot that settles (playful, not wobbly), and
-// leaves with a quick, smooth ease-in.
+// Easing and timing of the notch's movements: drop-in and shape morphing use
+// analytical 2nd-order springs (spring1D, inspired by Dynamic Island's snappy
+// liquid micro-overshoot with continuous velocity inheritance on interruptions);
+// leaving tucks away briskly with a cubic ease-in.
 const (
 	notchSlideIn  = 250 * time.Millisecond
-	notchSlideOut = 200 * time.Millisecond
-	notchResize   = 215 * time.Millisecond
+	notchSlideOut = 155 * time.Millisecond
+	notchResize   = 185 * time.Millisecond
 	notchPulse    = 1400 * time.Millisecond // the live dot's breathing period
 
-	notchBounceIn     = 1.5 // EaseOutBack's s for dropping in: about 8% past its place
-	notchBounceResize = 1.0 // and for changing width and height: about 4%
+	notchBounceIn     = 1.5 // EaseOutBack's s for dropping in (kept for callers/tests)
+	notchBounceResize = 1.0
+
+	// Spring tuning (omega in rad/s, zeta = damping ratio):
+	// zeta 0.75..0.78 gives a ~2.5% liquid micro-overshoot; collapsing uses a
+	// slightly tighter zeta so it tucks cleanly without pinching too small.
+	notchRiseOmega    = 23.0
+	notchRiseZeta     = 0.75
+	notchExpandWOmega = 23.0
+	notchExpandWZeta  = 0.78
+	notchExpandHOmega = 27.0
+	notchExpandHZeta  = 0.76
+	notchShrinkWOmega = 25.0
+	notchShrinkWZeta  = 0.88
+	notchShrinkHOmega = 27.0
+	notchShrinkHZeta  = 0.86
 )
+
+// spring1D is an analytical 2nd-order spring (underdamped when zeta < 1,
+// critically damped when zeta >= 1). Unconditionally stable at any refresh
+// rate and preserves velocity across mid-flight target changes.
+type spring1D struct {
+	pos, vel, target float64
+}
+
+// snap jumps immediately to v with zero velocity.
+func (s *spring1D) snap(v float64) { s.pos, s.vel, s.target = v, 0, v }
+
+// step advances the spring by dt seconds and reports whether it is still moving.
+func (s *spring1D) step(dt, omega, zeta, epsPos, epsVel float64) bool {
+	if dt <= 0 {
+		return math.Abs(s.pos-s.target) >= epsPos || math.Abs(s.vel) >= epsVel
+	}
+	if dt > 0.1 {
+		dt = 0.1
+	}
+	x0 := s.pos - s.target
+	v0 := s.vel
+	var x, v float64
+	if zeta < 1 {
+		wd := omega * math.Sqrt(1-zeta*zeta)
+		e := math.Exp(-zeta * omega * dt)
+		c1 := x0
+		c2 := (v0 + zeta*omega*x0) / wd
+		cos, sin := math.Cos(wd*dt), math.Sin(wd*dt)
+		x = (c1*cos + c2*sin) * e
+		v = ((-zeta*omega*c1+wd*c2)*cos + (-zeta*omega*c2-wd*c1)*sin) * e
+	} else {
+		e := math.Exp(-omega * dt)
+		c2 := v0 + omega*x0
+		x = (x0 + c2*dt) * e
+		v = (c2 - omega*(x0+c2*dt)) * e
+	}
+	s.pos = s.target + x
+	s.vel = v
+	if math.Abs(x) < epsPos && math.Abs(v) < epsVel {
+		s.pos = s.target
+		s.vel = 0
+		return false
+	}
+	return true
+}
 
 // EaseOutBack eases out past the end and back (an overshoot of about 10%
 // at s = 1.70158, less for smaller s), over t in [0, 1].

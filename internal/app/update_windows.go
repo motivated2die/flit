@@ -253,16 +253,16 @@ func (a *App) updatePage() ui.Node {
 		} else {
 			card.Trailing, card.Detail = "…", "Downloading"
 		}
-		actions = append(actions, ui.Button{ID: "update:cancel", Label: "Cancel", Large: true, OnClick: a.cancelUpdate})
+		actions = append(actions, ui.Button{ID: "update:cancel", MorphKey: "update:primary", Label: "Cancel", Large: true, OnClick: a.cancelUpdate})
 	case updateReady:
 		card.Value, card.Trailing, card.Detail = 1, "Ready", "Downloaded and checked · installs when the recording ends"
-		actions = append(actions, ui.Button{ID: "update:start", Label: "Restart and update", Glyph: ui.GlyphRefresh, Primary: true, Large: true, Disabled: a.rec != nil, OnClick: a.startUpdate})
+		actions = append(actions, ui.Button{ID: "update:start", MorphKey: "update:primary", Label: "Restart and update", Glyph: ui.GlyphRefresh, Primary: true, Large: true, Disabled: a.rec != nil, OnClick: a.startUpdate})
 	case updateStarting:
 		card.Value, card.Trailing, card.Detail = 1, "Installing", "flit restarts in a moment"
 	default:
 		card.Trailing, card.Detail = "New", "Downloaded from GitHub and checked against its published checksum"
 		if !a.portable {
-			actions = append(actions, ui.Button{ID: "update:now", Label: "Update now", Glyph: ui.GlyphUpdate, Primary: true, Large: true, OnClick: a.installUpdate})
+			actions = append(actions, ui.Button{ID: "update:now", MorphKey: "update:primary", Label: "Update now", Glyph: ui.GlyphUpdate, Primary: true, Large: true, OnClick: a.installUpdate})
 		}
 	}
 	actions = append(actions, ui.Button{ID: "update:notes", Label: "What's new", Glyph: ui.GlyphOpenLink, Large: true, OnClick: func() { openURL(rel.Page) }})

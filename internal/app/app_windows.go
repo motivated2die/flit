@@ -73,11 +73,13 @@ type App struct {
 	audioLevels map[string]float32
 
 	// The main window's state.
-	page     string
-	sessions []*session.Session
-	previews map[string]string // transcript text by session ID
-	peak     [2]float32        // the recording's last sampled peaks (me, them)
-	peakAt   time.Time
+	page        string
+	sessions    []*session.Session
+	previews    map[string]string // transcript text by session ID
+	wordCounts  map[string]int    // transcript word count by session ID
+	hasAudioMap map[string]bool   // cached s.HasAudio() by session ID
+	peak        [2]float32        // the recording's last sampled peaks (me, them)
+	peakAt      time.Time
 	// voiceSmooth keeps the voice meter's bars between frames.
 	voiceSmooth ui.MeterSmoother
 	dbg         debugState

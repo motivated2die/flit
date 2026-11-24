@@ -43,10 +43,12 @@ var (
 // Vtable indices (IUnknown takes 0–2), from d2d1.h and dwrite.h.
 const (
 	factoryCreatePathGeometry  = 10
+	factoryCreateHwndRenderTgt = 14
 	factoryCreateDCRenderTgt   = 16
 	rtCreateBitmap             = 4
 	rtCreateBitmapBrush        = 7
 	rtCreateSolidColorBrush    = 8
+	rtCreateCompatRenderTarget = 12
 	rtFillRectangle            = 17
 	rtFillRoundedRectangle     = 19
 	rtFillEllipse              = 21
@@ -63,6 +65,8 @@ const (
 	rtBeginDraw                = 48
 	rtEndDraw                  = 49
 	dcrtBindDC                 = 57
+	bmprtGetBitmap             = 57
+	hwndrtResize               = 58
 	brushSetColor              = 8
 	pathOpen                   = 17
 	sinkSetFillMode            = 3
@@ -80,14 +84,22 @@ const (
 	tlGetMetrics               = 60
 	tlGetClusterMetrics        = 62
 	d2dTextAntialiasGrayscale  = 2
+	d2dRenderTargetDefault     = 0
 	d2dRenderTargetSoftware    = 1
 	dxgiFormatB8G8R8A8UNorm    = 87
 	d2dAlphaModePremultiplied  = 1
+	d2dAlphaModeIgnore         = 3
+	d2dPresentImmediately      = 2
+	d2dErrRecreateTarget       = 0x8899000C
 	dwriteFontStyleNormal      = 0
 	dwriteFontStretchNormal    = 5
 	dwriteParagraphAlignCenter = 2
 	dwriteNoWrap               = 1
 )
+
+// ErrRecreateTarget is returned by Painter.End when Direct2D signals device
+// loss (D2DERR_RECREATE_TARGET) and the render target must be rebuilt.
+var ErrRecreateTarget = errors.New("Direct2D target lost")
 
 type comObj struct{ vtbl *[96]uintptr }
 
@@ -384,15 +396,193 @@ func (s *Surface) Free() {
 	s.dc = 0
 }
 
-// Painter draws on a surface between Begin and End.
-type Painter struct {
-	g *d2d
+// HwndTarget owns a hardware-accelerated ID2D1HwndRenderTarget (with automatic
+// WARP fallback) and its device-dependent resources (brush, cached bitmaps)
+// for one opaque Win32 window. UI thread only.
+type HwndTarget struct {
+	hwnd    uintptr
+	w, h    uint32
+	rt      *comObj
+	brush   *comObj
+	bitmaps map[string]*comObj
 }
 
-// Begin binds the render target to s and clears it to transparent.
+// ready reports whether the render target has been created.
+func (t *HwndTarget) ready() bool { return t != nil && t.rt != nil }
+
+// Free releases the render target and all device-dependent resources.
+func (t *HwndTarget) Free() {
+	if t == nil {
+		return
+	}
+	for k, b := range t.bitmaps {
+		b.release()
+		delete(t.bitmaps, k)
+	}
+	t.brush.release()
+	t.brush = nil
+	t.rt.release()
+	t.rt = nil
+	t.w, t.h = 0, 0
+}
+
+// Begin creates or resizes the hardware render target for (w, h) device pixels,
+// starts drawing, and clears to bg.
+func (t *HwndTarget) Begin(hwnd uintptr, w, h int32, bg ColorF) (*Painter, error) {
+	if hwnd == 0 || w <= 0 || h <= 0 {
+		return nil, errors.New("invalid window target size")
+	}
+	g, err := getD2D()
+	if err != nil {
+		return nil, err
+	}
+	uw, uh := uint32(w), uint32(h)
+	if t.rt != nil && t.hwnd != hwnd {
+		t.Free()
+	}
+	if t.rt == nil {
+		props := struct {
+			Type        uint32
+			Format      uint32
+			AlphaMode   uint32
+			DpiX, DpiY  float32
+			Usage, MinL uint32
+		}{
+			Type:      d2dRenderTargetDefault,
+			Format:    dxgiFormatB8G8R8A8UNorm,
+			AlphaMode: d2dAlphaModeIgnore,
+			DpiX:      96,
+			DpiY:      96,
+		}
+		hwndProps := struct {
+			Hwnd           uintptr
+			Width, Height  uint32
+			PresentOptions uint32
+		}{
+			Hwnd:           hwnd,
+			Width:          uw,
+			Height:         uh,
+			PresentOptions: d2dPresentImmediately,
+		}
+		var rt *comObj
+		if err := hr(g.factory.call(factoryCreateHwndRenderTgt,
+			uintptr(unsafe.Pointer(&props)),
+			uintptr(unsafe.Pointer(&hwndProps)),
+			uintptr(unsafe.Pointer(&rt))), "CreateHwndRenderTarget"); err != nil {
+			return nil, err
+		}
+		rt.call(rtSetTextAntialiasMode, d2dTextAntialiasGrayscale)
+		black := ColorF{0, 0, 0, 1}
+		var brush *comObj
+		if err := hr(rt.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&black)), 0, uintptr(unsafe.Pointer(&brush))), "CreateSolidColorBrush"); err != nil {
+			rt.release()
+			return nil, err
+		}
+		t.hwnd, t.rt, t.brush, t.w, t.h = hwnd, rt, brush, uw, uh
+	} else if t.w != uw || t.h != uh {
+		sz := struct{ W, H uint32 }{uw, uh}
+		r := t.rt.call(hwndrtResize, uintptr(unsafe.Pointer(&sz)))
+		if uint32(r) == d2dErrRecreateTarget {
+			t.Free()
+			return nil, ErrRecreateTarget
+		}
+		if err := hr(r, "Resize"); err != nil {
+			return nil, err
+		}
+		t.w, t.h = uw, uh
+	}
+	t.rt.call(rtBeginDraw)
+	t.rt.call(rtClear, uintptr(unsafe.Pointer(&bg)))
+	return &Painter{g: g, rt: t.rt, brushObj: t.brush, bitmaps: &t.bitmaps}, nil
+}
+
+// CaptureBrush renders draw onto a GPU-backed offscreen ID2D1BitmapRenderTarget
+// matching t's current size and returns an ID2D1BitmapBrush for compositing
+// (used for the circular theme ripple transition). Caller must release the
+// returned brush.
+func (t *HwndTarget) CaptureBrush(draw func(*Painter), bg ColorF) (*comObj, error) {
+	if !t.ready() {
+		return nil, errors.New("hardware render target not ready")
+	}
+	g, err := getD2D()
+	if err != nil {
+		return nil, err
+	}
+	var compat *comObj
+	if err := hr(t.rt.call(rtCreateCompatRenderTarget, 0, 0, 0, 0, uintptr(unsafe.Pointer(&compat))), "CreateCompatibleRenderTarget"); err != nil {
+		return nil, err
+	}
+	defer compat.release()
+
+	compat.call(rtSetTextAntialiasMode, d2dTextAntialiasGrayscale)
+	black := ColorF{0, 0, 0, 1}
+	var solid *comObj
+	if err := hr(compat.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&black)), 0, uintptr(unsafe.Pointer(&solid))), "CreateSolidColorBrush"); err != nil {
+		return nil, err
+	}
+	defer solid.release()
+
+	var bmps map[string]*comObj
+	defer func() {
+		for _, b := range bmps {
+			b.release()
+		}
+	}()
+
+	compat.call(rtBeginDraw)
+	compat.call(rtClear, uintptr(unsafe.Pointer(&bg)))
+	p := &Painter{g: g, rt: compat, brushObj: solid, bitmaps: &bmps}
+	draw(p)
+	if err := p.End(); err != nil {
+		return nil, err
+	}
+
+	var bmp *comObj
+	if err := hr(compat.call(bmprtGetBitmap, uintptr(unsafe.Pointer(&bmp))), "GetBitmap"); err != nil {
+		return nil, err
+	}
+	defer bmp.release()
+
+	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, 0} // clamp, nearest 1:1
+	bp := struct {
+		Opacity float32
+		M       [6]float32
+	}{1, [6]float32{1, 0, 0, 1, 0, 0}}
+	var brush *comObj
+	if err := hr(t.rt.call(rtCreateBitmapBrush, uintptr(unsafe.Pointer(bmp)), uintptr(unsafe.Pointer(&bbp)), uintptr(unsafe.Pointer(&bp)), uintptr(unsafe.Pointer(&brush))), "CreateBitmapBrush"); err != nil {
+		return nil, err
+	}
+	return brush, nil
+}
+
+// FillBrush fills r with a pre-created Direct2D brush (e.g. a snapshot bitmap brush).
+func (p *Painter) FillBrush(r RectF, brush *comObj) {
+	if brush != nil {
+		p.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&r)), uintptr(unsafe.Pointer(brush)))
+	}
+}
+
+// FillEllipseBrush fills a circle/ellipse with a pre-created Direct2D brush.
+func (p *Painter) FillEllipseBrush(cx, cy, rx, ry float32, brush *comObj) {
+	if brush != nil && rx > 0 && ry > 0 {
+		e := struct{ X, Y, RX, RY float32 }{cx, cy, rx, ry}
+		p.rt.call(rtFillEllipse, uintptr(unsafe.Pointer(&e)), uintptr(unsafe.Pointer(brush)))
+	}
+}
+
+// Painter draws on a render target (either a software Surface or a hardware
+// HwndTarget) between Begin and End.
+type Painter struct {
+	g        *d2d
+	rt       *comObj
+	brushObj *comObj
+	bitmaps  *map[string]*comObj
+}
+
+// Begin binds the software render target to s and clears it to transparent.
 func Begin(s *Surface) (*Painter, error) { return BeginWith(s, ColorF{}) }
 
-// BeginWith binds the render target to s and clears it to bg.
+// BeginWith binds the software render target to s and clears it to bg.
 func BeginWith(s *Surface, bg ColorF) (*Painter, error) {
 	g, err := getD2D()
 	if err != nil {
@@ -404,17 +594,21 @@ func BeginWith(s *Surface, bg ColorF) (*Painter, error) {
 	}
 	g.rt.call(rtBeginDraw)
 	g.rt.call(rtClear, uintptr(unsafe.Pointer(&bg)))
-	return &Painter{g: g}, nil
+	return &Painter{g: g, rt: g.rt, brushObj: g.brush, bitmaps: &g.bitmaps}, nil
 }
 
-// End finishes drawing.
+// End finishes drawing. Returns ErrRecreateTarget on device loss.
 func (p *Painter) End() error {
-	return hr(p.g.rt.call(rtEndDraw, 0, 0), "EndDraw")
+	r := p.rt.call(rtEndDraw, 0, 0)
+	if uint32(r) == d2dErrRecreateTarget {
+		return ErrRecreateTarget
+	}
+	return hr(r, "EndDraw")
 }
 
 func (p *Painter) brush(c ColorF) uintptr {
-	p.g.brush.call(brushSetColor, uintptr(unsafe.Pointer(&c)))
-	return uintptr(unsafe.Pointer(p.g.brush))
+	p.brushObj.call(brushSetColor, uintptr(unsafe.Pointer(&c)))
+	return uintptr(unsafe.Pointer(p.brushObj))
 }
 
 // RoundRect fills a rounded rectangle.
@@ -423,13 +617,13 @@ func (p *Painter) RoundRect(r RectF, radius float32, c ColorF) {
 		RectF
 		RX, RY float32
 	}{r, radius, radius}
-	p.g.rt.call(rtFillRoundedRectangle, uintptr(unsafe.Pointer(&rr)), p.brush(c))
+	p.rt.call(rtFillRoundedRectangle, uintptr(unsafe.Pointer(&rr)), p.brush(c))
 }
 
 // Circle fills a circle.
 func (p *Painter) Circle(cx, cy, r float32, c ColorF) {
 	e := struct{ X, Y, RX, RY float32 }{cx, cy, r, r}
-	p.g.rt.call(rtFillEllipse, uintptr(unsafe.Pointer(&e)), p.brush(c))
+	p.rt.call(rtFillEllipse, uintptr(unsafe.Pointer(&e)), p.brush(c))
 }
 
 // Text draws s in r.
@@ -439,7 +633,7 @@ func (p *Painter) Text(s string, r RectF, f Font, c ColorF) {
 		return
 	}
 	u := utf16Units(s)
-	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
+	p.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 2 /* clip */, 0)
 }
 
@@ -450,7 +644,7 @@ func (p *Painter) Paragraph(s string, r RectF, f Font, c ColorF) {
 		return
 	}
 	u := utf16Units(s)
-	p.g.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
+	p.rt.call(rtDrawText, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(tf)),
 		uintptr(unsafe.Pointer(&r)), p.brush(c), 0, 0)
 }
 
@@ -481,7 +675,7 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 		rng := uintptr(uint32(from)) | uintptr(uint32(to-from))<<32 // DWRITE_TEXT_RANGE, by value
 		var b *comObj
 		col := m.Color
-		if hr(p.g.rt.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&col)), 0, uintptr(unsafe.Pointer(&b))), "CreateSolidColorBrush") != nil {
+		if hr(p.rt.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&col)), 0, uintptr(unsafe.Pointer(&b))), "CreateSolidColorBrush") != nil {
 			continue
 		}
 		tl.call(tlSetDrawingEffect, uintptr(unsafe.Pointer(b)), rng) // the layout keeps its own reference
@@ -490,7 +684,7 @@ func (p *Painter) MarkedParagraph(s string, r RectF, f Font, c ColorF, marks []T
 			tl.call(tlSetUnderline, 1, rng)
 		}
 	}
-	p.g.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
+	p.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
 }
 
 // utf16Units encodes s as UTF-16 code units with a trailing NUL (like
@@ -514,11 +708,11 @@ func utf16Index(s string, i int) int {
 
 // PushClip limits drawing to r until PopClip.
 func (p *Painter) PushClip(r RectF) {
-	p.g.rt.call(rtPushAxisAlignedClip, uintptr(unsafe.Pointer(&r)), 0)
+	p.rt.call(rtPushAxisAlignedClip, uintptr(unsafe.Pointer(&r)), 0)
 }
 
 // PopClip ends the last PushClip.
-func (p *Painter) PopClip() { p.g.rt.call(rtPopAxisAlignedClip) }
+func (p *Painter) PopClip() { p.rt.call(rtPopAxisAlignedClip) }
 
 // Polygons fills closed polygons (non-zero winding).
 func (p *Painter) Polygons(polys [][]PointF, c ColorF) {
@@ -543,7 +737,7 @@ func (p *Painter) Polygons(polys [][]PointF, c ColorF) {
 	}
 	sink.call(sinkClose)
 	sink.release()
-	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
+	p.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
 }
 
 // NotchShape fills a top-attached notch blob spanning [l, r] × [t, b] with
@@ -602,7 +796,7 @@ func (p *Painter) NotchShape(l, t, r, b, bottomR, flareR float32, c ColorF) {
 	sink.call(sinkEndFigure, 1) // closes along top edge y = t
 	sink.call(sinkClose)
 	sink.release()
-	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
+	p.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
 }
 
 // Arc fills a ring segment around (cx, cy) between radii inner and outer,
@@ -656,52 +850,63 @@ func (p *Painter) Arc(cx, cy, inner, outer, a0, a1 float32, c ColorF) {
 	sink.call(sinkEndFigure, 1) // closed
 	sink.call(sinkClose)
 	sink.release()
-	p.g.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
+	p.rt.call(rtFillGeometry, uintptr(unsafe.Pointer(path)), p.brush(c), 0)
 }
 
 // Bitmap draws a cached premultiplied BGRA picture (see Canvas.Bitmap): a
 // Direct2D bitmap made once per key, filled into its rectangle through a
 // bitmap brush that carries the position and opacity.
 func (p *Painter) Bitmap(key string, x, y float32, w, h int, opacity float32, pixels func() []byte) {
-	if w <= 0 || h <= 0 || opacity <= 0 {
+	p.drawBitmap(key, RectF{x, y, x + float32(w), y + float32(h)}, w, h, opacity, 0, pixels)
+}
+
+// ScaledBitmap draws a cached srcW×srcH premultiplied BGRA picture scaled into
+// dst with hardware bilinear interpolation (D2D1_BITMAP_INTERPOLATION_MODE_LINEAR).
+func (p *Painter) ScaledBitmap(key string, dst RectF, srcW, srcH int, opacity float32, pixels func() []byte) {
+	p.drawBitmap(key, dst, srcW, srcH, opacity, 1, pixels)
+}
+
+func (p *Painter) drawBitmap(key string, dst RectF, srcW, srcH int, opacity float32, interp uint32, pixels func() []byte) {
+	if srcW <= 0 || srcH <= 0 || dst.W() <= 0 || dst.H() <= 0 || opacity <= 0 {
 		return
 	}
-	bmp := p.g.bitmaps[key]
+	bmps := *p.bitmaps
+	bmp := bmps[key]
 	if bmp == nil {
 		pix := pixels()
-		if len(pix) < 4*w*h {
+		if len(pix) < 4*srcW*srcH {
 			return
 		}
-		if len(p.g.bitmaps) >= 16 { // sizes come and go with scales and panel heights
-			for k, b := range p.g.bitmaps {
+		if len(bmps) >= 16 { // sizes come and go with scales and panel heights
+			for k, b := range bmps {
 				b.release()
-				delete(p.g.bitmaps, k)
+				delete(bmps, k)
 			}
 		}
 		props := struct {
 			Format, Alpha uint32
 			DpiX, DpiY    float32
 		}{dxgiFormatB8G8R8A8UNorm, d2dAlphaModePremultiplied, 96, 96}
-		size := uintptr(uint32(w)) | uintptr(uint32(h))<<32 // D2D1_SIZE_U, by value in one register
-		if hr(p.g.rt.call(rtCreateBitmap, size, uintptr(unsafe.Pointer(&pix[0])), uintptr(4*w), uintptr(unsafe.Pointer(&props)), uintptr(unsafe.Pointer(&bmp))), "CreateBitmap") != nil {
+		size := uintptr(uint32(srcW)) | uintptr(uint32(srcH))<<32 // D2D1_SIZE_U, by value in one register
+		if hr(p.rt.call(rtCreateBitmap, size, uintptr(unsafe.Pointer(&pix[0])), uintptr(4*srcW), uintptr(unsafe.Pointer(&props)), uintptr(unsafe.Pointer(&bmp))), "CreateBitmap") != nil {
 			return
 		}
-		if p.g.bitmaps == nil {
-			p.g.bitmaps = map[string]*comObj{}
+		if bmps == nil {
+			bmps = map[string]*comObj{}
+			*p.bitmaps = bmps
 		}
-		p.g.bitmaps[key] = bmp
+		bmps[key] = bmp
 	}
-	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, 0} // clamp, nearest: drawn 1:1
+	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, interp} // clamp
 	bp := struct {
 		Opacity float32
 		M       [6]float32
-	}{opacity, [6]float32{1, 0, 0, 1, x, y}}
+	}{opacity, [6]float32{dst.W() / float32(srcW), 0, 0, dst.H() / float32(srcH), dst.L, dst.T}}
 	var brush *comObj
-	if hr(p.g.rt.call(rtCreateBitmapBrush, uintptr(unsafe.Pointer(bmp)), uintptr(unsafe.Pointer(&bbp)), uintptr(unsafe.Pointer(&bp)), uintptr(unsafe.Pointer(&brush))), "CreateBitmapBrush") != nil {
+	if hr(p.rt.call(rtCreateBitmapBrush, uintptr(unsafe.Pointer(bmp)), uintptr(unsafe.Pointer(&bbp)), uintptr(unsafe.Pointer(&bp)), uintptr(unsafe.Pointer(&brush))), "CreateBitmapBrush") != nil {
 		return
 	}
-	r := RectF{x, y, x + float32(w), y + float32(h)}
-	p.g.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&r)), uintptr(unsafe.Pointer(brush)))
+	p.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&dst)), uintptr(unsafe.Pointer(brush)))
 	brush.release()
 }
 

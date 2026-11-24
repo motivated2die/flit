@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	timerTransition = 6
-	lwaAlpha        = 0x00000002
-	swpNoZOrder     = 0x0004
+	lwaAlpha    = 0x00000002
+	swpNoZOrder = 0x0004
 )
 
 var (
@@ -101,7 +100,7 @@ func (h *host) cancelTransition() {
 	if !h.trans.active {
 		return
 	}
-	procKillTimer.Call(h.hwnd, timerTransition)
+	h.setVsync(vsyncTransition, false)
 	if h.trans.hasRect && h.trans.target.R > h.trans.target.L && h.trans.target.B > h.trans.target.T {
 		r := h.trans.target
 		procSetWindowPos.Call(h.hwnd, 0, uintptr(r.L), uintptr(r.T), uintptr(r.R-r.L), uintptr(r.B-r.T), swpNoZOrder|swpNoActivate)
@@ -134,7 +133,7 @@ func (h *host) beginFadeIn(dur time.Duration, scaleFrom float64, target winRect,
 
 func (h *host) startTransitionTimer() {
 	h.trans.start = time.Now()
-	procSetTimer.Call(h.hwnd, timerTransition, 15, 0)
+	h.setVsync(vsyncTransition, true)
 }
 
 // startFadeOut fades the visible window out over dur (with optional subtle
@@ -161,17 +160,17 @@ func (h *host) startFadeOut(dur time.Duration, scaleTo float64, onDone func()) {
 		onDone:    onDone,
 	}
 	h.enableLayered(255)
-	procSetTimer.Call(h.hwnd, timerTransition, 15, 0)
+	h.setVsync(vsyncTransition, true)
 }
 
 func (h *host) stepTransition() {
 	if !h.trans.active {
-		procKillTimer.Call(h.hwnd, timerTransition)
+		h.setVsync(vsyncTransition, false)
 		return
 	}
 	p := float64(time.Since(h.trans.start)) / float64(h.trans.dur)
 	if p >= 1 {
-		procKillTimer.Call(h.hwnd, timerTransition)
+		h.setVsync(vsyncTransition, false)
 		tr := h.trans
 		h.trans = transition{}
 		if tr.fadeOut {

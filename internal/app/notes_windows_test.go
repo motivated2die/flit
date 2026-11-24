@@ -93,19 +93,16 @@ func TestNotesDuringRecording(t *testing.T) {
 			fh.Close()
 		}
 	}
-	// Home's recording card and its Notes button open the same.
+	// Home's recording card opens the running meeting's notes.
 	a.page = pageHome
-	for _, id := range []string{"home:live", "home:notes"} {
-		a.page = pageHome
-		c, _ := ui.LayoutFrame(a.frame(), 960, 640, 1, "")
-		hit, ok := c.HitByID(id)
-		if !ok {
-			t.Fatalf("no %s on Home", id)
-		}
-		hit.OnClick()
-		if a.page != pageSession+s.Meta.ID {
-			t.Errorf("%s went to %q", id, a.page)
-		}
+	c, _ = ui.LayoutFrame(a.frame(), 960, 640, 1, "")
+	hit, ok := c.HitByID("home:live")
+	if !ok {
+		t.Fatal("no home:live on Home")
+	}
+	hit.OnClick()
+	if a.page != pageSession+s.Meta.ID {
+		t.Errorf("home:live went to %q", a.page)
 	}
 }
 

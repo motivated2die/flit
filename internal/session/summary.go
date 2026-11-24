@@ -25,8 +25,16 @@ type SummaryInfo struct {
 
 // HasSummary reports whether the recording has a non-empty summary on disk.
 func (s *Session) HasSummary() bool {
+	if s.summaryState != 0 {
+		return s.summaryState == 2
+	}
 	st, err := os.Stat(s.Path(SummaryFile))
-	return err == nil && st.Size() > 0
+	if err == nil && st.Size() > 0 {
+		s.summaryState = 2
+		return true
+	}
+	s.summaryState = 1
+	return false
 }
 
 // Summary returns the recording's summary Markdown and how it was written;
@@ -55,7 +63,15 @@ func (s *Session) SaveSummary(md string, info SummaryInfo) error {
 	if err := writeAtomic(s.Path(SummaryInfoFile), append(b, '\n')); err != nil {
 		return err
 	}
-	return writeAtomic(s.Path(SummaryFile), []byte(md))
+	if err := writeAtomic(s.Path(SummaryFile), []byte(md)); err != nil {
+		return err
+	}
+	if len(md) > 0 {
+		s.summaryState = 2
+	} else {
+		s.summaryState = 1
+	}
+	return nil
 }
 
 // RemoveSummary deletes the summary.
@@ -65,5 +81,6 @@ func (s *Session) RemoveSummary() error {
 			return err
 		}
 	}
+	s.summaryState = 1
 	return nil
 }

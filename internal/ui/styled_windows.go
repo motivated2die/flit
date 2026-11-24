@@ -100,11 +100,11 @@ func (p *Painter) StyledParagraph(s string, r RectF, f Font, c ColorF, styles []
 		rng := uintptr(uint32(from)) | uintptr(uint32(to-from))<<32
 		var b *comObj
 		col := *st.Color
-		if hr(p.g.rt.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&col)), 0, uintptr(unsafe.Pointer(&b))), "CreateSolidColorBrush") != nil {
+		if hr(p.rt.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&col)), 0, uintptr(unsafe.Pointer(&b))), "CreateSolidColorBrush") != nil {
 			continue
 		}
 		tl.call(tlSetDrawingEffect, uintptr(unsafe.Pointer(b)), rng) // the layout keeps its own reference
 		b.release()
 	}
-	p.g.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
+	p.rt.call(rtDrawTextLayout, pt(r.L, r.T), uintptr(unsafe.Pointer(tl)), p.brush(c), 0)
 }

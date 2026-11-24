@@ -92,5 +92,6 @@ func (p *pixelCanvas) StyledParagraph(string, RectF, Font, ColorF, []TextStyle) 
 func (p *pixelCanvas) Polygons([][]PointF, ColorF)                              {}
 func (p *pixelCanvas) Bitmap(string, float32, float32, int, int, float32, func() []byte) {
 }
+func (p *pixelCanvas) ScaledBitmap(string, RectF, int, int, float32, func() []byte) {}
 
 var _ Canvas = (*pixelCanvas)(nil)

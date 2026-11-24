@@ -165,6 +165,8 @@ func (a *App) navigateBack() {
 func (a *App) reloadSessions() {
 	a.sessions = session.List(a.dataDir)
 	a.storage = dirSize(session.Root(a.dataDir))
+	clear(a.wordCounts)
+	clear(a.hasAudioMap)
 }
 
 // dirSize adds up the sizes of the files under dir.
@@ -454,6 +456,9 @@ func (a *App) applyUIScale() {
 // toggleTheme switches between dark and light mode across every window and
 // persists the choice to config.json.
 func (a *App) toggleTheme() {
+	if a.win != nil {
+		a.win.CaptureThemeRipple()
+	}
 	a.cfg.LightTheme = !a.cfg.LightTheme
 	ui.SetTheme(a.cfg.LightTheme)
 	if a.win != nil {

@@ -38,6 +38,9 @@ type Canvas interface {
 	// (x, y), at an opacity. pixels makes it the first time key is drawn;
 	// the canvas keeps it under key (soft light that is costly to compute).
 	Bitmap(key string, x, y float32, w, h int, opacity float32, pixels func() []byte)
+	// ScaledBitmap draws a cached srcW×srcH premultiplied BGRA picture scaled
+	// with linear filtering into dst at an opacity (soft expanding ripples).
+	ScaledBitmap(key string, dst RectF, srcW, srcH int, opacity float32, pixels func() []byte)
 }
 
 // TextMark colours bytes [From, To) of a paragraph's text, optionally
@@ -129,6 +132,8 @@ type Ctx struct {
 	// jumps immediately and cancels any running smooth scroll (dragging).
 	ScrollTo  func(id string, to float32)
 	SetScroll func(id string, to float32)
+	// Buttons holds live per-button morph state (nil in static renders).
+	Buttons *ButtonAnims
 
 	ops      []func(Canvas)
 	overlays []func(*Ctx)
@@ -137,8 +142,11 @@ type Ctx struct {
 	anchors  []Anchor
 	clips    []RectF
 	// Animating is set by nodes that change over time (a live dot, a
-	// clock), asking the window to draw again soon.
+	// clock), asking the window to draw again soon (20 fps).
 	Animating bool
+	// AnimatingFast is set by short motion transitions (dock slide,
+	// modal fade) that should run at the monitor's native refresh rate.
+	AnimatingFast bool
 	// live are the regions that change faster than that (DrawLive).
 	live []liveArea
 	// intoView is a node's wish to be scrolled into view (its top, in

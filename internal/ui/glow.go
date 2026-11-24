@@ -40,6 +40,62 @@ func (c *Ctx) Glow(cx, cy float32, g glowSpec, k color.RGBA, opacity float32) {
 	})
 }
 
+const rippleTexSize = 160
+
+// SoftRipple draws a soft-edged, feathered circular area of colour k centred
+// at (cx, cy) with radius r (device pixels) at opacity. One canonical texture
+// is cached on the GPU and scaled smoothly per frame with linear filtering so
+// the expanding disc dissipates uniformly as a whole.
+func (c *Ctx) SoftRipple(cx, cy, r float32, k color.RGBA, opacity float32) {
+	if r <= 0 || opacity <= 0 {
+		return
+	}
+	key := fmt.Sprintf("ripple:%d:%v", rippleTexSize, k)
+	dst := RectF{cx - r, cy - r, cx + r, cy + r}
+	c.Draw(func(cv Canvas) {
+		cv.ScaledBitmap(key, dst, rippleTexSize, rippleTexSize, opacity, func() []byte {
+			return rippleDiscPixels(rippleTexSize, k)
+		})
+	})
+}
+
+// rippleDiscPixels renders a size×size premultiplied BGRA filled circular disc
+// of colour k: uniform inside innerR, then smoothly feathered with smoothstep
+// to exact zero at u=1.0 so there is no hard edge, dithered against banding.
+func rippleDiscPixels(size int, k color.RGBA) []byte {
+	pix := make([]byte, 4*size*size)
+	half := float64(size) / 2
+	const (
+		innerR = 0.62
+		fillA  = 0.30
+	)
+	for y := range size {
+		for x := range size {
+			dx, dy := (float64(x)+0.5-half)/half, (float64(y)+0.5-half)/half
+			u := math.Hypot(dx, dy)
+			if u >= 1 {
+				continue
+			}
+			a := fillA
+			if u > innerR {
+				t := (1 - u) / (1 - innerR)
+				a = fillA * t * t * (3 - 2*t) // smoothstep fade to 0 at u=1
+			}
+			alpha := math.Round(a*255 + dither(x, y) - 0.5)
+			if alpha <= 0 {
+				continue
+			}
+			alpha = min(255, alpha)
+			i := 4 * (y*size + x)
+			pix[i] = uint8(math.Round(float64(k.B) * alpha / 255))
+			pix[i+1] = uint8(math.Round(float64(k.G) * alpha / 255))
+			pix[i+2] = uint8(math.Round(float64(k.R) * alpha / 255))
+			pix[i+3] = uint8(alpha)
+		}
+	}
+	return pix
+}
+
 // glowPixels renders a w×h box holding an ellipse of light of colour k
 // (centred, touching the box's edges) as premultiplied BGRA.
 func glowPixels(w, h int, k color.RGBA, strength, falloff float64) []byte {

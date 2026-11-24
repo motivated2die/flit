@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -9,32 +10,39 @@ import (
 )
 
 // host is what flit's drawn windows share (the main window, the tray
-// panel): a double-buffered Direct2D surface for the client area, a layout
-// pass per paint, hover and press tracking, clicks, wheel scrolling, and a
-// timer that repaints while something live is on screen.
+// panel, the floating notes window): a hardware-accelerated Direct2D
+// HwndRenderTarget (with automatic software fallback), a layout pass per
+// paint, hover and press tracking, clicks, VSync-paced wheel scrolling,
+// and timers/VSync for live regions and animations.
 type host struct {
 	hwnd    uintptr
-	surf    *Surface
-	dpi     float32 // OS monitor DPI scale (1 = 96 DPI)
-	zoom    float32 // user UI scale multiplier (0 or 1 = 100%)
-	scale   float32 // effective scale = dpi * zoom
+	hw      HwndTarget
+	surf    *Surface // fallback software surface if HwndTarget is unavailable
+	dpi     float32  // OS monitor DPI scale (1 = 96 DPI)
+	zoom    float32  // user UI scale multiplier (0 or 1 = 100%)
+	scale   float32  // effective scale = dpi * zoom
 	metrics Metrics
 	bg      ColorF
 	bgBrush uintptr // dark GDI brush for WM_ERASEBKGND before first paint
 	trans   transition
+	ripple  themeRipple
+	buttons ButtonAnims
 
 	hover, pressed string
 	scroll         map[string]float32
-	// Smooth scrolling: where each moving scroll area is headed, and when
-	// the last step was.
+	// Smooth scrolling: critically-damped spring target and velocity per
+	// moving scroll area, and when the last step ran.
 	scrollTo   map[string]float32
+	scrollVel  map[string]float32
 	scrollTick time.Time
 	// drag is the target being dragged (its OnDrag follows the pointer).
-	drag         string
-	dragX, dragY float32
-	last         *Ctx
-	ticking      bool
-	liveOn       bool // the live regions' timer runs
+	drag          string
+	dragX, dragY  float32
+	last          *Ctx
+	ticking       bool
+	vsync         vsyncPacer
+	vsyncMask     uint8
+	selScrollTick time.Time
 	// The text selection (nil: none), and whether the button is down
 	// making it; ibeam: the hovered hit is selectable text.
 	sel       *Selection
@@ -71,6 +79,7 @@ type host struct {
 }
 
 const (
+	wmDestroy       = 0x0002
 	wmPaint         = 0x000F
 	wmEraseBkgnd    = 0x0014
 	wmSize          = 0x0005
@@ -90,20 +99,18 @@ const (
 	vkDelete        = 0x2E
 	srcCopy         = 0x00CC0020
 	timerAnimate    = 2
-	timerScroll     = 3
-	timerLive       = 4  // the live regions (DrawLive), ~64 Hz
-	timerSelScroll  = 5  // scrolling while selecting near an edge
 	selEdge         = 28 // px (logical) from the view's edge where selecting scrolls
-	// scrollEase is the smooth scroll's time constant: each wheel step
-	// is mostly done after 2–3 of these.
-	scrollEase    = 50 * time.Millisecond
-	vkEscape      = 0x1B
-	vkControl     = 0x11
-	vkShift       = 0x10
-	vkMenu        = 0x12 // Alt
-	smCxDoubleClk = 36
-	smCyDoubleClk = 37
-	idcIBeam      = 32513
+	// scrollSpringOmega is the angular frequency (rad/s) of the critically-damped
+	// smooth-scroll spring: smooth ramp-up, velocity-preserving retargeting on
+	// rapid wheel turns, zero overshoot, and a crisp settle (~190 ms).
+	scrollSpringOmega = 26.0
+	vkEscape          = 0x1B
+	vkControl         = 0x11
+	vkShift           = 0x10
+	vkMenu            = 0x12 // Alt
+	smCxDoubleClk     = 36
+	smCyDoubleClk     = 37
+	idcIBeam          = 32513
 )
 
 var (
@@ -203,26 +210,31 @@ func (h *host) paint() {
 	if cw <= 0 || ch <= 0 || h.layout == nil {
 		return
 	}
-	if h.surf == nil || h.surf.W != cw || h.surf.H != ch {
-		h.surf.Free()
-		s, err := NewSurface(cw, ch)
-		if err != nil {
-			h.surf = nil
+	// Fast path during a circular theme ripple: two GPU draw calls, no layout.
+	if h.ripple.ready() {
+		if cw != h.ripple.w || ch != h.ripple.h {
+			h.cancelRipple()
+		} else if h.paintRippleFrame(cw, ch) {
 			return
 		}
-		h.surf = s
 	}
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
 	c.ScrollTo = h.scrollSmoothly
 	c.SetScroll = func(id string, to float32) {
 		delete(h.scrollTo, id)
+		delete(h.scrollVel, id)
+		if len(h.scrollTo) == 0 {
+			h.setVsync(vsyncScroll, false)
+		}
 		h.scroll[id] = to
 		h.Invalidate()
 	}
 	c.Edit, c.StartEdit = h.edit, h.startEdit
 	c.Sel = h.sel
 	c.Focus = h.focus
+	c.Buttons = &h.buttons
 	h.layout(c, float32(cw), float32(ch))
+	h.buttons.prune()
 	if h.focusScrollPending {
 		h.focusScrollDelta = h.scroll[h.focusScrollID] - h.focusScrollFrom
 		h.focusScrollPending = false
@@ -254,56 +266,178 @@ func (h *host) paint() {
 	if h.edit != nil && c.committer(h.edit.ID) == nil {
 		h.edit = nil // the field went away (another page)
 	}
-	p, err := BeginWith(h.surf, h.bg)
-	if err != nil {
-		return
+	if h.ripple.armed() {
+		if cw == h.ripple.w && ch == h.ripple.h && h.hw.ready() {
+			if newBrush, rerr := h.hw.CaptureBrush(func(p *Painter) { c.Paint(p) }, h.bg); rerr == nil {
+				h.ripple.newBrush = newBrush
+				h.ripple.start = time.Now()
+				h.last = c
+				h.setVsync(vsyncRipple, true)
+				h.paintRippleFrame(cw, ch)
+				return
+			}
+		}
+		h.cancelRipple()
 	}
-	c.Paint(p)
-	if p.End() != nil {
+	p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
+	switch {
+	case err == nil:
+		c.Paint(p)
+		err = p.End()
+		if errors.Is(err, ErrRecreateTarget) {
+			h.hw.Free()
+			h.Invalidate()
+			return
+		}
+		if err != nil {
+			return
+		}
+	case errors.Is(err, ErrRecreateTarget):
+		h.Invalidate()
 		return
+	default:
+		// Hardware target unavailable: fall back to software Surface + BitBlt.
+		if h.surf == nil || h.surf.W != cw || h.surf.H != ch {
+			h.surf.Free()
+			s, serr := NewSurface(cw, ch)
+			if serr != nil {
+				h.surf = nil
+				return
+			}
+			h.surf = s
+		}
+		p, serr := BeginWith(h.surf, h.bg)
+		if serr != nil {
+			return
+		}
+		c.Paint(p)
+		if p.End() != nil {
+			return
+		}
+		procBitBlt.Call(hdc, 0, 0, uintptr(cw), uintptr(ch), h.surf.dc, 0, 0, srcCopy)
 	}
-	procBitBlt.Call(hdc, 0, 0, uintptr(cw), uintptr(ch), h.surf.dc, 0, 0, srcCopy)
 	h.last = c
-	h.setTicking(c.Animating)
+	h.setVsync(vsyncAnimate, c.AnimatingFast)
+	h.setTicking(c.Animating && !c.AnimatingFast)
 	h.setLive(len(c.live) > 0)
 	if w := c.WantScroll; w != nil && math.Abs(float64(w.To-h.scroll[w.ID])) >= 1 {
 		h.scrollSmoothly(w.ID, w.To)
 	}
 }
 
-// setLive runs the live regions' timer while there are any on screen.
-func (h *host) setLive(on bool) {
-	if on == h.liveOn {
-		return
-	}
-	h.liveOn = on
+// setVsync toggles one VSync reason bit, starting the DWM pacer on the first
+// active reason and stopping it when none remain.
+func (h *host) setVsync(bit uint8, on bool) {
+	prev := h.vsyncMask
 	if on {
-		procSetTimer.Call(h.hwnd, timerLive, 15, 0) // the system timer's tick, ~64 Hz
+		h.vsyncMask |= bit
 	} else {
-		procKillTimer.Call(h.hwnd, timerLive)
+		h.vsyncMask &^= bit
+	}
+	if h.vsyncMask != 0 && prev == 0 {
+		h.vsync.start(h.hwnd)
+	} else if h.vsyncMask == 0 && prev != 0 {
+		h.vsync.stopPacer()
 	}
 }
 
-// stopTimers stops repainting (the window hid).
+// onVsync advances all active VSync-paced animations, smooth scrolling, and
+// live regions once per monitor refresh and paints immediately.
+func (h *host) onVsync() {
+	defer h.vsync.ack()
+	if h.vsyncMask == 0 {
+		return
+	}
+	if h.vsyncMask&vsyncTransition != 0 {
+		h.stepTransition()
+	}
+	needsPaint := false
+	if h.vsyncMask&vsyncScroll != 0 {
+		if h.stepScroll() {
+			needsPaint = true
+		}
+	}
+	if h.vsyncMask&vsyncSelScroll != 0 {
+		if h.scrollWhileSelecting() {
+			needsPaint = true
+		}
+	}
+	if h.vsyncMask&vsyncRipple != 0 || h.ripple.armed() {
+		h.Invalidate()
+		needsPaint = true
+	}
+	if h.vsyncMask&vsyncAnimate != 0 {
+		h.Invalidate()
+		needsPaint = true
+	}
+	if needsPaint {
+		procUpdateWindow.Call(h.hwnd)
+	} else if h.vsyncMask&vsyncLive != 0 {
+		h.paintLive()
+	}
+}
+
+// setLive runs VSync-paced live region repaints while there are any on screen.
+func (h *host) setLive(on bool) {
+	h.setVsync(vsyncLive, on)
+}
+
+// stopTimers stops all timers and VSync pacing (the window hid or closed).
 func (h *host) stopTimers() {
 	h.setTicking(false)
-	h.setLive(false)
 	if h.trans.active {
 		h.cancelTransition()
 	}
+	h.cancelRipple()
+	h.vsyncMask = 0
+	h.vsync.stopPacer()
+	clear(h.scrollTo)
+	clear(h.scrollVel)
 }
 
-// paintLive repaints only the live regions of the last layout, onto the
-// kept surface (from Go, pixelCanvas) and straight to the window: no
-// layout, no Direct2D pass, no full repaint.
+// paintLive repaints the live regions of the last layout. On a hardware
+// HwndTarget, it replays h.last directly on the GPU with an updated timestamp
+// (no Build(), no Layout(), no disk/text work); on the software fallback, only
+// the live regions are redrawn into h.surf via pixelCanvas.
 func (h *host) paintLive() {
+	if h.ripple.armed() || h.ripple.ready() {
+		return
+	}
 	c := h.last
-	if c == nil || len(c.live) == 0 || h.surf == nil || !h.Visible() {
+	if c == nil || len(c.live) == 0 || !h.Visible() {
 		h.setLive(false)
 		return
 	}
 	if ic, _, _ := procIsIconic.Call(h.hwnd); ic != 0 {
 		return // minimised: nothing to see
+	}
+	if h.hw.ready() {
+		cw, ch := h.clientSize()
+		if cw <= 0 || ch <= 0 {
+			return
+		}
+		if uint32(cw) != h.hw.w || uint32(ch) != h.hw.h {
+			h.Invalidate() // resized: a full paint comes
+			return
+		}
+		c.Now = time.Now()
+		p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
+		if err != nil {
+			if errors.Is(err, ErrRecreateTarget) {
+				h.Invalidate()
+			}
+			return
+		}
+		c.Paint(p)
+		if err := p.End(); errors.Is(err, ErrRecreateTarget) {
+			h.hw.Free()
+			h.Invalidate()
+		}
+		return
+	}
+	if h.surf == nil {
+		h.setLive(false)
+		return
 	}
 	if cw, ch := h.clientSize(); cw != h.surf.W || ch != h.surf.H {
 		h.Invalidate() // resized: a full paint comes
@@ -355,8 +489,17 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 	case wmPaint:
 		h.paint()
 		return 0, true
+	case wmVsync:
+		h.onVsync()
+		return 0, true
+	case wmDestroy:
+		h.stopTimers()
+		h.hw.Free()
+		h.surf.Free()
+		h.surf = nil
+		return 0, false
 	case wmEraseBkgnd:
-		if h.surf == nil && h.bgBrush != 0 && wp != 0 {
+		if !h.hw.ready() && h.surf == nil && h.bgBrush != 0 && wp != 0 {
 			var rc winRect
 			procGetClientRect.Call(h.hwnd, uintptr(unsafe.Pointer(&rc)))
 			procFillRect.Call(wp, uintptr(unsafe.Pointer(&rc)), h.bgBrush)
@@ -366,17 +509,8 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		h.Invalidate()
 		return 0, true
 	case wmTimer:
-		switch wp {
-		case timerAnimate:
+		if wp == timerAnimate && !h.ripple.armed() && !h.ripple.ready() {
 			h.Invalidate()
-		case timerScroll:
-			h.stepScroll()
-		case timerLive:
-			h.paintLive()
-		case timerSelScroll:
-			h.scrollWhileSelecting()
-		case timerTransition:
-			h.stepTransition()
 		}
 		return 0, true
 	case wmMouseMove:
@@ -469,7 +603,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		if h.selecting {
 			h.selectTo(lp)
 			h.selecting = false
-			procKillTimer.Call(h.hwnd, timerSelScroll)
+			h.setVsync(vsyncSelScroll, false)
 			procReleaseCapture.Call()
 			if h.sel != nil && h.sel.Empty() {
 				h.sel = nil // a click on text, not a drag
@@ -501,6 +635,7 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		return 0, true
 	case wmCaptureChange:
 		h.selecting, h.edDrag, h.blurOnUp = false, false, false
+		h.setVsync(vsyncSelScroll, false)
 		if h.drag != "" {
 			h.endDrag() // capture taken away: the drag ends where it was
 		}
@@ -513,14 +648,31 @@ func (h *host) handle(m uint32, wp, lp uintptr) (uintptr, bool) {
 		delta := float32(int16(wp >> 16 & 0xFFFF))
 		pt := point{int32(int16(lp & 0xFFFF)), int32(int16(lp >> 16 & 0xFFFF))}
 		procScreenToClient.Call(h.hwnd, uintptr(unsafe.Pointer(&pt)))
-		if h.last != nil {
+		if h.last != nil && delta != 0 {
 			if a, ok := h.last.ScrollAt(float32(pt.X), float32(pt.Y)); ok {
-				// From where the scroll is headed, so quick wheel turns add up.
-				from, moving := h.scrollTo[a.ID]
-				if !moving {
-					from = h.scroll[a.ID]
+				if abs32(delta) < 120 {
+					// Precision touchpad or hi-res free-spin wheel: OS already
+					// delivers high-frequency smooth deltas, so apply directly
+					// without adding easing lag.
+					to := max(0, min(a.Max, h.scroll[a.ID]-delta/120*scrollStep*h.scale))
+					delete(h.scrollTo, a.ID)
+					delete(h.scrollVel, a.ID)
+					if len(h.scrollTo) == 0 {
+						h.setVsync(vsyncScroll, false)
+					}
+					if to != h.scroll[a.ID] {
+						h.scroll[a.ID] = to
+						h.Invalidate()
+					}
+				} else {
+					// Detented mouse wheel: from where the scroll is headed,
+					// so quick wheel turns add up smoothly.
+					from, moving := h.scrollTo[a.ID]
+					if !moving {
+						from = h.scroll[a.ID]
+					}
+					h.scrollSmoothly(a.ID, max(0, min(a.Max, from-delta/120*scrollStep*h.scale)))
 				}
-				h.scrollSmoothly(a.ID, max(0, min(a.Max, from-delta/120*scrollStep*h.scale)))
 			}
 		}
 		return 0, true
@@ -620,8 +772,9 @@ func (h *host) startSelecting(x, y float32) {
 		h.sel = &Selection{AnchorArea: area, AnchorPos: pos, FocusArea: area, FocusPos: pos}
 	}
 	h.selecting, h.selX, h.selY = true, x, y
+	h.selScrollTick = time.Now()
 	procSetCapture.Call(h.hwnd)
-	procSetTimer.Call(h.hwnd, timerSelScroll, 15, 0)
+	h.setVsync(vsyncSelScroll, true)
 	h.Invalidate()
 }
 
@@ -654,10 +807,18 @@ func (h *host) selectAt(x, y float32) {
 // scrollWhileSelecting scrolls the page while the pointer, selecting, is
 // near or past the top or bottom of its view: faster the further out.
 // The selection's end follows after the repaint (paint).
-func (h *host) scrollWhileSelecting() {
+func (h *host) scrollWhileSelecting() bool {
 	if !h.selecting || h.last == nil || len(h.last.scrolls) == 0 {
-		procKillTimer.Call(h.hwnd, timerSelScroll)
-		return
+		h.setVsync(vsyncSelScroll, false)
+		return false
+	}
+	now := time.Now()
+	dt := now.Sub(h.selScrollTick)
+	h.selScrollTick = now
+	if dt < time.Millisecond {
+		dt = 15625 * time.Microsecond // synthetic/tight-loop call: one nominal tick
+	} else if dt > 100*time.Millisecond {
+		dt = 100 * time.Millisecond
 	}
 	a := h.last.scrolls[0]
 	for _, s := range h.last.scrolls {
@@ -677,9 +838,11 @@ func (h *host) scrollWhileSelecting() {
 	case h.selY > v.B-edge:
 		d = h.selY - (v.B - edge)
 	default:
-		return
+		return false
 	}
-	step := min(abs32(d)/3+2*h.scale, 40*h.scale)
+	// Keep the same scroll speed in px/s regardless of monitor refresh rate.
+	scaleDt := float32(dt) / float32(15625*time.Microsecond)
+	step := min(abs32(d)/3+2*h.scale, 40*h.scale) * scaleDt
 	if d < 0 {
 		step = -step
 	}
@@ -687,8 +850,14 @@ func (h *host) scrollWhileSelecting() {
 	if to != h.scroll[a.ID] {
 		h.scroll[a.ID] = to
 		delete(h.scrollTo, a.ID)
+		delete(h.scrollVel, a.ID)
+		if len(h.scrollTo) == 0 {
+			h.setVsync(vsyncScroll, false)
+		}
 		h.Invalidate()
+		return true
 	}
+	return false
 }
 
 // selectionKey handles keys while nothing is typed in: Ctrl+C copies the
@@ -873,41 +1042,83 @@ func (h *host) changed() {
 	}
 }
 
-// scrollSmoothly moves scroll area id to offset to over a few frames.
+// scrollSmoothly moves scroll area id to offset to using a critically-damped
+// spring (velocity-preserving across rapid wheel turns, landing on a whole
+// pixel so resting text stays crisp).
 func (h *host) scrollSmoothly(id string, to float32) {
 	if h.scrollTo == nil {
 		h.scrollTo = map[string]float32{}
 	}
+	if h.scrollVel == nil {
+		h.scrollVel = map[string]float32{}
+	}
+	to = float32(math.Round(float64(to)))
+	if h.last != nil {
+		if a, ok := h.last.ScrollArea(id); ok {
+			to = max(0, min(a.Max, to))
+		}
+	}
 	if len(h.scrollTo) == 0 {
 		h.scrollTick = time.Now()
-		procSetTimer.Call(h.hwnd, timerScroll, 10, 0) // as fast as the system timer goes (~64 Hz)
+		h.setVsync(vsyncScroll, true)
 	}
 	h.scrollTo[id] = to
-	h.stepScroll()
 }
 
-// stepScroll eases each moving scroll area towards its target.
-func (h *host) stepScroll() {
+// stepScroll advances each moving scroll area along its analytical
+// critically-damped spring and reports whether any scroll offset changed.
+func (h *host) stepScroll() bool {
+	if len(h.scrollTo) == 0 {
+		h.setVsync(vsyncScroll, false)
+		return false
+	}
 	now := time.Now()
-	k := float32(1 - math.Exp(-float64(now.Sub(h.scrollTick))/float64(scrollEase)))
+	dt := now.Sub(h.scrollTick)
 	h.scrollTick = now
+	if dt <= 0 {
+		return false
+	}
+	if dt > 100*time.Millisecond {
+		dt = 100 * time.Millisecond
+	}
+	dtSec := dt.Seconds()
+	const w = scrollSpringOmega
+	e := math.Exp(-w * dtSec)
+	changed := false
 	for id, to := range h.scrollTo {
+		maxS := float32(math.MaxFloat32)
 		if h.last != nil {
 			if a, ok := h.last.ScrollArea(id); ok {
-				to = min(to, a.Max) // the page got shorter meanwhile
+				maxS = a.Max
+				to = min(to, maxS) // the page got shorter meanwhile
 			}
 		}
-		cur := h.scroll[id] + (to-h.scroll[id])*k
-		if math.Abs(float64(to-cur)) < 0.5 {
+		prev := h.scroll[id]
+		x0 := float64(prev - to)
+		v0 := float64(h.scrollVel[id])
+		c2 := v0 + w*x0
+		x := (x0 + c2*dtSec) * e
+		v := (c2 - w*(x0+c2*dtSec)) * e
+		cur := max(0, min(maxS, to+float32(x)))
+		if math.Abs(x) < 0.5 && math.Abs(v) < 25 {
 			cur = to
 			delete(h.scrollTo, id)
+			delete(h.scrollVel, id)
+		} else {
+			h.scrollVel[id] = float32(v)
 		}
-		h.scroll[id] = cur
+		if cur != prev {
+			h.scroll[id] = cur
+			changed = true
+		}
 	}
 	if len(h.scrollTo) == 0 {
-		procKillTimer.Call(h.hwnd, timerScroll)
+		h.setVsync(vsyncScroll, false)
 	}
-	h.Invalidate()
+	if changed {
+		h.Invalidate()
+	}
+	return changed
 }
 
 // dragTo hands the pointer's position to the dragged target (from the
