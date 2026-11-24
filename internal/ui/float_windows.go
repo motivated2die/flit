@@ -174,11 +174,17 @@ func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {
 	}
 	if maxScroll > 0 {
 		top := c.Px(8)
-		track := h - 2*top
-		th := max(c.Px(28), track*h/(ph+2*pad))
-		ty := top + (track-th)*min(1, off/maxScroll)
-		bar := RectF{w - c.Px(scrollbarW+3), ty, w - c.Px(3), ty + th}
-		c.Draw(func(cv Canvas) { cv.RoundRect(bar, bar.W()/2, RGBA(ColText, 0.18)) })
+		drawScrollbar(c, scrollbarConfig{
+			ScrollID:   floatScrollID,
+			RightX:     w - c.Px(3),
+			TrackTop:   top,
+			TrackH:     h - 2*top,
+			ViewH:      h,
+			ContentH:   ph + 2*pad,
+			ContentTop: pad,
+			Offset:     off,
+			MaxScroll:  maxScroll,
+		})
 	}
 }
 

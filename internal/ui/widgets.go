@@ -185,6 +185,7 @@ func (s Space) Layout(c *Ctx, x, y, w float32) float32 { return c.Px(float32(s))
 type Title string
 
 func (t Title) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(string(t), y)
 	h := c.Px(34)
 	r := RectF{x, y, x + w, y + h}
 	c.Draw(func(cv Canvas) { cv.Text(string(t), r, c.F(fontTitle), col(ColText)) })
@@ -195,6 +196,7 @@ func (t Title) Layout(c *Ctx, x, y, w float32) float32 {
 type Caption string
 
 func (t Caption) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(string(t), y)
 	h := c.Px(22)
 	r := RectF{x + c.Px(2), y, x + w, y + h}
 	c.Draw(func(cv Canvas) { cv.Text(strings.ToUpper(string(t)), r, c.F(fontCaption), col(ColFaint)) })

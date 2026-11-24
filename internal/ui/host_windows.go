@@ -213,6 +213,12 @@ func (h *host) paint() {
 		h.surf = s
 	}
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
+	c.ScrollTo = h.scrollSmoothly
+	c.SetScroll = func(id string, to float32) {
+		delete(h.scrollTo, id)
+		h.scroll[id] = to
+		h.Invalidate()
+	}
 	c.Edit, c.StartEdit = h.edit, h.startEdit
 	c.Sel = h.sel
 	c.Focus = h.focus

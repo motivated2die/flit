@@ -522,16 +522,23 @@ func (f Frame) page(c *Ctx, side, w, h float32) {
 		c.intoView = nil
 	}
 	if maxScroll > 0 {
-		// A thin, quiet indicator of where the page is.
 		top := c.Px(8)
 		if f.Caption {
 			top = c.Px(CaptionH + 4)
 		}
 		track := h - reserve - top - c.Px(8)
-		th := max(c.Px(28), track*(h-reserve)/(ph+2*pad))
-		ty := top + (track-th)*min(1, off/maxScroll)
-		bar := RectF{w - c.Px(scrollbarW+4), ty, w - c.Px(4), ty + th}
-		c.Draw(func(cv Canvas) { cv.RoundRect(bar, bar.W()/2, RGBA(ColText, 0.18)) })
+		drawScrollbar(c, scrollbarConfig{
+			ScrollID:   id,
+			RightX:     w - c.Px(4),
+			TrackTop:   top,
+			TrackH:     track,
+			ViewH:      h - reserve - view.T,
+			ContentH:   ph + 2*pad + reserve,
+			ContentTop: pad,
+			Offset:     off,
+			MaxScroll:  maxScroll,
+			Anchors:    c.Anchors(),
+		})
 	}
 }
 

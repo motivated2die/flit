@@ -110,6 +110,13 @@ type ScrollArea struct {
 	View RectF
 }
 
+// Anchor is a subheading's label and window-coordinate Y recorded during a
+// layout pass, used by the page scrollbar to place section jump dots.
+type Anchor struct {
+	Label string
+	Y     float32
+}
+
 // Ctx is one layout pass.
 type Ctx struct {
 	Scale float32
@@ -118,10 +125,15 @@ type Ctx struct {
 	// Interaction state, kept by the window between passes.
 	Hover, Pressed string
 	Scroll         map[string]float32
+	// ScrollTo smoothly scrolls a scroll area to a target offset; SetScroll
+	// jumps immediately and cancels any running smooth scroll (dragging).
+	ScrollTo  func(id string, to float32)
+	SetScroll func(id string, to float32)
 
 	ops     []func(Canvas)
 	hits    []Hit
 	scrolls []ScrollArea
+	anchors []Anchor
 	clips   []RectF
 	// Animating is set by nodes that change over time (a live dot, a
 	// clock), asking the window to draw again soon.
@@ -362,6 +374,18 @@ func (c *Ctx) PopClip() {
 
 // AddScroll registers a scrollable region.
 func (c *Ctx) AddScroll(a ScrollArea) { c.scrolls = append(c.scrolls, a) }
+
+// AddAnchor records a page subheading at window-coordinate y for the
+// scrollbar's section jump dots.
+func (c *Ctx) AddAnchor(label string, y float32) {
+	if label == "" {
+		return
+	}
+	c.anchors = append(c.anchors, Anchor{Label: label, Y: y})
+}
+
+// Anchors returns the subheading anchors recorded during this layout pass.
+func (c *Ctx) Anchors() []Anchor { return c.anchors }
 
 // Paint replays the recorded drawing.
 func (c *Ctx) Paint(cv Canvas) {

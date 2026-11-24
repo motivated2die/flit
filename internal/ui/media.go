@@ -54,6 +54,7 @@ type CaptionRow struct {
 }
 
 func (r CaptionRow) Layout(c *Ctx, x, y, w float32) float32 {
+	c.AddAnchor(r.Text, y)
 	h := c.Px(28)
 	if r.Right != nil {
 		rw := w / 3
