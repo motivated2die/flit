@@ -857,14 +857,24 @@ func (p *Painter) Arc(cx, cy, inner, outer, a0, a1 float32, c ColorF) {
 // Direct2D bitmap made once per key, filled into its rectangle through a
 // bitmap brush that carries the position and opacity.
 func (p *Painter) Bitmap(key string, x, y float32, w, h int, opacity float32, pixels func() []byte) {
-	if w <= 0 || h <= 0 || opacity <= 0 {
+	p.drawBitmap(key, RectF{x, y, x + float32(w), y + float32(h)}, w, h, opacity, 0, pixels)
+}
+
+// ScaledBitmap draws a cached srcW×srcH premultiplied BGRA picture scaled into
+// dst with hardware bilinear interpolation (D2D1_BITMAP_INTERPOLATION_MODE_LINEAR).
+func (p *Painter) ScaledBitmap(key string, dst RectF, srcW, srcH int, opacity float32, pixels func() []byte) {
+	p.drawBitmap(key, dst, srcW, srcH, opacity, 1, pixels)
+}
+
+func (p *Painter) drawBitmap(key string, dst RectF, srcW, srcH int, opacity float32, interp uint32, pixels func() []byte) {
+	if srcW <= 0 || srcH <= 0 || dst.W() <= 0 || dst.H() <= 0 || opacity <= 0 {
 		return
 	}
 	bmps := *p.bitmaps
 	bmp := bmps[key]
 	if bmp == nil {
 		pix := pixels()
-		if len(pix) < 4*w*h {
+		if len(pix) < 4*srcW*srcH {
 			return
 		}
 		if len(bmps) >= 16 { // sizes come and go with scales and panel heights
@@ -877,8 +887,8 @@ func (p *Painter) Bitmap(key string, x, y float32, w, h int, opacity float32, pi
 			Format, Alpha uint32
 			DpiX, DpiY    float32
 		}{dxgiFormatB8G8R8A8UNorm, d2dAlphaModePremultiplied, 96, 96}
-		size := uintptr(uint32(w)) | uintptr(uint32(h))<<32 // D2D1_SIZE_U, by value in one register
-		if hr(p.rt.call(rtCreateBitmap, size, uintptr(unsafe.Pointer(&pix[0])), uintptr(4*w), uintptr(unsafe.Pointer(&props)), uintptr(unsafe.Pointer(&bmp))), "CreateBitmap") != nil {
+		size := uintptr(uint32(srcW)) | uintptr(uint32(srcH))<<32 // D2D1_SIZE_U, by value in one register
+		if hr(p.rt.call(rtCreateBitmap, size, uintptr(unsafe.Pointer(&pix[0])), uintptr(4*srcW), uintptr(unsafe.Pointer(&props)), uintptr(unsafe.Pointer(&bmp))), "CreateBitmap") != nil {
 			return
 		}
 		if bmps == nil {
@@ -887,17 +897,16 @@ func (p *Painter) Bitmap(key string, x, y float32, w, h int, opacity float32, pi
 		}
 		bmps[key] = bmp
 	}
-	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, 0} // clamp, nearest: drawn 1:1
+	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, interp} // clamp
 	bp := struct {
 		Opacity float32
 		M       [6]float32
-	}{opacity, [6]float32{1, 0, 0, 1, x, y}}
+	}{opacity, [6]float32{dst.W() / float32(srcW), 0, 0, dst.H() / float32(srcH), dst.L, dst.T}}
 	var brush *comObj
 	if hr(p.rt.call(rtCreateBitmapBrush, uintptr(unsafe.Pointer(bmp)), uintptr(unsafe.Pointer(&bbp)), uintptr(unsafe.Pointer(&bp)), uintptr(unsafe.Pointer(&brush))), "CreateBitmapBrush") != nil {
 		return
 	}
-	r := RectF{x, y, x + float32(w), y + float32(h)}
-	p.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&r)), uintptr(unsafe.Pointer(brush)))
+	p.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&dst)), uintptr(unsafe.Pointer(brush)))
 	brush.release()
 }
 

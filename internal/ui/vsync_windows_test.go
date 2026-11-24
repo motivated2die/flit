@@ -288,3 +288,52 @@ func TestThemeRippleGeometryAndGPUComposite(t *testing.T) {
 		t.Fatalf("expected vsyncRipple cleared after completion")
 	}
 }
+
+func TestLiveDotRippleAndSoftRingPixels(t *testing.T) {
+	// Outer corners of the soft ring texture must be fully transparent (no hard box edge).
+	pix := rippleRingPixels(rippleTexSize, ColLive)
+	if pix[3] != 0 {
+		t.Fatalf("top-left corner alpha = %d, want 0", pix[3])
+	}
+	// A pixel near the ring crest (u ≈ 0.72) should have non-zero alpha.
+	cx := rippleTexSize / 2
+	crestX := cx + int(float64(cx)*0.72)
+	crestAlpha := pix[4*(cx*rippleTexSize+crestX)+3]
+	if crestAlpha == 0 {
+		t.Fatalf("crest alpha = 0, want > 0")
+	}
+
+	now := time.Now()
+	f := Frame{
+		Status: "Recording",
+		Live:   true,
+		LiveAt: now.Add(-100 * time.Millisecond),
+		Page:   Space(100),
+	}
+	c := NewCtx(1, fakeMetrics{}, now, "", "", nil)
+	f.Layout(c, 960, 660)
+	if !c.Animating || !c.AnimatingFast {
+		t.Fatalf("mid-ripple Animating=%v AnimatingFast=%v, want both true", c.Animating, c.AnimatingFast)
+	}
+	var rec recorder
+	c.Paint(&rec)
+	hasRipple := false
+	for _, b := range rec.bitmaps {
+		if len(b) >= 7 && b[:7] == "ripple:" {
+			hasRipple = true
+		}
+	}
+	if !hasRipple {
+		t.Fatalf("expected ripple scaled bitmap in recorded bitmaps: %v", rec.bitmaps)
+	}
+
+	// After liveRippleDur elapses, AnimatingFast stops while ambient Animating remains true.
+	cDone := NewCtx(1, fakeMetrics{}, now.Add(liveRippleDur+50*time.Millisecond), "", "", nil)
+	f.Layout(cDone, 960, 660)
+	if cDone.AnimatingFast {
+		t.Fatalf("after liveRippleDur AnimatingFast=true, want false")
+	}
+	if !cDone.Animating {
+		t.Fatalf("after liveRippleDur ambient Animating=false, want true")
+	}
+}

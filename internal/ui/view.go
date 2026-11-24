@@ -38,6 +38,9 @@ type Canvas interface {
 	// (x, y), at an opacity. pixels makes it the first time key is drawn;
 	// the canvas keeps it under key (soft light that is costly to compute).
 	Bitmap(key string, x, y float32, w, h int, opacity float32, pixels func() []byte)
+	// ScaledBitmap draws a cached srcW×srcH premultiplied BGRA picture scaled
+	// with linear filtering into dst at an opacity (soft expanding ripples).
+	ScaledBitmap(key string, dst RectF, srcW, srcH int, opacity float32, pixels func() []byte)
 }
 
 // TextMark colours bytes [From, To) of a paragraph's text, optionally

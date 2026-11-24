@@ -47,6 +47,7 @@ type Frame struct {
 	// of the sidebar beside the status.
 	Status        string
 	Live          bool
+	LiveAt        time.Time // when Live became true (triggers sidebar start ripple)
 	OnStatus      func()
 	LightTheme    bool
 	OnToggleTheme func()
@@ -109,10 +110,21 @@ func (f Frame) Layout(c *Ctx, w, h float32) {
 		cv.RoundRect(RectF{side - max(1, c.Px(1)), 0, side, h}, 0, col(ColDivider))
 	})
 	if f.Live {
-		// The recording dot's corner glows, breathing with the dot.
+		// The recording dot's glow emanates from the dot itself, clipped to the sidebar.
+		dotCX, dotCY := f.liveDotCenter(c, h)
 		pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
 		c.PushClip(RectF{0, 0, side - max(1, c.Px(1)), h})
-		c.Glow(0, h, liveGlow, ColLive, 0.75+0.25*pulse)
+		c.Glow(dotCX, dotCY, liveGlow, ColLive, 0.75+0.25*pulse)
+		if !f.LiveAt.IsZero() {
+			t := float64(c.Now.Sub(f.LiveAt)) / float64(liveRippleDur)
+			if t >= 0 && t < 1 {
+				c.Animating = true
+				c.AnimatingFast = true
+				rad := c.Px(6) + c.Px(liveRippleR-6)*float32(EaseOut(t))
+				alpha := float32(math.Pow(1-t, 1.7))
+				c.SoftRipple(dotCX, dotCY, rad, ColLive, alpha)
+			}
+		}
 		c.PopClip()
 	}
 	f.brand(c, side)
@@ -258,6 +270,18 @@ func (f Frame) nav(c *Ctx, side float32) {
 	}
 }
 
+const (
+	liveRippleDur = 520 * time.Millisecond // recording-start soft ripple in the sidebar
+	liveRippleR   = 130                    // max ripple radius (logical px)
+)
+
+// liveDotCenter returns the centre of the sidebar's bottom-left recording dot
+// in device pixels.
+func (f Frame) liveDotCenter(c *Ctx, h float32) (float32, float32) {
+	y := h - c.Px(statusLineH)
+	return c.Px(22) + c.Px(4), (y + h - c.Px(8)) / 2
+}
+
 func (f Frame) status(c *Ctx, side, h float32) {
 	if f.Status == "" && f.OnToggleTheme == nil {
 		return
@@ -306,8 +330,9 @@ func (f Frame) status(c *Ctx, side, h float32) {
 			}
 			tx := r.L
 			if f.Live {
-				cy := (r.T + r.B) / 2
-				cv.Circle(x+c.Px(4), cy, c.Px(4)*(0.9+0.25*pulse), col(ColLive))
+				dotCX, dotCY := f.liveDotCenter(c, h)
+				cv.Circle(dotCX, dotCY, c.Px(7.5)*(0.8+0.3*pulse), RGBA(ColLive, 0.22*pulse))
+				cv.Circle(dotCX, dotCY, c.Px(4), col(ColLive))
 				tx += c.Px(14)
 			}
 			color := col(ColMuted)

@@ -26,6 +26,9 @@ type Window struct {
 	// Whether a popover is open, and since when (it fades in).
 	modalOn bool
 	modalAt time.Time
+	// Whether a recording is live, and since when (triggers the sidebar dot ripple).
+	liveOn bool
+	liveAt time.Time
 
 	// Build returns what to show; it is called on every repaint.
 	Build func() Frame
@@ -136,6 +139,17 @@ func NewWindow(title string) (*Window, error) {
 			}
 			if f.Modal != nil {
 				f.ModalAt = w.modalAt
+			}
+			if f.Live != w.liveOn {
+				w.liveOn = f.Live
+				if f.Live {
+					w.liveAt = c.Now
+				} else {
+					w.liveAt = time.Time{}
+				}
+			}
+			if f.Live {
+				f.LiveAt = w.liveAt
 			}
 			f.Layout(c, cw, ch)
 		}

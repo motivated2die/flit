@@ -40,6 +40,75 @@ func (c *Ctx) Glow(cx, cy float32, g glowSpec, k color.RGBA, opacity float32) {
 	})
 }
 
+const rippleTexSize = 160
+
+// SoftRipple draws a soft-edged, feathered circular wave of colour k centred
+// at (cx, cy) with radius r (device pixels) at opacity. One canonical texture
+// is cached on the GPU and scaled smoothly per frame with linear filtering.
+func (c *Ctx) SoftRipple(cx, cy, r float32, k color.RGBA, opacity float32) {
+	if r <= 0 || opacity <= 0 {
+		return
+	}
+	key := fmt.Sprintf("ripple:%d:%v", rippleTexSize, k)
+	dst := RectF{cx - r, cy - r, cx + r, cy + r}
+	c.Draw(func(cv Canvas) {
+		cv.ScaledBitmap(key, dst, rippleTexSize, rippleTexSize, opacity, func() []byte {
+			return rippleRingPixels(rippleTexSize, k)
+		})
+	})
+}
+
+// rippleRingPixels renders a size×size premultiplied BGRA soft-edged ring of
+// colour k: a Gaussian-feathered wave crest around u=0.72 that reaches exact
+// zero at u=1.0 (no hard edge) with a faint inner trailing wash, dithered.
+func rippleRingPixels(size int, k color.RGBA) []byte {
+	pix := make([]byte, 4*size*size)
+	half := float64(size) / 2
+	const (
+		peakR    = 0.72
+		sigma    = 0.14
+		peakA    = 0.42
+		washA    = 0.12
+		edgeFade = 0.08
+	)
+	for y := range size {
+		for x := range size {
+			dx, dy := (float64(x)+0.5-half)/half, (float64(y)+0.5-half)/half
+			u := math.Hypot(dx, dy)
+			if u >= 1 {
+				continue
+			}
+			// Gaussian wave crest centred at peakR.
+			d := (u - peakR) / sigma
+			ring := peakA * math.Exp(-0.5*d*d)
+			// Soft inner wash trailing behind the crest.
+			wash := 0.0
+			if u < peakR {
+				w := u / peakR
+				wash = washA * w * w
+			}
+			// Smoothly force alpha to exact 0 at u=1 so the outer boundary never clips hard.
+			outer := 1.0
+			if u > 1-edgeFade {
+				t := (1 - u) / edgeFade
+				outer = t * t * (3 - 2*t)
+			}
+			a := (ring + wash) * outer
+			alpha := math.Round(a*255 + dither(x, y) - 0.5)
+			if alpha <= 0 {
+				continue
+			}
+			alpha = min(255, alpha)
+			i := 4 * (y*size + x)
+			pix[i] = uint8(math.Round(float64(k.B) * alpha / 255))
+			pix[i+1] = uint8(math.Round(float64(k.G) * alpha / 255))
+			pix[i+2] = uint8(math.Round(float64(k.R) * alpha / 255))
+			pix[i+3] = uint8(alpha)
+		}
+	}
+	return pix
+}
+
 // glowPixels renders a w×h box holding an ellipse of light of colour k
 // (centred, touching the box's edges) as premultiplied BGRA.
 func glowPixels(w, h int, k color.RGBA, strength, falloff float64) []byte {
