@@ -344,7 +344,18 @@ type Button struct {
 	Danger   bool // destructive: red text (red fill while hovered)
 	// HoverDanger stays neutral until hovered, then turns red (Quit).
 	HoverDanger bool
-	OnClick     func()
+	// MorphKey, when set, links distinct button IDs that occupy the same
+	// action slot (e.g. home:start -> home:stop) so width, icon, and label
+	// morph smoothly between states. Defaults to ID when empty.
+	MorphKey string
+	OnClick  func()
+}
+
+func (b Button) morphKey() string {
+	if b.MorphKey != "" {
+		return b.MorphKey
+	}
+	return b.ID
 }
 
 func (b Button) font() Font {
@@ -358,7 +369,7 @@ func (b Button) font() Font {
 	return f
 }
 
-func (b Button) Width(c *Ctx) float32 {
+func (b Button) naturalWidth(c *Ctx) float32 {
 	if b.iconOnly() {
 		return b.height(c) // round
 	}
@@ -377,6 +388,21 @@ func (b Button) Width(c *Ctx) float32 {
 		}
 	}
 	return w
+}
+
+func (b Button) Width(c *Ctx) float32 {
+	targetW := b.naturalWidth(c)
+	if c.Buttons != nil {
+		if key := b.morphKey(); key != "" {
+			curW, moving := c.Buttons.width(key, targetW, c.Scale, c.Now)
+			if moving {
+				c.Animating = true
+				c.AnimatingFast = true
+			}
+			return curW
+		}
+	}
+	return targetW
 }
 
 // iconOnly: a glyph without a label makes a round button.
@@ -398,8 +424,26 @@ const smallButtonH = 22
 
 func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	h := b.height(c)
+	key := b.morphKey()
+	widthMoving := false
 	if b.iconOnly() {
-		w = h
+		if c.Buttons != nil && key != "" {
+			curW, moving := c.Buttons.width(key, h, c.Scale, c.Now)
+			if moving {
+				c.Animating = true
+				c.AnimatingFast = true
+				widthMoving = true
+			}
+			w = min(w, curW)
+		} else {
+			w = h
+		}
+	} else if c.Buttons != nil && key != "" {
+		_, widthMoving = c.Buttons.width(key, b.naturalWidth(c), c.Scale, c.Now)
+		if widthMoving {
+			c.Animating = true
+			c.AnimatingFast = true
+		}
 	}
 	r := RectF{x, y, x + w, y + h}
 	if !c.Visible(r) {
@@ -420,42 +464,105 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 	case c.Hover == b.ID:
 		fill = col(ColControlHi)
 	}
+	vis := btnVisual{p: 1, fill: fill, ink: text}
+	if c.Buttons != nil && key != "" {
+		vis = c.Buttons.visual(key, b.Label, b.Glyph, fill, text, b.iconOnly(), c.Now)
+		if vis.animating {
+			c.Animating = true
+			c.AnimatingFast = true
+		}
+		fill, text = vis.fill, vis.ink
+	}
 	if c.Pressed == b.ID && !b.Disabled {
 		r = r.Inset(c.Px(1))
 	}
-	gr := RectF{}
-	tr := RectF{r.L, r.T, r.R, r.B}
+	gx := c.Px(14)
+	switch {
+	case b.Large:
+		gx = c.Px(18)
+	case b.Small:
+		gx = c.Px(9)
+	}
+	gw := c.Px(16)
+	if b.Small {
+		gw = c.Px(13)
+	}
+	grLeft := RectF{r.L + gx, r.T, r.L + gx + gw, r.B}
+	grCenter := RectF{r.L + (r.W()-gw)/2, r.T, r.L + (r.W()+gw)/2, r.B}
+	gr := grLeft
 	if b.iconOnly() {
-		gr = r
-	} else if b.Glyph != "" {
-		gx := r.L + c.Px(14)
-		switch {
-		case b.Large:
-			gx = r.L + c.Px(18)
-		case b.Small:
-			gx = r.L + c.Px(9)
+		gr = grCenter
+	}
+	if vis.animating && b.iconOnly() != vis.prevIconOnly {
+		// Smoothly slide the icon between centered (icon-only) and left-padded
+		// (icon+label) as the pill expands or collapses.
+		st := float32(EaseOut(vis.p))
+		fromL, toL := grLeft.L, grCenter.L
+		if !b.iconOnly() {
+			fromL, toL = grCenter.L, grLeft.L
 		}
-		gw := c.Px(16)
-		if b.Small {
-			gw = c.Px(13)
-		}
-		gr = RectF{gx, r.T, gx + gw, r.B}
+		il := fromL + (toL-fromL)*st
+		gr = RectF{il, r.T, il + gw, r.B}
+	}
+	tr := RectF{r.L, r.T, r.R, r.B}
+	if b.Glyph != "" && !b.iconOnly() {
 		tr.L = gr.R + c.Px(5)
 		tr.R = r.R - c.Px(10)
 	}
 	label := c.F(b.font())
 	label.Center = b.Glyph == ""
+	morphing := vis.animating || widthMoving
 	c.Draw(func(cv Canvas) {
 		cv.RoundRect(r, r.H()/2, fill)
+		if morphing {
+			cv.PushClip(r)
+		}
+		scaleAlpha := func(k ColorF, a float32) ColorF {
+			k.A *= a
+			return k
+		}
+		outA := float32(0)
+		inA := float32(1)
+		if vis.animating {
+			outA = float32(max(0, 1-vis.p/0.45))
+			inA = float32(Smoothstep(0.12, 0.85, vis.p))
+		}
+		// Outgoing glyph (when switching between two different icons).
+		if vis.animating && vis.prevGlyph != "" && vis.prevGlyph != b.Glyph && outA > 0.01 {
+			DrawIcon(cv, vis.prevGlyph, gr, gw, scaleAlpha(text, outA))
+		}
+		// Current glyph: full alpha when unchanged (slides cleanly), fades in when new.
 		if b.Glyph != "" {
-			size := c.Px(16)
-			if b.Small {
-				size = c.Px(13)
+			ga := float32(1)
+			if vis.animating && vis.prevGlyph != b.Glyph {
+				ga = inA
 			}
-			DrawIcon(cv, b.Glyph, gr, size, text)
+			if ga > 0.01 {
+				DrawIcon(cv, b.Glyph, gr, gw, scaleAlpha(text, ga))
+			}
+		}
+		// Outgoing label fades out briskly before incoming text settles.
+		if vis.animating && vis.prevLabel != "" && vis.prevLabel != b.Label && outA > 0.01 {
+			ptr := RectF{r.L, r.T, r.R, r.B}
+			pl := label
+			pl.Center = vis.prevGlyph == ""
+			if vis.prevGlyph != "" {
+				ptr.L = gr.R + c.Px(5)
+				ptr.R = r.R - c.Px(10)
+			}
+			cv.Text(vis.prevLabel, ptr, pl, scaleAlpha(text, outA))
 		}
 		if b.Label != "" {
-			cv.Text(b.Label, tr, label, text)
+			la := float32(1)
+			if vis.animating && vis.prevLabel != b.Label {
+				la = inA
+			}
+			if la > 0.01 {
+				cv.Text(b.Label, tr, label, scaleAlpha(text, la))
+			}
+		}
+		if morphing {
+			cv.PopClip()
 		}
 	})
 	if !b.Disabled && b.OnClick != nil {

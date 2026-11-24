@@ -106,7 +106,7 @@ func (a *App) panelStatus() ui.Node {
 		return ui.VStack{Gap: 10, Items: []ui.Node{
 			ui.LiveTitle{Text: shorten(title, 24), Detail: ui.Clock(time.Since(a.rec.started))},
 			ui.HStack{Gap: 8, Items: []ui.Node{
-				ui.Button{ID: "panel:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.panelAct(a.stopRecording)},
+				ui.Button{ID: "panel:stop", MorphKey: "panel:primary", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.panelAct(a.stopRecording)},
 				a.confirmButtonAs("panel:cancel", "Cancel", "Click again", false, a.panelAct(a.cancelRecording)),
 			}},
 			ui.VoiceMeter{Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Flat: true},
@@ -120,7 +120,7 @@ func (a *App) panelStatus() ui.Node {
 		return ui.VStack{Gap: 10, Items: []ui.Node{
 			ui.Label{Text: providerName(c.Provider) + " meeting detected", Large: true},
 			ui.HStack{Gap: 8, Items: []ui.Node{
-				ui.Button{ID: "panel:record", Label: record, Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(&c) })},
+				ui.Button{ID: "panel:record", MorphKey: "panel:primary", Label: record, Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(&c) })},
 				ui.Button{ID: "panel:dismiss", Label: cancel, OnClick: a.panelAct(func() { a.onNotchButton("dismiss") })},
 			}},
 		}}
@@ -136,6 +136,6 @@ func (a *App) panelStatus() ui.Node {
 	}
 	return ui.VStack{Gap: 10, Items: []ui.Node{
 		ui.Label{Text: "Ready and idle", Large: true},
-		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(nil) })}}},
+		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", MorphKey: "panel:primary", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(nil) })}}},
 	}}
 }

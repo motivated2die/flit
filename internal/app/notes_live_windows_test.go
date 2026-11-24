@@ -95,19 +95,24 @@ func TestRunningRecordingPage(t *testing.T) {
 	if stop, _ := c.HitByID("session:stop"); stop.R.H() > 24 {
 		t.Errorf("Transcribe is %v px high, want a chip", stop.R.H())
 	}
-	// Home: Cancel and Notes are icons, the main button reads Transcribe.
+	// Home: split pill with compact trash icon on the left and Transcribe on the right.
 	a.page = pageHome
 	c, _ = ui.LayoutFrame(a.frame(), 960, 640, 1, "")
-	for _, id := range []string{"home:cancel", "home:notes"} {
-		if h, ok := c.HitByID(id); !ok || h.R.W() > h.R.H()+1 {
-			t.Errorf("%s isn't a round icon: %v", id, h.R)
-		}
+	cancel, ok := c.HitByID("home:cancel")
+	if !ok {
+		t.Fatal("home:cancel missing on Home")
 	}
-	cancel, _ := c.HitByID("home:cancel")
-	cancel.OnClick() // asks again, in words
+	stopBtn, ok := c.HitByID("home:stop")
+	if !ok {
+		t.Fatal("home:stop missing on Home")
+	}
+	if cancel.R.W() >= stopBtn.R.W() {
+		t.Errorf("cancel segment (%v) should be narrower than Transcribe (%v)", cancel.R.W(), stopBtn.R.W())
+	}
+	cancel.OnClick() // expands across the split pill to confirm discard
 	c, _ = ui.LayoutFrame(a.frame(), 960, 640, 1, "")
-	if h, _ := c.HitByID("home:cancel"); h.R.W() <= h.R.H()+1 {
-		t.Error("Cancel doesn't ask again")
+	if h, _ := c.HitByID("home:cancel"); h.R.W() <= cancel.R.W()+20 {
+		t.Error("Cancel doesn't expand to ask again")
 	}
 	if a.rec == nil {
 		t.Error("one click cancelled the recording")

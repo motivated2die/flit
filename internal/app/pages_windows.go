@@ -144,32 +144,11 @@ func (a *App) homePage() ui.Node {
 	return ui.VStack{Gap: 12, Items: items}
 }
 
-// homeActions is the page's main button: start, stop, or take up a
-// detected meeting.
+// homeActions is the page's main action: a fixed-width 3-state split pill
+// (Start recording -> [Trash | Transcribe] -> Discard recording) so the
+// header never shifts horizontally when toggling recording or discard.
 func (a *App) homeActions() []ui.Node {
-	switch {
-	case a.rec != nil:
-		rec := a.rec.sess
-		// Cancel and Notes as round icons; Cancel asks again in words.
-		cancel := ui.Node(ui.Button{ID: "home:cancel", Glyph: ui.GlyphDelete, Large: true, OnClick: func() {
-			a.confirm, a.confirmAt = "home:cancel", time.Now()
-			a.invalidate()
-			if a.tray != nil { // none in tests
-				time.AfterFunc(5*time.Second, func() { a.tray.Post(a.invalidate) })
-			}
-		}})
-		if a.confirm == "home:cancel" && time.Since(a.confirmAt) < 5*time.Second {
-			cancel = ui.Button{ID: "home:cancel", Label: "Discard recording", Glyph: ui.GlyphDelete, Danger: true, Large: true, OnClick: func() {
-				a.confirm = ""
-				a.cancelRecording()
-			}}
-		}
-		return []ui.Node{
-			cancel,
-			ui.Button{ID: "home:notes", Glyph: ui.GlyphNotes, Large: true, OnClick: func() { a.openNotes(rec) }},
-			ui.Button{ID: "home:stop", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, Large: true, OnClick: a.stopRecording},
-		}
-	case a.detected != nil:
+	if a.rec == nil && a.detected != nil {
 		c := *a.detected
 		cancel := "Not now"
 		if a.counting() {
@@ -177,27 +156,61 @@ func (a *App) homeActions() []ui.Node {
 		}
 		return []ui.Node{
 			ui.Button{ID: "home:dismiss", Label: cancel, Large: true, OnClick: func() { a.onNotchButton("dismiss") }},
-			ui.Button{ID: "home:record", Label: "Transcribe", Glyph: ui.GlyphRecord, Primary: true, Large: true, OnClick: func() { a.startRecording(&c) }},
+			ui.Button{ID: "home:record", MorphKey: "home:primary", Label: "Transcribe", Glyph: ui.GlyphRecord, Primary: true, Large: true, OnClick: func() { a.startRecording(&c) }},
 		}
 	}
-	return []ui.Node{ui.Button{ID: "home:start", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, Large: true, OnClick: func() { a.startRecording(nil) }}}
+	state := ui.SplitIdle
+	if a.rec != nil {
+		state = ui.SplitLive
+		if a.confirm == "home:cancel" && time.Since(a.confirmAt) < 2*time.Second {
+			state = ui.SplitConfirm
+		}
+	}
+	return []ui.Node{ui.SplitAction{
+		ID:           "home:record-split",
+		State:        state,
+		IdleID:       "home:start",
+		IdleLabel:    "Start recording",
+		IdleGlyph:    ui.GlyphRecord,
+		OnIdle:       func() { a.startRecording(nil) },
+		LeftID:       "home:cancel",
+		LeftGlyph:    ui.GlyphDelete,
+		ConfirmLabel: "Discard recording",
+		OnLeft: func() {
+			a.confirm, a.confirmAt = "home:cancel", time.Now()
+			a.invalidate()
+			if a.tray != nil { // none in tests
+				time.AfterFunc(2*time.Second, func() { a.tray.Post(a.invalidate) })
+			}
+		},
+		OnConfirm: func() {
+			a.confirm = ""
+			a.cancelRecording()
+		},
+		RightID:    "home:stop",
+		RightLabel: "Transcribe",
+		RightGlyph: ui.GlyphStop,
+		OnRight:    a.stopRecording,
+	}}
 }
 
-// homeStatus says in a sentence what flit is doing.
+// homeStatus says in a sentence what flit is doing. Every state is tuned to
+// a consistent ~80–90 characters (2 lines beside the fixed-width action pill)
+// so switching states never shifts the cards beneath.
 func (a *App) homeStatus() string {
 	switch {
 	case a.rec != nil:
-		return "Recording your microphone and the meeting. The transcript follows when you stop or the meeting ends; Cancel throws the recording away."
+		return "Recording your mic and the meeting. Stop to transcribe, or use the trash to discard."
 	case a.detected != nil && a.counting():
-		return providerName(a.detected.Provider) + " is using your microphone: flit starts recording the meeting in a few seconds. Cancel to leave this one out."
+		return providerName(a.detected.Provider) + " is using your mic. Flit starts recording in a few seconds unless you cancel."
 	case a.detected != nil:
-		return providerName(a.detected.Provider) + " is using your microphone. flit can record the meeting and transcribe both sides when it ends."
+		return providerName(a.detected.Provider) + " is using your mic. Start transcribing to capture and summarize this call."
 	case a.working != nil:
-		return "Transcribing the last meeting. You can close this window meanwhile."
+		return "Transcribing the last meeting in the background. You can close this window meanwhile."
 	case a.sumRun != nil:
-		return "Writing a summary on this PC. You can close this window meanwhile."
+		return "Writing a local summary on this PC in the background. You can close this window meanwhile."
 	}
-	return "Waiting for a meeting. Flit notices when Teams, Zoom, Webex, Slack or Google Meet start using your microphone and offers to transcribe it; or start a recording yourself."
+	return "Waiting for a meeting. Flit detects Teams, Zoom, Webex, Slack and Meet automatically."
 }
 
 // liveCard shows a recording's levels or a transcription's progress; nil

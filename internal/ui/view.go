@@ -132,6 +132,8 @@ type Ctx struct {
 	// jumps immediately and cancels any running smooth scroll (dragging).
 	ScrollTo  func(id string, to float32)
 	SetScroll func(id string, to float32)
+	// Buttons holds live per-button morph state (nil in static renders).
+	Buttons *ButtonAnims
 
 	ops      []func(Canvas)
 	overlays []func(*Ctx)

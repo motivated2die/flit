@@ -26,6 +26,7 @@ type host struct {
 	bgBrush uintptr // dark GDI brush for WM_ERASEBKGND before first paint
 	trans   transition
 	ripple  themeRipple
+	buttons ButtonAnims
 
 	hover, pressed string
 	scroll         map[string]float32
@@ -231,7 +232,9 @@ func (h *host) paint() {
 	c.Edit, c.StartEdit = h.edit, h.startEdit
 	c.Sel = h.sel
 	c.Focus = h.focus
+	c.Buttons = &h.buttons
 	h.layout(c, float32(cw), float32(ch))
+	h.buttons.prune()
 	if h.focusScrollPending {
 		h.focusScrollDelta = h.scroll[h.focusScrollID] - h.focusScrollFrom
 		h.focusScrollPending = false
