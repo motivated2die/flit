@@ -245,13 +245,16 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		dx := box.L + end
 		p.Circle(dx, cy, 4.2*s*(0.8+0.3*pulse), fade(RGBA(ColLive, 0.25*pulse)))
 		p.Circle(dx, cy, 2.6*s, fade(RGBA(ColLive, 0.8+0.2*pulse)))
-		lv := min(1, f.levels[0])
 		bh := 2 * s
 		bar := RectF{dx + 5*s, cy - bh/2, box.R - end, cy + bh/2}
 		bw := bar.W()
 		p.RoundRect(bar, bh/2, fade(notchTrack()))
-		if lv > 0 {
-			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*lv), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
+		// Meeting audio (them) extends right-to-left underneath the personal mic bar.
+		if them := min(1, f.levels[1]); them > 0 {
+			p.RoundRect(RectF{bar.R - max(bh, bw*them), bar.T, bar.R, bar.B}, bh/2, fade(RGBA(ColMuted, 0.9)))
+		}
+		if me := min(1, f.levels[0]); me > 0 {
+			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*me), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
 		}
 	case NotchWorking:
 		bw, bh := box.W()-14*s, 3*s
