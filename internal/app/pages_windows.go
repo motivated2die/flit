@@ -484,6 +484,19 @@ func (a *App) hasSummary(s *session.Session) bool {
 	return s.HasSummary()
 }
 
+// wordCount returns the cached word count of session s's transcript.
+func (a *App) wordCount(s *session.Session) int {
+	if n, ok := a.wordCounts[s.Meta.ID]; ok {
+		return n
+	}
+	n := len(strings.Fields(a.preview(s)))
+	if a.wordCounts == nil {
+		a.wordCounts = map[string]int{}
+	}
+	a.wordCounts[s.Meta.ID] = n
+	return n
+}
+
 // meetingRowIcon chooses the leading icon (or spinner) for a meeting row based
 // on its status and collected content:
 //   - transcribing → loading spinner
@@ -513,7 +526,7 @@ func (a *App) meetingRowIcon(s *session.Session) (glyph string, spinning bool) {
 func (a *App) facts(s *session.Session) string {
 	parts := []string{sessionWhen(s)}
 	if s.Meta.State == session.Ready {
-		if w := len(strings.Fields(a.preview(s))); w > 0 {
+		if w := a.wordCount(s); w > 0 {
 			parts = append(parts, plural(w, "word"))
 		}
 		if n := a.speakerCount(s); n > 1 {
@@ -702,7 +715,20 @@ func (a *App) confirmButtonAs(id, label, again string, large bool, act func()) u
 	}}
 }
 
-func (a *App) hasAudio(s *session.Session) bool { return s.HasAudio() }
+func (a *App) hasAudio(s *session.Session) bool {
+	if a.isRecording(s) {
+		return s.HasAudio()
+	}
+	if v, ok := a.hasAudioMap[s.Meta.ID]; ok {
+		return v
+	}
+	v := s.HasAudio()
+	if a.hasAudioMap == nil {
+		a.hasAudioMap = map[string]bool{}
+	}
+	a.hasAudioMap[s.Meta.ID] = v
+	return v
+}
 
 // deleteAudio removes a recording's tracks and keeps its transcript.
 func (a *App) deleteAudio(s *session.Session) {

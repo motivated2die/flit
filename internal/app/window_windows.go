@@ -165,6 +165,8 @@ func (a *App) navigateBack() {
 func (a *App) reloadSessions() {
 	a.sessions = session.List(a.dataDir)
 	a.storage = dirSize(session.Root(a.dataDir))
+	clear(a.wordCounts)
+	clear(a.hasAudioMap)
 }
 
 // dirSize adds up the sizes of the files under dir.

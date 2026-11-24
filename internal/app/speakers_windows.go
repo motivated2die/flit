@@ -32,6 +32,8 @@ func (a *App) speakers(s *session.Session) []transcript.SpeakerSummary {
 // forget drops what is cached of a session's transcript.
 func (a *App) forget(s *session.Session) {
 	delete(a.previews, s.Meta.ID)
+	delete(a.wordCounts, s.Meta.ID)
+	delete(a.hasAudioMap, s.Meta.ID)
 	delete(a.speakerCache, s.Meta.ID)
 	delete(a.paraCache, s.Meta.ID)
 	delete(a.searchText, s.Meta.ID)

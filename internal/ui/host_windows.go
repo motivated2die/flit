@@ -389,8 +389,9 @@ func (h *host) stopTimers() {
 }
 
 // paintLive repaints the live regions of the last layout. On a hardware
-// HwndTarget, a full GPU paint is triggered directly; on the software
-// fallback, only the live regions are redrawn into h.surf via pixelCanvas.
+// HwndTarget, it replays h.last directly on the GPU with an updated timestamp
+// (no Build(), no Layout(), no disk/text work); on the software fallback, only
+// the live regions are redrawn into h.surf via pixelCanvas.
 func (h *host) paintLive() {
 	c := h.last
 	if c == nil || len(c.live) == 0 || !h.Visible() {
@@ -401,8 +402,27 @@ func (h *host) paintLive() {
 		return // minimised: nothing to see
 	}
 	if h.hw.ready() {
-		h.Invalidate()
-		procUpdateWindow.Call(h.hwnd)
+		cw, ch := h.clientSize()
+		if cw <= 0 || ch <= 0 {
+			return
+		}
+		if uint32(cw) != h.hw.w || uint32(ch) != h.hw.h {
+			h.Invalidate() // resized: a full paint comes
+			return
+		}
+		c.Now = time.Now()
+		p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
+		if err != nil {
+			if errors.Is(err, ErrRecreateTarget) {
+				h.Invalidate()
+			}
+			return
+		}
+		c.Paint(p)
+		if err := p.End(); errors.Is(err, ErrRecreateTarget) {
+			h.hw.Free()
+			h.Invalidate()
+		}
 		return
 	}
 	if h.surf == nil {

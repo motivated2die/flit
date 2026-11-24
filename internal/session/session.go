@@ -102,8 +102,10 @@ type DeviceUse struct {
 
 // Session is a session folder.
 type Session struct {
-	Dir  string
-	Meta Meta
+	Dir          string
+	Meta         Meta
+	notesState   uint8 // 0 = unknown, 1 = none, 2 = present
+	summaryState uint8 // 0 = unknown, 1 = none, 2 = present
 }
 
 // Root is the sessions folder in the data folder.

@@ -189,7 +189,9 @@ func (t Title) Layout(c *Ctx, x, y, w float32) float32 {
 	c.AddAnchor(string(t), y)
 	h := c.Px(34)
 	r := RectF{x, y, x + w, y + h}
-	c.Draw(func(cv Canvas) { cv.Text(string(t), r, c.F(fontTitle), col(ColText)) })
+	if c.Visible(r) {
+		c.Draw(func(cv Canvas) { cv.Text(string(t), r, c.F(fontTitle), col(ColText)) })
+	}
 	return h
 }
 
@@ -200,7 +202,9 @@ func (t Caption) Layout(c *Ctx, x, y, w float32) float32 {
 	c.AddAnchor(string(t), y)
 	h := c.Px(22)
 	r := RectF{x + c.Px(2), y, x + w, y + h}
-	c.Draw(func(cv Canvas) { cv.Text(strings.ToUpper(string(t)), r, c.F(fontCaption), col(ColFaint)) })
+	if c.Visible(r) {
+		c.Draw(func(cv Canvas) { cv.Text(strings.ToUpper(string(t)), r, c.F(fontCaption), col(ColFaint)) })
+	}
 	return h
 }
 
@@ -234,7 +238,9 @@ func (l Label) Layout(c *Ctx, x, y, w float32) float32 {
 		color = col(ColMuted)
 	}
 	r := RectF{x, y, x + w, y + h}
-	c.Draw(func(cv Canvas) { cv.Text(l.Text, r, f, color) })
+	if c.Visible(r) {
+		c.Draw(func(cv Canvas) { cv.Text(l.Text, r, f, color) })
+	}
 	return h
 }
 
@@ -302,7 +308,11 @@ func (k Card) Layout(c *Ctx, x, y, w float32) float32 {
 			c.hits = append(c.hits[:hits], append([]Hit{{ID: k.ID, R: hr, OnClick: k.OnClick}}, c.hits[hits:]...)...)
 		}
 	}
-	c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, bg) }
+	if c.Visible(r) {
+		c.ops[idx] = func(cv Canvas) { cv.RoundRect(r, radius, bg) }
+	} else {
+		c.ops[idx] = func(Canvas) {}
+	}
 	return h
 }
 
@@ -313,7 +323,9 @@ func (Divider) Layout(c *Ctx, x, y, w float32) float32 {
 	h := c.Px(9)
 	t := max(1, c.Px(1))
 	r := RectF{x, y + (h-t)/2, x + w, y + (h+t)/2}
-	c.Draw(func(cv Canvas) { cv.RoundRect(r, 0, col(ColDivider)) })
+	if c.Visible(r) {
+		c.Draw(func(cv Canvas) { cv.RoundRect(r, 0, col(ColDivider)) })
+	}
 	return h
 }
 
@@ -390,6 +402,9 @@ func (b Button) Layout(c *Ctx, x, y, w float32) float32 {
 		w = h
 	}
 	r := RectF{x, y, x + w, y + h}
+	if !c.Visible(r) {
+		return h
+	}
 	fill, text := col(ColControl), col(ColText)
 	switch {
 	case b.Disabled:
@@ -465,6 +480,9 @@ func (t Toggle) Layout(c *Ctx, x, y, w float32) float32 {
 		h = c.Px(52)
 	}
 	r := RectF{x - c.Px(8), y, x + w + c.Px(8), y + h}
+	if !c.Visible(r) {
+		return h
+	}
 	sw, sh := c.Px(36), c.Px(20)
 	track := RectF{x + w - sw, y + (h-sh)/2, x + w, y + (h+sh)/2}
 	hover := c.Hover == t.ID
@@ -665,6 +683,9 @@ type ListRow struct {
 func (l ListRow) Layout(c *Ctx, x, y, w float32) float32 {
 	h := c.Px(56)
 	r := RectF{x, y, x + w, y + h}
+	if !c.Visible(r) {
+		return h
+	}
 	hover := c.Hover == l.ID && l.OnClick != nil
 	ix := x + c.Px(14)
 	icon := RectF{ix, y, ix + c.Px(20), y + h}
@@ -707,6 +728,9 @@ type Progress struct{ Value float64 }
 func (p Progress) Layout(c *Ctx, x, y, w float32) float32 {
 	h := c.Px(6)
 	r := RectF{x, y, x + w, y + h}
+	if !c.Visible(r) {
+		return h
+	}
 	v := float32(math.Max(0, math.Min(1, p.Value)))
 	fill := RectF{x, y, x + max(h, w*v), y + h}
 	c.Draw(func(cv Canvas) {
@@ -756,6 +780,9 @@ func (l Link) Width(c *Ctx) float32 {
 func (l Link) Layout(c *Ctx, x, y, w float32) float32 {
 	h := c.Px(28)
 	r := RectF{x, y, x + l.Width(c), y + h}
+	if !c.Visible(r) {
+		return h
+	}
 	color := col(ColMuted)
 	if c.Hover == l.ID {
 		color = col(ColText)
@@ -822,6 +849,9 @@ func (r ChoiceRow) Layout(c *Ctx, x, y, w float32) float32 {
 		h = c.Px(42)
 	}
 	row := RectF{x - c.Px(8), y, x + w + c.Px(8), y + h}
+	if !c.Visible(row) {
+		return h
+	}
 	hover := c.Hover == r.ID && r.OnClick != nil
 	mid := y + h/2
 	rad := c.Px(8)

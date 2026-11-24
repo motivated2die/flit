@@ -10,8 +10,16 @@ import (
 
 // HasNotes reports whether the recording has non-empty notes on disk.
 func (s *Session) HasNotes() bool {
+	if s.notesState != 0 {
+		return s.notesState == 2
+	}
 	st, err := os.Stat(s.Path(NotesFile))
-	return err == nil && st.Size() > 0
+	if err == nil && st.Size() > 0 {
+		s.notesState = 2
+		return true
+	}
+	s.notesState = 1
+	return false
 }
 
 // Notes reads the recording's notes: notes.md, with the lines' typing
@@ -41,6 +49,7 @@ func (s *Session) SaveNotes(d notes.Doc) error {
 				return err
 			}
 		}
+		s.notesState = 1
 		return nil
 	}
 	if err := writeAtomic(s.Path(NotesFile), []byte(d.Markdown())); err != nil {
@@ -50,5 +59,9 @@ func (s *Session) SaveNotes(d notes.Doc) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.Path(NotesTimesFile), append(b, '\n'))
+	if err := writeAtomic(s.Path(NotesTimesFile), append(b, '\n')); err != nil {
+		return err
+	}
+	s.notesState = 2
+	return nil
 }

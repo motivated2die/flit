@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/motivated2die/flit/internal/logx"
@@ -73,7 +72,7 @@ func (a *App) panelContent() ui.Node {
 			body = append(body, ui.Divider{})
 		}
 		facts := s.Meta.Started.Format("Mon 2 Jan · 15:04")
-		if w := len(strings.Fields(a.preview(s))); w > 0 {
+		if w := a.wordCount(s); w > 0 {
 			facts += " · " + plural(w, "word")
 		}
 		body = append(body, ui.Caption("Latest transcript"),
