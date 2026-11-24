@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"math"
 	"runtime"
 	"sync/atomic"
@@ -191,6 +192,19 @@ func TestHwndTargetPaintResizeFree(t *testing.T) {
 }
 
 func TestThemeRippleGeometryAndGPUComposite(t *testing.T) {
+	// Border COLORREF cross-fade endpoints and midpoint.
+	a := color.RGBA{R: 20, G: 40, B: 60, A: 255}
+	b := color.RGBA{R: 220, G: 200, B: 180, A: 255}
+	if got := lerpColorref(a, b, 0); got != 20|40<<8|60<<16 {
+		t.Fatalf("lerpColorref(0) = %#x", got)
+	}
+	if got := lerpColorref(a, b, 1); got != 220|200<<8|180<<16 {
+		t.Fatalf("lerpColorref(1) = %#x", got)
+	}
+	if got := lerpColorref(a, b, 0.5); got != 120|120<<8|120<<16 {
+		t.Fatalf("lerpColorref(0.5) = %#x, want %#x", got, uint32(120|120<<8|120<<16))
+	}
+
 	// Origin near bottom-left of a 1000×600 window: farthest corner is top-right (1000, 0).
 	gotR := rippleMaxRadius(150, 580, 1000, 600)
 	wantR := float32(math.Hypot(850, 580)) + 2

@@ -184,10 +184,15 @@ func (w *Window) CaptureThemeRipple() {
 		}
 	}
 	w.captureThemeRipple(cx, cy)
+	if w.ripple.armed() {
+		w.ripple.oldBorder = ColEdge
+	}
 }
 
 // RefreshTheme updates the window's background brush, DWM frame attributes,
-// and triggers an immediate repaint in the active theme.
+// and triggers an immediate repaint in the active theme. When a theme ripple
+// is armed, the DWM border colour cross-fades with the ripple and final DWM
+// frame attributes apply on completion.
 func (w *Window) RefreshTheme() {
 	w.bg = col(ColBase)
 	b := darkBrush(ColBase)
@@ -200,7 +205,13 @@ func (w *Window) RefreshTheme() {
 			procDeleteObject.Call(old)
 		}
 	}
-	darkFrame(w.hwnd, ColSidebar)
+	if w.ripple.armed() {
+		w.ripple.newBorder = ColEdge
+		w.ripple.hasBorder = true
+		w.ripple.onDone = func() { darkFrame(w.hwnd, ColSidebar) }
+	} else {
+		darkFrame(w.hwnd, ColSidebar)
+	}
 	w.Invalidate()
 }
 

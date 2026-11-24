@@ -2,8 +2,10 @@ package ui
 
 import (
 	"errors"
+	"image/color"
 	"math"
 	"time"
+	"unsafe"
 )
 
 const themeRippleDur = 360 * time.Millisecond
@@ -12,13 +14,17 @@ const themeRippleDur = 360 * time.Millisecond
 // snapshots (oldBrush -> newBrush) expanding from the theme toggle button at
 // the monitor's native VSync refresh rate. UI thread only.
 type themeRipple struct {
-	oldBrush *comObj
-	newBrush *comObj
-	w, h     int32
-	cx, cy   float32
-	maxR     float32
-	start    time.Time
-	dur      time.Duration
+	oldBrush  *comObj
+	newBrush  *comObj
+	w, h      int32
+	cx, cy    float32
+	maxR      float32
+	start     time.Time
+	dur       time.Duration
+	oldBorder color.RGBA
+	newBorder color.RGBA
+	hasBorder bool
+	onDone    func()
 }
 
 func (r *themeRipple) armed() bool { return r.oldBrush != nil && r.newBrush == nil }
@@ -34,6 +40,29 @@ func (r *themeRipple) free() {
 		r.newBrush = nil
 	}
 	r.w, r.h = 0, 0
+	r.hasBorder = false
+	r.onDone = nil
+}
+
+// lerpColorref linearly interpolates between two RGB colours and encodes the
+// result as a Win32 COLORREF (0x00BBGGRR) for DWMWA_BORDER_COLOR.
+func lerpColorref(a, b color.RGBA, t float64) uint32 {
+	if t <= 0 {
+		return uint32(a.R) | uint32(a.G)<<8 | uint32(a.B)<<16
+	}
+	if t >= 1 {
+		return uint32(b.R) | uint32(b.G)<<8 | uint32(b.B)<<16
+	}
+	mix := func(x, y uint8) uint32 {
+		return uint32(math.Round(float64(x) + (float64(y)-float64(x))*t))
+	}
+	return mix(a.R, b.R) | mix(a.G, b.G)<<8 | mix(a.B, b.B)<<16
+}
+
+func setDWMBorderColor(hwnd uintptr, cr uint32) {
+	if hwnd != 0 && procDwmSetWindowAttr.Find() == nil {
+		procDwmSetWindowAttr.Call(hwnd, dwmwaBorderColor, uintptr(unsafe.Pointer(&cr)), 4)
+	}
 }
 
 // rippleMaxRadius returns the distance from (cx, cy) to the farthest corner of
@@ -72,10 +101,15 @@ func (h *host) captureThemeRipple(cx, cy float32) {
 	}
 }
 
-// cancelRipple stops any active or armed theme ripple and releases its GPU brushes.
+// cancelRipple stops any active or armed theme ripple, releases its GPU
+// brushes, and runs onDone (e.g. applying final DWM frame attributes).
 func (h *host) cancelRipple() {
+	done := h.ripple.onDone
 	h.ripple.free()
 	h.setVsync(vsyncRipple, false)
+	if done != nil {
+		done()
+	}
 }
 
 // paintRippleFrame draws one VSync frame of the circular theme wipe using two
@@ -91,6 +125,10 @@ func (h *host) paintRippleFrame(cw, ch int32) bool {
 		h.cancelRipple()
 		return false
 	}
+	e := easeOutCubic(t)
+	if h.ripple.hasBorder {
+		setDWMBorderColor(h.hwnd, lerpColorref(h.ripple.oldBorder, h.ripple.newBorder, e))
+	}
 	p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
 	if err != nil {
 		h.cancelRipple()
@@ -101,7 +139,7 @@ func (h *host) paintRippleFrame(cw, ch int32) bool {
 		return false
 	}
 	p.FillBrush(RectF{0, 0, float32(cw), float32(ch)}, h.ripple.oldBrush)
-	rad := h.ripple.maxR * float32(easeOutCubic(t))
+	rad := h.ripple.maxR * float32(e)
 	p.FillEllipseBrush(h.ripple.cx, h.ripple.cy, rad, rad, h.ripple.newBrush)
 	if err := p.End(); err != nil {
 		h.cancelRipple()
