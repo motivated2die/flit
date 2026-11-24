@@ -41,10 +41,13 @@ type Frame struct {
 	ModalAt time.Time
 
 	// Status is shown at the bottom of the sidebar; Live puts the red dot
-	// before it (recording). LightTheme / OnToggleTheme draw the small sun/moon
-	// switch at the bottom-right corner of the sidebar beside the status.
+	// before it (recording). OnStatus, when set, makes the status clickable
+	// with a hover pill matching the debug block above it. LightTheme /
+	// OnToggleTheme draw the small sun/moon switch at the bottom-right corner
+	// of the sidebar beside the status.
 	Status        string
 	Live          bool
+	OnStatus      func()
 	LightTheme    bool
 	OnToggleTheme func()
 
@@ -275,12 +278,31 @@ func (f Frame) status(c *Ctx, side, h float32) {
 	if f.Live {
 		c.Animating = true
 	}
+	var statusPill RectF
+	if f.Status != "" && f.OnStatus != nil {
+		tx := r.L
+		if f.Live {
+			tx += c.Px(14)
+		}
+		cy := (r.T + r.B) / 2
+		ph := c.Px(26)
+		tw := c.M.TextWidth(f.Status, c.F(fontSmall))
+		pillR := min(rightEdge, tx+tw+c.Px(10))
+		statusPill = RectF{c.Px(10), cy - ph/2, max(c.Px(10), pillR), cy + ph/2}
+	}
 	pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
+	hoverStatus := f.OnStatus != nil && c.Hover == "status"
+	pressStatus := f.OnStatus != nil && c.Pressed == "status"
 	hoverTog := c.Hover == "theme:toggle"
 	light := f.LightTheme
 	c.Draw(func(cv Canvas) {
 		cv.RoundRect(RectF{c.Px(16), y - c.Px(1), side - c.Px(16), y}, 0, col(ColDivider))
 		if f.Status != "" {
+			if pressStatus {
+				cv.RoundRect(statusPill, c.Px(8), RGBA(ColCard, 0.9))
+			} else if hoverStatus {
+				cv.RoundRect(statusPill, c.Px(8), RGBA(ColCard, 0.6))
+			}
 			tx := r.L
 			if f.Live {
 				cy := (r.T + r.B) / 2
@@ -323,6 +345,9 @@ func (f Frame) status(c *Ctx, side, h float32) {
 			DrawIcon(cv, GlyphMoon, moonBox, iconSz, moonCol)
 		}
 	})
+	if f.Status != "" && f.OnStatus != nil {
+		c.Click("status", statusPill, f.OnStatus)
+	}
 	if f.OnToggleTheme != nil {
 		c.Click("theme:toggle", togRect, f.OnToggleTheme)
 	}

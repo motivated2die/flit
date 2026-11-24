@@ -221,8 +221,13 @@ func (a *App) frame() ui.Frame {
 		page = a.homePage()
 	}
 	gpu, gpuShown := a.debugGPU()
+	var onStatus func()
+	if a.rec != nil && a.rec.sess != nil {
+		id := a.rec.sess.Meta.ID
+		onStatus = func() { a.go_(pageSession + id) }
+	}
 	f := ui.Frame{Nav: nav, Selected: selected, OnNav: a.go_, Page: page, PageID: a.page,
-		Status: a.sidebarStatus(), Live: a.rec != nil,
+		Status: a.sidebarStatus(), Live: a.rec != nil, OnStatus: onStatus,
 		LightTheme: a.cfg.LightTheme, OnToggleTheme: a.toggleTheme,
 		Debug: a.debugLines(), DebugCores: a.debugCores(), DebugGPU: gpu, DebugGPUShown: gpuShown, OnDebug: func() { a.go_(pageDebug) },
 		Update: a.updateBadge(), OnUpdate: func() { a.go_(pageUpdate) }}
