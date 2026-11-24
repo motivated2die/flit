@@ -150,8 +150,8 @@ func NewWindow(title string) (*Window, error) {
 	return w, nil
 }
 
-// darkFrame gives a window's native frame flit's colours (Windows 11;
-// Windows 10 takes the dark mode and ignores the rest).
+// darkFrame gives a window's native frame flit's active theme colours
+// (Windows 11; Windows 10 takes the dark mode flag and ignores the rest).
 func darkFrame(hwnd uintptr, caption interface{ RGBA() (r, g, b, a uint32) }) {
 	if procDwmSetWindowAttr.Find() != nil {
 		return
@@ -159,10 +159,32 @@ func darkFrame(hwnd uintptr, caption interface{ RGBA() (r, g, b, a uint32) }) {
 	set := func(attr uintptr, v uint32) {
 		procDwmSetWindowAttr.Call(hwnd, attr, uintptr(unsafe.Pointer(&v)), 4)
 	}
-	set(dwmwaDarkMode, 1)
+	dark := uint32(1)
+	if IsLight() {
+		dark = 0
+	}
+	set(dwmwaDarkMode, dark)
 	set(dwmwaCaptionColor, colorref(caption))
 	set(dwmwaTextColor, colorref(ColText))
 	set(dwmwaBorderColor, colorref(ColEdge))
+}
+
+// RefreshTheme updates the window's background brush, DWM frame attributes,
+// and triggers an immediate repaint in the active theme.
+func (w *Window) RefreshTheme() {
+	w.bg = col(ColBase)
+	b := darkBrush(ColBase)
+	if b != 0 {
+		old := windowBgBrush
+		windowBgBrush = b
+		w.bgBrush = b
+		setClassBgBrush(w.hwnd, b)
+		if old != 0 {
+			procDeleteObject.Call(old)
+		}
+	}
+	darkFrame(w.hwnd, ColSidebar)
+	w.Invalidate()
 }
 
 func colorref(c interface{ RGBA() (r, g, b, a uint32) }) uint32 {

@@ -101,12 +101,40 @@ func NewFloatWindow(title string) (*FloatWindow, error) {
 	if procDwmSetWindowAttr.Find() == nil {
 		round := uint32(2) // DWMWCP_ROUND
 		procDwmSetWindowAttr.Call(h, dwmwaCornerPref, uintptr(unsafe.Pointer(&round)), 4)
-		dark := uint32(1)
-		procDwmSetWindowAttr.Call(h, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
-		border := colorref(ColEdge)
-		procDwmSetWindowAttr.Call(h, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
+		f.applyDWMTheme()
 	}
 	return f, nil
+}
+
+func (f *FloatWindow) applyDWMTheme() {
+	if procDwmSetWindowAttr.Find() != nil {
+		return
+	}
+	dark := uint32(1)
+	if IsLight() {
+		dark = 0
+	}
+	procDwmSetWindowAttr.Call(f.hwnd, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
+	border := colorref(ColEdge)
+	procDwmSetWindowAttr.Call(f.hwnd, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
+}
+
+// RefreshTheme updates the floating window's background brush, DWM border,
+// and repaints in the active theme.
+func (f *FloatWindow) RefreshTheme() {
+	f.bg = col(ColCard)
+	b := darkBrush(ColCard)
+	if b != 0 {
+		old := floatBgBrush
+		floatBgBrush = b
+		f.bgBrush = b
+		setClassBgBrush(f.hwnd, b)
+		if old != 0 {
+			procDeleteObject.Call(old)
+		}
+	}
+	f.applyDWMTheme()
+	f.Invalidate()
 }
 
 func (f *FloatWindow) layoutContent(c *Ctx, w, h float32) {

@@ -41,9 +41,12 @@ type Frame struct {
 	ModalAt time.Time
 
 	// Status is shown at the bottom of the sidebar; Live puts the red dot
-	// before it (recording).
-	Status string
-	Live   bool
+	// before it (recording). LightTheme / OnToggleTheme draw the small sun/moon
+	// switch at the bottom-right corner of the sidebar beside the status.
+	Status        string
+	Live          bool
+	LightTheme    bool
+	OnToggleTheme func()
 
 	// Update, when set, is a slim white pill above the debug lines ("Update
 	// available"); clicking it calls OnUpdate.
@@ -144,7 +147,11 @@ func (f Frame) modal(c *Ctx, w, h float32) {
 		e = float32(EaseOut(max(0, min(1, t))))
 	}
 	all := RectF{0, 0, w, h}
-	c.Draw(func(cv Canvas) { cv.RoundRect(all, 0, ColorF{0, 0, 0, 0.55 * e}) })
+	dimAlpha := float32(0.55)
+	if IsLight() {
+		dimAlpha = 0.32
+	}
+	c.Draw(func(cv Canvas) { cv.RoundRect(all, 0, ColorF{0, 0, 0, dimAlpha * e}) })
 	c.HoverArea("modal:backdrop", all)
 
 	pad := c.Px(modalPad)
@@ -181,10 +188,10 @@ func (f Frame) caption(c *Ctx, w float32) {
 			switch {
 			case danger && pressed:
 				cv.RoundRect(r, 0, RGBA(ColLive, 0.8))
-				fg = col(ColText)
+				fg = col(ColInkOnDark)
 			case danger && hover:
 				cv.RoundRect(r, 0, col(ColLive))
-				fg = col(ColText)
+				fg = col(ColInkOnDark)
 			case pressed:
 				cv.RoundRect(r, 0, col(ColControl))
 				fg = col(ColText)
@@ -248,30 +255,77 @@ func (f Frame) nav(c *Ctx, side float32) {
 }
 
 func (f Frame) status(c *Ctx, side, h float32) {
-	if f.Status == "" {
+	if f.Status == "" && f.OnToggleTheme == nil {
 		return
 	}
 	y := h - c.Px(statusLineH)
 	x := c.Px(22)
-	r := RectF{x, y, side - c.Px(12), h - c.Px(8)}
+	rightEdge := side - c.Px(12)
+
+	// Small sun/moon pill switch in the bottom-right corner of the sidebar.
+	var togRect RectF
+	if f.OnToggleTheme != nil {
+		tw, th := c.Px(48), c.Px(24)
+		cy := y + (c.Px(statusLineH)-c.Px(6))/2
+		togRect = RectF{rightEdge - tw, cy - th/2, rightEdge, cy + th/2}
+		rightEdge = togRect.L - c.Px(8)
+	}
+
+	r := RectF{x, y, max(x, rightEdge), h - c.Px(8)}
 	if f.Live {
 		c.Animating = true
 	}
 	pulse := float32(Pulse(time.Duration(c.Now.UnixNano()), notchPulse))
+	hoverTog := c.Hover == "theme:toggle"
+	light := f.LightTheme
 	c.Draw(func(cv Canvas) {
 		cv.RoundRect(RectF{c.Px(16), y - c.Px(1), side - c.Px(16), y}, 0, col(ColDivider))
-		tx := r.L
-		if f.Live {
-			cy := (r.T + r.B) / 2
-			cv.Circle(x+c.Px(4), cy, c.Px(4)*(0.9+0.25*pulse), col(ColLive))
-			tx += c.Px(14)
+		if f.Status != "" {
+			tx := r.L
+			if f.Live {
+				cy := (r.T + r.B) / 2
+				cv.Circle(x+c.Px(4), cy, c.Px(4)*(0.9+0.25*pulse), col(ColLive))
+				tx += c.Px(14)
+			}
+			color := col(ColMuted)
+			if f.Live {
+				color = col(ColText)
+			}
+			cv.Text(f.Status, RectF{tx, r.T, r.R, r.B}, c.F(fontSmall), color)
 		}
-		color := col(ColMuted)
-		if f.Live {
-			color = col(ColText)
+		if f.OnToggleTheme != nil {
+			rad := togRect.H() / 2
+			edge := max(1, c.Px(1))
+			trackCol := col(ColControl)
+			if hoverTog {
+				trackCol = col(ColControlHi)
+			}
+			cv.RoundRect(togRect, rad, col(ColEdge))
+			cv.RoundRect(togRect.Inset(edge), rad-edge, trackCol)
+
+			// Active side pill knob (left = sun / light, right = moon / dark).
+			pad := c.Px(2)
+			halfW := (togRect.W() - 2*pad) / 2
+			knob := RectF{togRect.L + pad, togRect.T + pad, togRect.L + pad + halfW, togRect.B - pad}
+			if !light {
+				knob = RectF{togRect.R - pad - halfW, togRect.T + pad, togRect.R - pad, togRect.B - pad}
+			}
+			cv.RoundRect(knob, knob.H()/2, col(ColCard))
+
+			sunBox := RectF{togRect.L + pad, togRect.T + pad, togRect.L + pad + halfW, togRect.B - pad}
+			moonBox := RectF{togRect.R - pad - halfW, togRect.T + pad, togRect.R - pad, togRect.B - pad}
+			iconSz := c.Px(13)
+			sunCol, moonCol := col(ColFaint), col(ColText)
+			if light {
+				sunCol, moonCol = col(ColText), col(ColFaint)
+			}
+			DrawIcon(cv, GlyphSun, sunBox, iconSz, sunCol)
+			DrawIcon(cv, GlyphMoon, moonBox, iconSz, moonCol)
 		}
-		cv.Text(f.Status, RectF{tx, r.T, r.R, r.B}, c.F(fontSmall), color)
 	})
+	if f.OnToggleTheme != nil {
+		c.Click("theme:toggle", togRect, f.OnToggleTheme)
+	}
 }
 
 // debugLineH is the height of one debug line (logical pixels).
@@ -549,7 +603,7 @@ func (f Frame) drawDock(c *Ctx, d dockGeom) {
 	fw, fh := int(d.fade.W()), int(math.Ceil(float64(d.fade.H())))
 	solid := int(c.Px(dockFade))
 	if fw > 0 && fh > 0 {
-		key := fmt.Sprintf("dockfade:%dx%d:%d", fw, fh, solid)
+		key := fmt.Sprintf("dockfade:%s:%dx%d:%d", themeTag(), fw, fh, solid)
 		c.Draw(func(cv Canvas) {
 			cv.Bitmap(key, d.fade.L, d.fade.T, fw, fh, 1, func() []byte {
 				return fadePixels(fw, fh, solid, ColBase, dockBackdrop)

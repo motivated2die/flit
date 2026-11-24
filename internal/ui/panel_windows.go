@@ -77,10 +77,27 @@ func NewPanel() (*Panel, error) {
 		p.rounded = r == 0
 		border := uint32(dwmColorNone) // flit paints the border, lit by the glow
 		procDwmSetWindowAttr.Call(h, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
-		dark := uint32(1)
-		procDwmSetWindowAttr.Call(h, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
+		p.applyDWMTheme()
 	}
 	return p, nil
+}
+
+func (p *Panel) applyDWMTheme() {
+	if procDwmSetWindowAttr.Find() != nil {
+		return
+	}
+	dark := uint32(1)
+	if IsLight() {
+		dark = 0
+	}
+	procDwmSetWindowAttr.Call(p.hwnd, dwmwaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
+}
+
+// RefreshTheme updates the tray panel's background and DWM theme flag.
+func (p *Panel) RefreshTheme() {
+	p.bg = col(ColSidebar)
+	p.applyDWMTheme()
+	p.Invalidate()
 }
 
 // RecentlyHidden reports whether the panel closed a moment ago (the click
@@ -284,7 +301,7 @@ func panelLayout(c *Ctx, n Node, w, h float32, lit, rounded bool) {
 		r = float64(panelRadius * c.Scale)
 	}
 	rx, ry := float64(borderReach*c.Px(liveGlow.RX)), float64(borderReach*c.Px(liveGlow.RY))
-	key := fmt.Sprintf("border:%dx%d:%v:%v", iw, ih, r, lit)
+	key := fmt.Sprintf("border:%s:%dx%d:%v:%v", themeTag(), iw, ih, r, lit)
 	c.Draw(func(cv Canvas) {
 		cv.Bitmap(key, 0, 0, iw, ih, 1, func() []byte {
 			return borderPixels(iw, ih, r, ColEdge, panelLight, lit, rx, ry, liveGlow)

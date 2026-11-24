@@ -223,6 +223,7 @@ func (a *App) frame() ui.Frame {
 	gpu, gpuShown := a.debugGPU()
 	f := ui.Frame{Nav: nav, Selected: selected, OnNav: a.go_, Page: page, PageID: a.page,
 		Status: a.sidebarStatus(), Live: a.rec != nil,
+		LightTheme: a.cfg.LightTheme, OnToggleTheme: a.toggleTheme,
 		Debug: a.debugLines(), DebugCores: a.debugCores(), DebugGPU: gpu, DebugGPUShown: gpuShown, OnDebug: func() { a.go_(pageDebug) },
 		Update: a.updateBadge(), OnUpdate: func() { a.go_(pageUpdate) }}
 	if a.uninstallAsk && a.page == pageSettings {
@@ -443,6 +444,26 @@ func (a *App) applyUIScale() {
 	if a.notch != nil {
 		a.notch.SetZoom(z)
 	}
+}
+
+// toggleTheme switches between dark and light mode across every window and
+// persists the choice to config.json.
+func (a *App) toggleTheme() {
+	a.cfg.LightTheme = !a.cfg.LightTheme
+	ui.SetTheme(a.cfg.LightTheme)
+	if a.win != nil {
+		a.win.RefreshTheme()
+	}
+	if a.notesFloat != nil {
+		a.notesFloat.RefreshTheme()
+	}
+	if a.panel != nil {
+		a.panel.RefreshTheme()
+	}
+	if a.notch != nil {
+		a.notch.RefreshTheme()
+	}
+	a.save()
 }
 
 func (a *App) setUIScale(pct int) {

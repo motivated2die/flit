@@ -237,6 +237,13 @@ func (n *Notch) CollapseNow() {
 }
 
 // SetZoom changes the notch's UI scale multiplier (e.g. 0.8, 1.0, 1.1, 1.25).
+// RefreshTheme repaints the notch if it is currently visible.
+func (n *Notch) RefreshTheme() {
+	if n.Visible() {
+		n.present(1)
+	}
+}
+
 func (n *Notch) SetZoom(z float32) {
 	if z <= 0 {
 		z = 1

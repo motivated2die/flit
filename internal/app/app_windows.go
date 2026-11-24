@@ -207,6 +207,7 @@ func runTray(args []string) int {
 	if a.cfg, err = config.Load(dataDir); err != nil {
 		logx.Printf("config: %v", err)
 	}
+	ui.SetTheme(a.cfg.LightTheme)
 	a.initGPU()
 	a.syncProviders()
 	a.tray, err = ui.NewTray("flit")

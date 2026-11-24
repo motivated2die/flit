@@ -28,19 +28,17 @@ type notchFrame struct {
 	born          time.Time // when the notch appeared (for the pulse's phase)
 }
 
-var (
-	notchFill       = RGBA(ColBase, 0.97)
-	notchFillReady  = RGBA(ColCardHover, 0.97)
-	notchEdge       = RGBA(ColEdge, 1)
-	notchTitle      = RGBA(ColText, 1)
-	notchMuted      = RGBA(ColMuted, 1)
-	notchButton     = RGBA(ColControl, 1)
-	notchButtonHov  = RGBA(ColControlHi, 1)
-	notchPrimary    = RGBA(ColText, 1)
-	notchPrimaryHov = RGBA(rgb(0xD8, 0xD8, 0xD8), 1)
-	notchOnPrimary  = RGBA(ColInk, 1)
-	notchTrack      = RGBA(ColText, 0.18)
-)
+func notchFill() ColorF       { return RGBA(ColBase, 0.97) }
+func notchFillReady() ColorF  { return RGBA(ColCardHover, 0.97) }
+func notchEdge() ColorF       { return RGBA(ColEdge, 1) }
+func notchTitle() ColorF      { return RGBA(ColText, 1) }
+func notchMuted() ColorF      { return RGBA(ColMuted, 1) }
+func notchButton() ColorF     { return RGBA(ColControl, 1) }
+func notchButtonHov() ColorF  { return RGBA(ColControlHi, 1) }
+func notchPrimary() ColorF    { return RGBA(ColText, 1) }
+func notchPrimaryHov() ColorF { return RGBA(ColPrimaryHover, 1) }
+func notchOnPrimary() ColorF  { return RGBA(ColInk, 1) }
+func notchTrack() ColorF      { return RGBA(ColText, 0.18) }
 
 // notchSurfaceSize is the fixed size of the window: the widest capsule
 // plus room for the top-edge flares and the shadow below and at the sides.
@@ -64,10 +62,10 @@ func renderNotch(s *Surface, f notchFrame) error {
 	ox, oy := f.capsuleOrigin(s.W)
 	h := f.height
 	w := f.width
-	fill := notchFill
-	edge := notchEdge
+	fill := notchFill()
+	edge := notchEdge()
 	if f.view.Mode == NotchStashDrop && f.view.Highlight {
-		fill = notchFillReady
+		fill = notchFillReady()
 		edge = RGBA(ColText, 0.35)
 	}
 	if f.collapsed && f.hoverProgress > 0 {
@@ -121,12 +119,12 @@ func renderNotch(s *Surface, f notchFrame) error {
 	f.drawIcon(p, at(f.layout.Icon), fade)
 	link := f.layout.LinkID != "" && f.hoverBtn == f.layout.LinkID
 	if f.view.Title != "" {
-		p.Text(f.view.Title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle))
+		p.Text(f.view.Title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle()))
 	}
 	if d := f.view.DetailText(f.now); d != "" {
-		dc := notchMuted
+		dc := notchMuted()
 		if link {
-			dc = notchTitle
+			dc = notchTitle()
 		}
 		p.Text(d, at(f.layout.Detail), scaled(notchDetailFont), fade(dc))
 	}
@@ -142,14 +140,14 @@ func renderNotch(s *Surface, f notchFrame) error {
 	for i, br := range f.layout.Buttons {
 		rc := at(br)
 		id := f.layout.IDs[i]
-		fill, text := notchButton, notchTitle
+		fill, text := notchButton(), notchTitle()
 		if f.layout.Primary[i] {
-			fill, text = notchPrimary, notchOnPrimary
+			fill, text = notchPrimary(), notchOnPrimary()
 			if id == f.hoverBtn {
-				fill = notchPrimaryHov
+				fill = notchPrimaryHov()
 			}
 		} else if id == f.hoverBtn {
-			fill = notchButtonHov
+			fill = notchButtonHov()
 		}
 		if id == f.pressBtn {
 			rc = RectF{rc.L + 1, rc.T + 1, rc.R - 1, rc.B - 1}
@@ -174,7 +172,7 @@ func (f notchFrame) drawIcon(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		p.Circle(cx, cy, rad*0.5, fade(RGBA(ColText, 1)))
 	case NotchWorking:
 		inner, outer := rad*0.62, rad
-		p.Arc(cx, cy, inner, outer, 0, 2*math.Pi, fade(notchTrack))
+		p.Arc(cx, cy, inner, outer, 0, 2*math.Pi, fade(notchTrack()))
 		if f.progress >= 0 {
 			p.Arc(cx, cy, inner, outer, 0, 2*math.Pi*min(1, f.progress), fade(RGBA(ColText, 1)))
 		} else {
@@ -236,14 +234,14 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		bh := 2 * s
 		bar := RectF{dx + 5*s, cy - bh/2, box.R - end, cy + bh/2}
 		bw := bar.W()
-		p.RoundRect(bar, bh/2, fade(notchTrack))
+		p.RoundRect(bar, bh/2, fade(notchTrack()))
 		if lv > 0 {
 			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*lv), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
 		}
 	case NotchWorking:
 		bw, bh := box.W()-14*s, 3*s
 		bar := RectF{cx - bw/2, cy - bh/2, cx + bw/2, cy + bh/2}
-		p.RoundRect(bar, bh/2, fade(notchTrack))
+		p.RoundRect(bar, bh/2, fade(notchTrack()))
 		if f.progress > 0 {
 			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*min(1, f.progress)), bar.B}, bh/2, fade(RGBA(ColText, 1)))
 		}
@@ -258,7 +256,7 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		tf.Size *= s
 		p.Text(NotchFinished, at(l.Word), tf, fade(RGBA(ColText, 0.92)))
 	default:
-		p.Circle(cx, cy, 2.4*s, fade(notchMuted))
+		p.Circle(cx, cy, 2.4*s, fade(notchMuted()))
 	}
 }
 
@@ -285,7 +283,7 @@ func (f notchFrame) drawLevels(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 		if i == 1 {
 			col = RGBA(ColMuted, 0.9)
 		}
-		p.RoundRect(RectF{x, rc.B - rc.H(), x + bw, rc.B}, bw/2, fade(notchTrack))
+		p.RoundRect(RectF{x, rc.B - rc.H(), x + bw, rc.B}, bw/2, fade(notchTrack()))
 		p.RoundRect(RectF{x, rc.B - h, x + bw, rc.B}, bw/2, fade(col))
 	}
 }

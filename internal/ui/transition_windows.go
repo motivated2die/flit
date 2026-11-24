@@ -13,12 +13,21 @@ const (
 )
 
 var (
+	procSetClassLongPtrW           = user32.NewProc("SetClassLongPtrW")
 	procGetWindowLongPtrW          = user32.NewProc("GetWindowLongPtrW")
 	procSetLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
 	procUpdateWindow               = user32.NewProc("UpdateWindow")
 	procFillRect                   = user32.NewProc("FillRect")
 	procCreateSolidBrush           = gdi32.NewProc("CreateSolidBrush")
 )
+
+const gclpHbrBackground = ^uintptr(9) // -10
+
+func setClassBgBrush(hwnd, brush uintptr) {
+	if procSetClassLongPtrW.Find() == nil {
+		procSetClassLongPtrW.Call(hwnd, gclpHbrBackground, brush)
+	}
+}
 
 type winRect struct{ L, T, R, B int32 }
 

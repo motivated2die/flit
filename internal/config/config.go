@@ -79,6 +79,8 @@ type Config struct {
 	// UIScale is the user's interface scale percentage (80, 100, 110, 125);
 	// 0 defaults to 100%.
 	UIScale int `json:"uiScale,omitempty"`
+	// LightTheme switches the UI from dark mode (default) to light mode.
+	LightTheme bool `json:"lightTheme,omitempty"`
 
 	SetupComplete bool `json:"setupComplete,omitempty"`
 }

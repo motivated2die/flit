@@ -621,7 +621,7 @@ func (n NotesEditor) toolbar(c *Ctx, x, y, w, laneH, y0, areaB, clipTop float32,
 		fade := c.Px(18)
 		halo := RectF{lane.L - fade, lane.T - fade, lane.R + fade, lane.B + fade}
 		hw, hh := int(math.Ceil(float64(halo.W()))), int(math.Ceil(float64(halo.H())))
-		key := fmt.Sprintf("toolhalo:%dx%d:%v", hw, hh, fade)
+		key := fmt.Sprintf("toolhalo:%s:%dx%d:%v", themeTag(), hw, hh, fade)
 		c.PushClip(cardRect)
 		c.Draw(func(cv Canvas) {
 			// Cover the 8 px top margin above the docked lane so scrolled lines

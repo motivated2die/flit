@@ -39,7 +39,7 @@ func (t TrayIcon) Draw() *image.RGBA {
 	n := t.Size
 	img := image.NewRGBA(image.Rect(0, 0, n, n))
 	s := float64(n)
-	ink := ColText
+	ink := ColInkOnDark
 	if t.Light {
 		ink = ColInkOnLight
 	}
