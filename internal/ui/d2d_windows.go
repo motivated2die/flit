@@ -48,6 +48,7 @@ const (
 	rtCreateBitmap             = 4
 	rtCreateBitmapBrush        = 7
 	rtCreateSolidColorBrush    = 8
+	rtCreateCompatRenderTarget = 12
 	rtFillRectangle            = 17
 	rtFillRoundedRectangle     = 19
 	rtFillEllipse              = 21
@@ -64,6 +65,7 @@ const (
 	rtBeginDraw                = 48
 	rtEndDraw                  = 49
 	dcrtBindDC                 = 57
+	bmprtGetBitmap             = 57
 	hwndrtResize               = 58
 	brushSetColor              = 8
 	pathOpen                   = 17
@@ -492,6 +494,80 @@ func (t *HwndTarget) Begin(hwnd uintptr, w, h int32, bg ColorF) (*Painter, error
 	t.rt.call(rtBeginDraw)
 	t.rt.call(rtClear, uintptr(unsafe.Pointer(&bg)))
 	return &Painter{g: g, rt: t.rt, brushObj: t.brush, bitmaps: &t.bitmaps}, nil
+}
+
+// CaptureBrush renders draw onto a GPU-backed offscreen ID2D1BitmapRenderTarget
+// matching t's current size and returns an ID2D1BitmapBrush for compositing
+// (used for the circular theme ripple transition). Caller must release the
+// returned brush.
+func (t *HwndTarget) CaptureBrush(draw func(*Painter), bg ColorF) (*comObj, error) {
+	if !t.ready() {
+		return nil, errors.New("hardware render target not ready")
+	}
+	g, err := getD2D()
+	if err != nil {
+		return nil, err
+	}
+	var compat *comObj
+	if err := hr(t.rt.call(rtCreateCompatRenderTarget, 0, 0, 0, 0, uintptr(unsafe.Pointer(&compat))), "CreateCompatibleRenderTarget"); err != nil {
+		return nil, err
+	}
+	defer compat.release()
+
+	compat.call(rtSetTextAntialiasMode, d2dTextAntialiasGrayscale)
+	black := ColorF{0, 0, 0, 1}
+	var solid *comObj
+	if err := hr(compat.call(rtCreateSolidColorBrush, uintptr(unsafe.Pointer(&black)), 0, uintptr(unsafe.Pointer(&solid))), "CreateSolidColorBrush"); err != nil {
+		return nil, err
+	}
+	defer solid.release()
+
+	var bmps map[string]*comObj
+	defer func() {
+		for _, b := range bmps {
+			b.release()
+		}
+	}()
+
+	compat.call(rtBeginDraw)
+	compat.call(rtClear, uintptr(unsafe.Pointer(&bg)))
+	p := &Painter{g: g, rt: compat, brushObj: solid, bitmaps: &bmps}
+	draw(p)
+	if err := p.End(); err != nil {
+		return nil, err
+	}
+
+	var bmp *comObj
+	if err := hr(compat.call(bmprtGetBitmap, uintptr(unsafe.Pointer(&bmp))), "GetBitmap"); err != nil {
+		return nil, err
+	}
+	defer bmp.release()
+
+	bbp := struct{ ExtendX, ExtendY, Interp uint32 }{0, 0, 0} // clamp, nearest 1:1
+	bp := struct {
+		Opacity float32
+		M       [6]float32
+	}{1, [6]float32{1, 0, 0, 1, 0, 0}}
+	var brush *comObj
+	if err := hr(t.rt.call(rtCreateBitmapBrush, uintptr(unsafe.Pointer(bmp)), uintptr(unsafe.Pointer(&bbp)), uintptr(unsafe.Pointer(&bp)), uintptr(unsafe.Pointer(&brush))), "CreateBitmapBrush"); err != nil {
+		return nil, err
+	}
+	return brush, nil
+}
+
+// FillBrush fills r with a pre-created Direct2D brush (e.g. a snapshot bitmap brush).
+func (p *Painter) FillBrush(r RectF, brush *comObj) {
+	if brush != nil {
+		p.rt.call(rtFillRectangle, uintptr(unsafe.Pointer(&r)), uintptr(unsafe.Pointer(brush)))
+	}
+}
+
+// FillEllipseBrush fills a circle/ellipse with a pre-created Direct2D brush.
+func (p *Painter) FillEllipseBrush(cx, cy, rx, ry float32, brush *comObj) {
+	if brush != nil && rx > 0 && ry > 0 {
+		e := struct{ X, Y, RX, RY float32 }{cx, cy, rx, ry}
+		p.rt.call(rtFillEllipse, uintptr(unsafe.Pointer(&e)), uintptr(unsafe.Pointer(brush)))
+	}
 }
 
 // Painter draws on a render target (either a software Surface or a hardware

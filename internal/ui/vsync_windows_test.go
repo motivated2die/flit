@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -186,5 +187,90 @@ func TestHwndTargetPaintResizeFree(t *testing.T) {
 	w.paint()
 	if !w.hw.ready() {
 		t.Fatalf("HwndTarget did not recreate after Free")
+	}
+}
+
+func TestThemeRippleGeometryAndGPUComposite(t *testing.T) {
+	// Origin near bottom-left of a 1000×600 window: farthest corner is top-right (1000, 0).
+	gotR := rippleMaxRadius(150, 580, 1000, 600)
+	wantR := float32(math.Hypot(850, 580)) + 2
+	if math.Abs(float64(gotR-wantR)) > 0.5 {
+		t.Fatalf("rippleMaxRadius = %v, want %v", gotR, wantR)
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	w, err := NewWindow("flit ripple test")
+	if err != nil {
+		t.Skip("no window: ", err)
+	}
+	defer procDestroyWindow.Call(w.hwnd)
+
+	origLight := IsLight()
+	defer SetTheme(origLight)
+
+	SetTheme(false)
+	w.Build = func() Frame {
+		return Frame{
+			Nav:           []NavEntry{{ID: "home", Label: "Home", Glyph: GlyphHome}},
+			Selected:      "home",
+			PageID:        "home",
+			LightTheme:    IsLight(),
+			OnToggleTheme: func() {},
+			Page:          VStack{Items: []Node{Title("Ripple Test"), Para{Text: "Dual-theme GPU composite."}}},
+		}
+	}
+
+	// Paint dark theme first so HwndTarget and w.last are ready.
+	w.paint()
+	if !w.hw.ready() || w.last == nil {
+		t.Fatalf("expected HwndTarget and layout ready")
+	}
+	cw, ch := w.clientSize()
+
+	// Capture old (dark) snapshot brush on GPU.
+	oldCtx := w.last
+	oldBrush, err := w.hw.CaptureBrush(func(p *Painter) { oldCtx.Paint(p) }, w.bg)
+	if err != nil {
+		t.Fatalf("CaptureBrush (old): %v", err)
+	}
+	w.ripple = themeRipple{
+		oldBrush: oldBrush,
+		w:        cw,
+		h:        ch,
+		cx:       150,
+		cy:       float32(ch) - 22,
+		maxR:     rippleMaxRadius(150, float32(ch)-22, float32(cw), float32(ch)),
+		dur:      themeRippleDur,
+	}
+
+	// Switch to light theme and paint frame 0: should capture newBrush and activate vsyncRipple.
+	SetTheme(true)
+	w.bg = col(ColBase)
+	w.paint()
+	if !w.ripple.ready() {
+		t.Fatalf("expected ripple to be ready (both GPU brushes captured)")
+	}
+	if w.vsyncMask&vsyncRipple == 0 {
+		t.Fatalf("expected vsyncRipple active during transition")
+	}
+
+	// Mid-transition frame: fast GPU composite path.
+	w.ripple.start = time.Now().Add(-themeRippleDur / 2)
+	if !w.paintRippleFrame(cw, ch) {
+		t.Fatalf("expected mid-transition paintRippleFrame to return true")
+	}
+
+	// Past duration: should clean up brushes, clear vsyncRipple, and return false.
+	w.ripple.start = time.Now().Add(-2 * themeRippleDur)
+	if w.paintRippleFrame(cw, ch) {
+		t.Fatalf("expected finished paintRippleFrame to return false")
+	}
+	if w.ripple.ready() || w.ripple.armed() {
+		t.Fatalf("expected ripple brushes released after completion")
+	}
+	if w.vsyncMask&vsyncRipple != 0 {
+		t.Fatalf("expected vsyncRipple cleared after completion")
 	}
 }

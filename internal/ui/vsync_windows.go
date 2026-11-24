@@ -15,6 +15,7 @@ const (
 	vsyncAnimate
 	vsyncLive
 	vsyncSelScroll
+	vsyncRipple
 )
 
 var procDwmFlush = dwmapi.NewProc("DwmFlush")

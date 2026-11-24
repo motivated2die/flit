@@ -25,6 +25,7 @@ type host struct {
 	bg      ColorF
 	bgBrush uintptr // dark GDI brush for WM_ERASEBKGND before first paint
 	trans   transition
+	ripple  themeRipple
 
 	hover, pressed string
 	scroll         map[string]float32
@@ -206,6 +207,14 @@ func (h *host) paint() {
 	if cw <= 0 || ch <= 0 || h.layout == nil {
 		return
 	}
+	// Fast path during a circular theme ripple: two GPU draw calls, no layout.
+	if h.ripple.ready() {
+		if cw != h.ripple.w || ch != h.ripple.h {
+			h.cancelRipple()
+		} else if h.paintRippleFrame(cw, ch) {
+			return
+		}
+	}
 	c := NewCtx(h.scale, h.metrics, time.Now(), h.hover, h.pressed, h.scroll)
 	c.ScrollTo = h.scrollSmoothly
 	c.SetScroll = func(id string, to float32) {
@@ -250,6 +259,19 @@ func (h *host) paint() {
 	}
 	if h.edit != nil && c.committer(h.edit.ID) == nil {
 		h.edit = nil // the field went away (another page)
+	}
+	if h.ripple.armed() {
+		if cw == h.ripple.w && ch == h.ripple.h && h.hw.ready() {
+			if newBrush, rerr := h.hw.CaptureBrush(func(p *Painter) { c.Paint(p) }, h.bg); rerr == nil {
+				h.ripple.newBrush = newBrush
+				h.ripple.start = time.Now()
+				h.last = c
+				h.setVsync(vsyncRipple, true)
+				h.paintRippleFrame(cw, ch)
+				return
+			}
+		}
+		h.cancelRipple()
 	}
 	p, err := h.hw.Begin(h.hwnd, cw, ch, h.bg)
 	switch {
@@ -334,6 +356,10 @@ func (h *host) onVsync() {
 			needsPaint = true
 		}
 	}
+	if h.vsyncMask&vsyncRipple != 0 {
+		h.Invalidate()
+		needsPaint = true
+	}
 	if h.vsyncMask&vsyncAnimate != 0 {
 		h.Invalidate()
 		needsPaint = true
@@ -356,6 +382,7 @@ func (h *host) stopTimers() {
 	if h.trans.active {
 		h.cancelTransition()
 	}
+	h.cancelRipple()
 	h.vsyncMask = 0
 	h.vsync.stopPacer()
 	clear(h.scrollTo)

@@ -169,6 +169,23 @@ func darkFrame(hwnd uintptr, caption interface{ RGBA() (r, g, b, a uint32) }) {
 	set(dwmwaBorderColor, colorref(ColEdge))
 }
 
+// CaptureThemeRipple snapshots the window's current theme before switching so
+// the upcoming RefreshTheme animates as a circular ripple expanding from the
+// sidebar's sun/moon toggle.
+func (w *Window) CaptureThemeRipple() {
+	cx, cy := w.scale*(sidebarW-36), float32(0)
+	if _, ch := w.clientSize(); ch > 0 {
+		cy = float32(ch) - w.scale*(statusLineH/2)
+	}
+	if w.last != nil {
+		if hit, ok := w.last.HitByID("theme:toggle"); ok {
+			cx = (hit.R.L + hit.R.R) / 2
+			cy = (hit.R.T + hit.R.B) / 2
+		}
+	}
+	w.captureThemeRipple(cx, cy)
+}
+
 // RefreshTheme updates the window's background brush, DWM frame attributes,
 // and triggers an immediate repaint in the active theme.
 func (w *Window) RefreshTheme() {
