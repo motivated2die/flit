@@ -73,7 +73,7 @@ Proposed, not built: a notes editor on each recording and summaries on request b
 
 - Each state is written to the session's `meta.json`, so a crash or reboot resumes: recording files are finalised, pending chunks re-queued.
 - Recording and transcription overlap: the live chunker hands each pause-aligned chunk (~30 s) of each track to the job queue as soon as its cut is certain; the worker decodes them in order. When the meeting ends, only the tails are left.
-- Diarization of the "Them" track (Settings → Tell speakers apart, on by default) runs once over the whole track after its transcription; words are assigned to speakers and segments split ([ADR 0006](../decisions/0006-speakers-with-sortformer.md)). A recording whose tracks were kept can find its speakers again from its page.
+- Diarization (Settings → Tell speakers apart, on by default) runs once over the whole "Them" track after transcription, and also over the "Me" track (after echo suppression) when it has enough speech; if secondary speakers account for at least 20% of the mic track's speech, it is split into neutral `Room 1`, `Room 2`, … speakers instead of assuming `"Me"` ([ADR 0006](../decisions/0006-speakers-with-sortformer.md), [research/diarization.md](../research/diarization.md)). A recording whose tracks were kept can find its speakers again from its page.
 
 ## Data (`%LOCALAPPDATA%\flit\`)
 
@@ -83,7 +83,7 @@ Proposed, not built: a notes editor on each recording and summaries on request b
 | `sessions\<date>_<time>_<provider>\meta.json` | provider, window title, start/end, language, state, chunk progress |
 | `sessions\…\me.m4a`, `them.m4a` | 48 kHz mono mic (64 kbps) and 48 kHz stereo meeting (96 kbps) AAC tracks (~70 MiB/hr; legacy `.wav` also supported; deleted after transcription unless kept) |
 | `sessions\…\transcript.json` | segments: track, speaker, t0/t1, text, words |
-| `sessions\…\speakers.json` | the names the user gave the speakers (`me`, `them`, `speakers` by number); `.txt`/`.md` are rewritten with them |
+| `sessions\…\speakers.json` | the names the user gave the speakers (`me`, `them`, `meSpeakers` and `speakers` by number); `.txt`/`.md` are rewritten with them |
 | `models\<id>\<file>.gguf` | downloaded models |
 | `engine\<version>\` | transcribe.cpp DLLs (if unpacked from the exe) |
 | `debug.log`, `running.json` | as in Resound; never transcript text |

@@ -44,8 +44,13 @@ func (a *App) forget(s *session.Session) {
 func (a *App) rename(s *session.Session, track transcript.Track, speaker int, name string) {
 	n := s.Names()
 	switch {
-	case track == transcript.Me:
+	case track == transcript.Me && speaker == 0:
 		n.Me = name
+	case track == transcript.Me:
+		if n.MeSpeakers == nil {
+			n.MeSpeakers = map[int]string{}
+		}
+		n.MeSpeakers[speaker] = name
 	case speaker == 0:
 		n.Them = name
 	default:
@@ -99,8 +104,10 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 		}
 		value, placeholder := "", names.Label(sp.Track, sp.Speaker)
 		switch {
-		case sp.Track == transcript.Me:
+		case sp.Track == transcript.Me && sp.Speaker == 0:
 			value = names.Me
+		case sp.Track == transcript.Me:
+			value = names.MeSpeakers[sp.Speaker]
 		case sp.Speaker == 0:
 			value = names.Them
 		default:
@@ -156,8 +163,8 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 		}
 	case s.Meta.SpeakersError != "":
 		hint = "Telling the speakers apart failed: " + s.Meta.SpeakersError
-	case s.Meta.Speakers == 0 && s.HasTrack("them"):
-		hint = "Everyone on the meeting's side is one speaker here. Analyzing the audio again tells up to four people apart (about 2 minutes per hour of meeting)."
+	case s.Meta.Speakers == 0 && s.Meta.MeSpeakers == 0 && (s.HasTrack("them") || s.HasTrack("me")):
+		hint = "Each track is one speaker here. Analyzing the audio again tells up to four people apart per track (about 2 minutes per hour of audio on CPU)."
 	}
 	items = append(items, ui.Para{Text: hint, Muted: true, Small: true})
 	return ui.VStack{Gap: 8, Items: items}
@@ -167,11 +174,11 @@ func (a *App) speakersCard(s *session.Session) ui.Node {
 // Speakers caption; nil when there is no audio or it is busy.
 func (a *App) analyzeLink(s *session.Session) ui.Node {
 	busy := a.finding != nil || (a.working != nil && a.working.Dir == s.Dir)
-	if !s.HasTrack("them") || busy {
+	if (!s.HasTrack("them") && !s.HasTrack("me")) || busy {
 		return nil
 	}
 	label := "Analyze speakers"
-	if s.Meta.Speakers > 0 {
+	if s.Meta.Speakers > 0 || s.Meta.MeSpeakers > 0 {
 		label = "Analyze speakers again"
 	}
 	return ui.Link{ID: "session:speakers", Glyph: ui.GlyphRefresh, Label: label, OnClick: func() { a.findSpeakers(s) }}

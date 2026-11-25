@@ -14,26 +14,34 @@ type Header struct {
 	Language string // display name, e.g. "German"
 }
 
-// Names labels speakers. Empty fields fall back to "Me", "Them" and
-// "Speaker 1", "Speaker 2", …. Two speakers given the same name read as
-// one person (their consecutive turns join into one paragraph).
+// Names labels speakers. Empty fields fall back to "Me", "Them",
+// "Room 1", "Room 2", … (for diarized Me) and "Speaker 1", "Speaker 2", …
+// (for diarized Them). Two speakers given the same name read as one person
+// (their consecutive turns join into one paragraph).
 type Names struct {
-	Me       string         `json:"me,omitempty"`
-	Them     string         `json:"them,omitempty"`
-	Speakers map[int]string `json:"speakers,omitempty"` // Them's diarized speakers by number
+	Me         string         `json:"me,omitempty"`
+	Them       string         `json:"them,omitempty"`
+	MeSpeakers map[int]string `json:"meSpeakers,omitempty"` // Me's diarized speakers by number
+	Speakers   map[int]string `json:"speakers,omitempty"`   // Them's diarized speakers by number
 }
 
 // Of is the label of a segment's speaker.
 func (n Names) Of(s Segment) string { return n.of(s) }
 
-// Label is the label of Me (track Me), an undiarized Them (speaker 0) or
-// one of Them's speakers.
+// Label is the label of Me (track Me, speaker 0), one of Me's diarized
+// speakers, an undiarized Them (speaker 0), or one of Them's speakers.
 func (n Names) Label(track Track, speaker int) string {
 	return n.of(Segment{Track: track, Speaker: speaker})
 }
 
 func (n Names) of(s Segment) string {
 	if s.Track == Me {
+		if s.Speaker > 0 {
+			if name := n.MeSpeakers[s.Speaker]; name != "" {
+				return name
+			}
+			return fmt.Sprintf("Room %d", s.Speaker)
+		}
 		return or(n.Me, "Me")
 	}
 	if s.Speaker > 0 {

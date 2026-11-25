@@ -396,3 +396,133 @@ func TestM4ALiveTranscribeAndCrashRecover(t *testing.T) {
 		t.Fatalf("Recover didn't remux .aac to .m4a: files=%v", crashed.AudioFiles())
 	}
 }
+
+// longSpeechEngine emits word-timed segments covering the full chunk so
+// mic diarization meets minMicDiarizeSpeech.
+type longSpeechEngine struct {
+	diar func(pcm []float32) []pipeline.SpeakerTurn
+	text func(pcm []float32) string
+}
+
+func (longSpeechEngine) VAD(_ context.Context, pcm []float32) ([]float32, int, error) {
+	probs := make([]float32, len(pcm)/512)
+	for i := range probs {
+		if pcm[i*512] != 0 {
+			probs[i] = 0.9
+		}
+	}
+	return probs, 512, nil
+}
+
+func (e longSpeechEngine) Transcribe(_ context.Context, pcm []float32, _ pipeline.Options) ([]pipeline.Segment, error) {
+	ms := int64(len(pcm)) * 1000 / pipeline.Rate
+	label := "eins zwei drei vier fünf sechs"
+	if e.text != nil {
+		label = e.text(pcm)
+	}
+	parts := strings.Fields(label)
+	step := ms / int64(max(1, len(parts)))
+	words := make([]pipeline.Word, len(parts))
+	for i, w := range parts {
+		words[i] = pipeline.Word{T0: int64(i) * step, T1: int64(i+1) * step, Text: w}
+	}
+	return []pipeline.Segment{{T0: 0, T1: ms, Text: label, Words: words}}, nil
+}
+
+func (e longSpeechEngine) Diarize(_ context.Context, pcm []float32) ([]pipeline.SpeakerTurn, error) {
+	return e.diar(pcm), nil
+}
+
+func TestTranscribeMicDiarizationInPerson(t *testing.T) {
+	// Pure in-person recording: only me.wav (20 s), two speakers 50/50.
+	s, _ := Create(t.TempDir(), Meta{Language: "de"})
+	writeWAV(t, s.Path(MeFile), 20, 0.1)
+
+	eng := longSpeechEngine{
+		diar: func(pcm []float32) []pipeline.SpeakerTurn {
+			ms := int64(len(pcm)) * 1000 / pipeline.Rate
+			return []pipeline.SpeakerTurn{
+				{T0: 0, T1: ms / 2, Speaker: 1},
+				{T0: ms / 2, T1: ms, Speaker: 2},
+			}
+		},
+	}
+	if err := s.Transcribe(context.Background(), eng, pipeline.Options{Speakers: true}, "In-person", nil); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := s.Transcript(false)
+	if s.Meta.MeSpeakers != 2 || s.Meta.Speakers != 0 {
+		t.Fatalf("meta speakers=%d meSpeakers=%d", s.Meta.Speakers, s.Meta.MeSpeakers)
+	}
+	if !strings.Contains(text, "Room 1:") || !strings.Contains(text, "Room 2:") || strings.Contains(text, "] Me:") {
+		t.Fatalf("expected neutral Room 1/2 labels:\n%s", text)
+	}
+
+	// Renaming mic speakers persists and updates formatted transcripts.
+	if err := s.SetNames(transcript.Names{MeSpeakers: map[int]string{1: "Moritz", 2: " Lisa "}}); err != nil {
+		t.Fatal(err)
+	}
+	text, _ = s.Transcript(false)
+	if !strings.Contains(text, "Moritz:") || !strings.Contains(text, "Lisa:") {
+		t.Fatalf("named:\n%s", text)
+	}
+	if l, _ := Load(s.Dir); l.Names().MeSpeakers[2] != "Lisa" {
+		t.Fatalf("MeSpeakers not persisted: %+v", l.Names())
+	}
+
+	// FindSpeakers works on me-only recordings; below 20% secondary collapses back to Me.
+	belowEng := longSpeechEngine{
+		diar: func(pcm []float32) []pipeline.SpeakerTurn {
+			ms := int64(len(pcm)) * 1000 / pipeline.Rate
+			return []pipeline.SpeakerTurn{
+				{T0: 0, T1: ms * 9 / 10, Speaker: 1},
+				{T0: ms * 9 / 10, T1: ms, Speaker: 2},
+			}
+		},
+	}
+	if err := s.FindSpeakers(context.Background(), belowEng); err != nil {
+		t.Fatal(err)
+	}
+	text, _ = s.Transcript(false)
+	if s.Meta.MeSpeakers != 0 || !strings.Contains(text, "] Me:") || len(s.Names().MeSpeakers) != 0 {
+		t.Fatalf("after below-threshold FindSpeakers: meSpeakers=%d names=%+v\n%s", s.Meta.MeSpeakers, s.Names(), text)
+	}
+}
+
+func TestTranscribeMicDiarizationSuppressesEchoFirst(t *testing.T) {
+	// Remote call where the second half of me.wav is loudspeaker echo of them.wav.
+	// Even though the diarizer sees a 50/50 split in raw me.wav, echo suppression
+	// removes the echoed words first, leaving only one real speaker on Me.
+	s, _ := Create(t.TempDir(), Meta{Language: "de"})
+	writeWAV(t, s.Path(MeFile), 20, 0.1)
+	writeWAV(t, s.Path(ThemFile), 20, 0.2)
+
+	eng := longSpeechEngine{
+		text: func(pcm []float32) string {
+			if pcm[0] < 0.15 {
+				// Me: first 3 words are own speech, last 3 words are echo of Them.
+				return "ich sage hallo das budget steht"
+			}
+			// Them: says the echoed words in the second half.
+			return "guten morgen leute das budget steht"
+		},
+		diar: func(pcm []float32) []pipeline.SpeakerTurn {
+			ms := int64(len(pcm)) * 1000 / pipeline.Rate
+			return []pipeline.SpeakerTurn{
+				{T0: 0, T1: ms / 2, Speaker: 1},
+				{T0: ms / 2, T1: ms, Speaker: 2},
+			}
+		},
+	}
+	if err := s.Transcribe(context.Background(), eng, pipeline.Options{Speakers: true}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.Meta.MeSpeakers != 0 {
+		text, _ := s.Transcript(false)
+		t.Fatalf("echo triggered mic split (meSpeakers=%d):\n%s", s.Meta.MeSpeakers, text)
+	}
+	text, _ := s.Transcript(false)
+	if !strings.Contains(text, "] Me: ich sage hallo") {
+		t.Fatalf("expected plain Me after echo removal:\n%s", text)
+	}
+}

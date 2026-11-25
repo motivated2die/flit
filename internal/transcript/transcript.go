@@ -19,7 +19,7 @@ const (
 // Segment is a stretch of one speaker's speech.
 type Segment struct {
 	Track   Track         `json:"track"`
-	Speaker int           `json:"speaker,omitempty"` // within Them, 1-based; 0 = not diarized
+	Speaker int           `json:"speaker,omitempty"` // within the track, 1-based; 0 = not diarized
 	Start   time.Duration `json:"start"`
 	End     time.Duration `json:"end"`
 	Text    string        `json:"text"`

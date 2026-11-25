@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -140,5 +141,71 @@ func TestClips(t *testing.T) {
 	// Nobody clear: the longest anyway.
 	if got := Clips(segs[:2], Them, 1, 1, time.Minute); len(got) != 1 || got[0].Start != dur(2) {
 		t.Fatalf("fallback: %v", got)
+	}
+}
+
+func TestAssignMicSpeakersThreshold(t *testing.T) {
+	// 10 s of speech: 8.5 s speaker 1, 1.5 s speaker 2 -> 15% secondary (< 20%).
+	below := []Segment{
+		words(seg(Me, 0, 0, 0, "eins zwei drei vier fünf sechs sieben acht neun zehn")),
+		words(seg(Me, 0, 5, 0, "elf zwölf dreizehn vierzehn fünfzehn sechzehn siebzehn achtzehn")),
+		words(seg(Me, 0, 10, 0, "neunzehn zwanzig einundzwanzig")),
+	}
+	turnsBelow := []Turn{turn(1, 0, 8), turn(2, 10, 11.2)}
+	gotBelow := AssignMicSpeakers(below, turnsBelow, MicDiarizeMinShare)
+	for _, s := range gotBelow {
+		if s.Speaker != 0 {
+			t.Fatalf("below threshold got speaker %d (share %.2f), want 0 (Me)", s.Speaker, SecondaryShare(AssignSpeakers(below, turnsBelow)))
+		}
+	}
+
+	// 6 s speaker 1, 4 s speaker 2 -> 40% secondary (>= 20%): keep split.
+	above := []Segment{
+		words(seg(Me, 0, 0, 0, "eins zwei drei vier fünf sechs sieben acht neun zehn")),
+		words(seg(Me, 0, 5, 0, "elf zwölf dreizehn vierzehn fünfzehn sechzehn")),
+	}
+	turnsAbove := []Turn{turn(2, 0, 3.2), turn(1, 5, 7)}
+	gotAbove := AssignMicSpeakers(above, turnsAbove, MicDiarizeMinShare)
+	if !slices.Equal(speakersOf(gotAbove), []int{1, 2}) {
+		t.Fatalf("above threshold speakers %v, want [1 2]", speakersOf(gotAbove))
+	}
+	if sh := SecondaryShare(gotAbove); sh < MicDiarizeMinShare {
+		t.Fatalf("SecondaryShare = %.2f, want >= %.2f", sh, MicDiarizeMinShare)
+	}
+}
+
+func TestMicSpeakersSummaryClipsAndFormat(t *testing.T) {
+	segs := Merge(
+		[]Segment{
+			seg(Me, 1, 0, 5, "Hallo zusammen im Raum."),
+			seg(Me, 2, 6, 12, "Danke, ich bin auch hier."),
+			seg(Me, 1, 14, 18, "Lass uns direkt starten."),
+		},
+		[]Segment{
+			seg(Them, 1, 20, 25, "Klingt gut von remote."),
+		},
+	)
+	sps := Speakers(segs)
+	if len(sps) != 3 || sps[0].Track != Me || sps[0].Speaker != 1 || sps[1].Track != Me || sps[1].Speaker != 2 || sps[2].Track != Them || sps[2].Speaker != 1 {
+		t.Fatalf("Speakers: %+v", sps)
+	}
+	// Clips isolate Me speaker 1 from Me speaker 2.
+	if got := Clips(segs, Me, 2, 2, 8*time.Second); !slices.Equal(got, []Clip{{dur(6), dur(12)}}) {
+		t.Fatalf("Clips(Me, 2) = %v", got)
+	}
+	// Default unnamed labels are neutral ("Room 1", "Room 2") — never "Me".
+	plain := Format(Header{}, segs, Names{}, Plain)
+	for _, want := range []string{"[00:00] Room 1: Hallo zusammen im Raum.", "[00:06] Room 2: Danke, ich bin auch hier.", "[00:20] Speaker 1: Klingt gut von remote."} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("plain lacks %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "] Me:") {
+		t.Errorf("diarized Me must not default to Me:\n%s", plain)
+	}
+	// Named MeSpeakers override defaults.
+	named := Format(Header{}, segs, Names{MeSpeakers: map[int]string{1: "Moritz", 2: "Lisa"}}, Plain)
+	if !strings.Contains(named, "[00:00] Moritz:") || !strings.Contains(named, "[00:06] Lisa:") {
+		t.Errorf("named:\n%s", named)
 	}
 }

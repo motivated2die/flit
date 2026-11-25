@@ -73,13 +73,39 @@ Limits to handle:
 
 - More than 4 remote speakers: Sortformer can't represent them; they share labels. The setting says "up to four".
 - Overlapping speech: each word gets one speaker.
-- The mic track stays "Me": people in the user's room are not told apart (diarizing the Me track is the same code, if wanted).
+- In-person and hybrid meetings (multiple people on the microphone): handled by diarizing the `me` track after echo suppression when a secondary-speaker threshold is crossed (see [Diarizing the microphone track](#diarizing-the-microphone-track-2026-11-25) below).
+
+### Modern diarization models (2026-11-25)
+
+Survey of open-weight models beyond Sortformer 4spk v2.1 and their fit with flit's architecture (Go without cgo, single `transcribe.cpp` GGML/Vulkan worker, Windows):
+
+| Model / stack | Max speakers | Architecture & benchmarks | License | Fit with flit |
+|---|---:|---|---|---|
+| **NVIDIA Nemotron 3 Diarization** *(Sep 2026)* | **8** | ~100M params, pure 31-layer Transformer + RoPE + Arrival-Order Speaker Cache (AOSC), 10 ms output, streaming & offline. #1 on VoiceArena Diarization-Bench (14.72% DER); SotA on DIHARD III, CALLHOME, AMI (arXiv:2611.12246). Acoustic-based; expected to generalize to German like Sortformer (unverified). | OpenMDW 1.1 | **Best fit.** In progress in `handy-computer/transcribe.cpp` (Issue `#170`, PR `#175` *"nemotron3 diarization port"*, open as of 2026-11-25; not in v0.4.2). Because `internal/engine/tcpp/diarize_windows.go` already binds the generic `DIARIZE` C role and reads `MaxSpeakers` dynamically, adoption once released only needs bumping the pinned engine bundle and adding the GGUF to `internal/models/catalog.go`. |
+| **`NVIDIA/NeMo-Speech.cpp`** *(runtime for Nemotron 3)* | **8** | Official GGML-based C++17 runtime with CPU + Vulkan Windows releases and C API (`nemo_speech_diar_*`) / CLI (`nemo-speech diarize`). | Apache-2.0 | Viable fallback or early benchmark tool, but GGML has no cross-version plugin ABI ([gpu-transcription.md](gpu-transcription.md)), so shipping it beside `transcribe.cpp` would duplicate ~44 MB of `ggml-vulkan.dll`. |
+| **`sherpa-onnx`** (`pyannote-segmentation-3.0` + `CAM++` / `WeSpeaker` / `TitaNet`) | **Unlimited** | Modular segmentation + speaker embeddings + clustering. | Apache-2.0 / MIT | Callable without cgo via `sherpa-onnx`'s C API DLL (`syscall`), but adds a second runtime (ONNX Runtime DLLs, tens of MB), uses CPU/DirectML instead of Vulkan, and needs clustering tuning. Better kept as a dev prototype path for embeddings ([speaker-identity.md](speaker-identity.md)). |
+| **Pyannote `community-1` (v4.0) / DiariZen / Senko** | **Unlimited** | Top accuracy (DiariZen: 80%-pruned WavLM-Large + Conformer + VBx; Pyannote 4.0: exclusive single-speaker mode) or speed (Senko: optimized 3D-Speaker). | MIT / Apache-2.0 (Pyannote gated) | Poor fit to ship: orchestration relies on Python/PyTorch + SciPy/VBx/HDBSCAN; no GGML/`transcribe.cpp` ports. |
+| **Ultra-Sortformer** *(community 5–8 spk fine-tunes)* | 5–8 | SVD-widened Sortformer v2.1 heads. | NVIDIA Open Model | Superseded by official Nemotron 3 Diarization. |
+
+### Diarizing the microphone track (2026-11-25)
+
+In-person meetings recorded through the PC's microphone have no `them` speech, and hybrid calls can have several people sharing one room mic. Treating `me` unconditionally as one `"Me"` speaker collapses everyone in the room into one label.
+
+Design (implemented in `internal/transcript`, `internal/session`, `internal/app`):
+
+1. **Suppress echo before evaluating the mic track.** Without a headset on a remote call, loudspeaker bleed from `them` lands in `me.m4a` and looks like extra speakers to the diarizer. Running `transcript.SuppressEcho(me, them, ...)` first strips echoed words before mic diarization is thresholded.
+2. **Diarize `me` when it has enough speech.** When speakers are enabled and post-echo `me` has at least **10 s** of transcribed speech, run the same `Diarize` worker call on `me` and map turns onto the post-echo `me` segments via `transcript.AssignSpeakers` (which applies flicker smoothing and `< 3 s` / `< 2%` fragment removal).
+3. **20% secondary-speaker threshold (`transcript.MicDiarizeMinShare`).** Compute the non-dominant speakers' share of post-echo `me` speech: `1 - maxSpeakerTalk / totalTalk`.
+   - Below **20%** (or `< 2` speakers): discard mic speaker IDs (`Speaker = 0`), keeping the track as plain `"Me"`. This protects solo-mic calls from occasional diarizer splits or brief background chatter.
+   - At or above **20%**: keep the diarized speaker IDs on `me` and **do not assume Speaker 1 is `"Me"`**.
+4. **Neutral labeling and naming.** Unnamed diarized `me` speakers default to `"Room 1"`, `"Room 2"`, … (never `"Me"`, and distinct from `them`'s `"Speaker 1"`, `"Speaker 2"`, … in hybrid calls). User names live in `speakers.json` under `meSpeakers` (backwards-compatible); giving any two speakers the same name merges them into one person as before.
+5. **Re-analysis on kept audio.** `Session.FindSpeakers` and the recording page's *"Analyze speakers"* action work whenever either `me` or `them` audio was kept, supporting pure in-person recordings.
 
 ### Next steps
 
-1. Measure on real meetings (DER needs a reference: label who spoke when by hand for 10–15 minutes of two or three meetings).
-2. If splits are common: speaker embeddings to merge labels that are one voice (an ECAPA-TDNN in Go, or an embedding model if transcribe.cpp gains one), comparing each label's best stretches. The same embeddings would also recognise people across recordings: [speaker-identity.md](speaker-identity.md).
-3. NVIDIA's 8-speaker successor (Nemotron 3 Diarization) once transcribe.cpp supports it.
+1. Measure on real meetings (DER needs a reference: label who spoke when by hand for 10–15 minutes of two or three meetings), including in-person and hybrid mic-track recordings to tune the 20% threshold.
+2. Adopt **Nemotron 3 Diarization** (8 speakers) once `handy-computer/transcribe.cpp` PR `#175` lands in a release.
+3. If splits are common: speaker embeddings to merge labels that are one voice (an ECAPA-TDNN speaker-embedding role in `transcribe.cpp`), comparing each label's best stretches. The same embeddings would also recognise people across recordings: [speaker-identity.md](speaker-identity.md).
 
 ### Alternatives (recorded, not planned)
 

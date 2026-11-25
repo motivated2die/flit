@@ -24,7 +24,50 @@ const (
 	// the speakers around them.
 	minSpeech = 3 * time.Second
 	minShare  = 0.02
+
+	// MicDiarizeMinShare is the minimum share of speech from non-dominant
+	// speakers required to split the microphone (Me) track into multiple
+	// speakers instead of attributing it all to "Me".
+	MicDiarizeMinShare = 0.20
 )
+
+// SecondaryShare returns the fraction of diarized speech (Speaker > 0) spoken
+// by everyone other than the single most talkative speaker. Returns 0 when
+// fewer than two speakers are present or total talk duration is zero.
+func SecondaryShare(segs []Segment) float64 {
+	talk := map[int]time.Duration{}
+	var total time.Duration
+	for _, s := range segs {
+		if s.Speaker <= 0 || s.End <= s.Start {
+			continue
+		}
+		d := s.End - s.Start
+		talk[s.Speaker] += d
+		total += d
+	}
+	if len(talk) < 2 || total <= 0 {
+		return 0
+	}
+	var dominant time.Duration
+	for _, d := range talk {
+		if d > dominant {
+			dominant = d
+		}
+	}
+	return 1 - float64(dominant)/float64(total)
+}
+
+// AssignMicSpeakers diarizes the microphone (Me) track using AssignSpeakers,
+// but keeps the speaker split only when non-dominant speakers account for at
+// least minOtherShare of the track's speech. Otherwise every segment is
+// returned with Speaker 0 (plain "Me").
+func AssignMicSpeakers(segs []Segment, turns []Turn, minOtherShare float64) []Segment {
+	assigned := AssignSpeakers(segs, turns)
+	if minOtherShare > 0 && SecondaryShare(assigned) < minOtherShare {
+		return clearSpeakers(segs)
+	}
+	return assigned
+}
 
 // AssignSpeakers labels the segments of one track (Them) with the
 // speakers of diarization turns and returns them split where the speaker
@@ -245,9 +288,6 @@ func Speakers(segs []Segment) []SpeakerSummary {
 	longest := map[key]Segment{}
 	for _, s := range segs {
 		k := key{s.Track, s.Speaker}
-		if s.Track == Me {
-			k.spk = 0
-		}
 		sum := byKey[k]
 		if sum == nil {
 			sum = &SpeakerSummary{Track: k.track, Speaker: k.spk, First: s.Start}
@@ -294,7 +334,7 @@ type Clip struct{ Start, End time.Duration }
 func Clips(segs []Segment, track Track, speaker int, n int, maxLen time.Duration) []Clip {
 	const margin = 500 * time.Millisecond
 	same := func(s Segment) bool {
-		return s.Track == track && (track == Me || s.Speaker == speaker)
+		return s.Track == track && s.Speaker == speaker
 	}
 	var own, clear []Segment
 	for _, s := range segs {

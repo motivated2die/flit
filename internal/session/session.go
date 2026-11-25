@@ -67,8 +67,11 @@ type Meta struct {
 	// Devices lists the devices recorded and when they were switched to.
 	Devices []DeviceUse `json:"devices,omitempty"`
 	// Speakers is how many people diarization told apart on the meeting
-	// track (0: not run, or one voice); SpeakersError why it failed.
+	// track (0: not run, or one voice); MeSpeakers is the same for the
+	// microphone track when multiple voices cross the threshold;
+	// SpeakersError why diarization failed.
 	Speakers      int    `json:"speakers,omitempty"`
+	MeSpeakers    int    `json:"meSpeakers,omitempty"`
 	SpeakersError string `json:"speakersError,omitempty"`
 	// TitleByUser: the user named the recording; the calendar leaves the
 	// title alone.

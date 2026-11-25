@@ -143,9 +143,8 @@ func runTranscribe(args []string) int {
 	}
 	var tracks [][]transcript.Segment
 	var meSegs, themSegs []transcript.Segment
-	var themPCM []float32
+	var mePCM, themPCM []float32
 	if *realtime && *liveStep > 0 {
-		var mePCM []float32
 		var err error
 		if *me != "" {
 			if mePCM, _, err = load16k(*me); err != nil {
@@ -208,10 +207,19 @@ func runTranscribe(args []string) int {
 		*tr.out = segs
 		if tr.track == transcript.Them {
 			themPCM = pcm
+		} else {
+			mePCM = pcm
 		}
 	}
 	if info := sup.Info(); info.Backend != "" {
 		fmt.Fprintf(os.Stderr, "engine: %s (%s)\n", info.Backend, info.DeviceDesc)
+	}
+	if len(meSegs) > 0 && len(themSegs) > 0 {
+		before := countWords(meSegs)
+		meSegs = transcript.SuppressEcho(meSegs, themSegs, transcript.DefaultEcho())
+		if d := before - countWords(meSegs); d > 0 {
+			fmt.Fprintf(os.Stderr, "echo: removed %d of %d mic words\n", d, before)
+		}
 	}
 	var turns []transcript.Turn
 	if *speakers && themPCM != nil {
@@ -230,6 +238,23 @@ func runTranscribe(args []string) int {
 		}
 		fmt.Fprintf(os.Stderr, "speakers: %d turns, %d speakers after cleanup, %.0f s in %.1f s (%.1f× real time)\n", len(raw), len(n), secs, time.Since(start).Seconds(), secs/time.Since(start).Seconds())
 	}
+	if *speakers && mePCM != nil && len(meSegs) > 0 {
+		start := time.Now()
+		raw, err := sup.Diarize(ctx, mePCM)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "mic speakers:", err)
+			return 1
+		}
+		secs := float64(len(mePCM)) / pipeline.Rate
+		meSegs = transcript.AssignMicSpeakers(meSegs, pipeline.Turns(raw), transcript.MicDiarizeMinShare)
+		n := map[int]bool{}
+		for _, s := range meSegs {
+			if s.Speaker > 0 {
+				n[s.Speaker] = true
+			}
+		}
+		fmt.Fprintf(os.Stderr, "mic speakers: %d turns, %d speakers after %.0f%% threshold, %.0f s in %.1f s (%.1f× real time)\n", len(raw), len(n), 100*transcript.MicDiarizeMinShare, secs, time.Since(start).Seconds(), secs/time.Since(start).Seconds())
+	}
 	if *save != "" {
 		b, err := json.MarshalIndent(themSegs, "", " ")
 		if err == nil {
@@ -238,13 +263,6 @@ func runTranscribe(args []string) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "save:", err)
 			return 1
-		}
-	}
-	if len(meSegs) > 0 && len(themSegs) > 0 {
-		before := countWords(meSegs)
-		meSegs = transcript.SuppressEcho(meSegs, themSegs, transcript.DefaultEcho())
-		if d := before - countWords(meSegs); d > 0 {
-			fmt.Fprintf(os.Stderr, "echo: removed %d of %d mic words\n", d, before)
 		}
 	}
 	tracks = append(tracks, meSegs, themSegs)

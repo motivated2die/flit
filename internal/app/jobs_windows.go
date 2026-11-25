@@ -182,7 +182,7 @@ func (j *jobs) findSpeakers(s *session.Session) error {
 	}
 	start := time.Now()
 	err = s.FindSpeakers(j.ctx, sup)
-	logx.Printf("found %d speakers in %s in %.0f s: %v", s.Meta.Speakers, s.Meta.ID, time.Since(start).Seconds(), err)
+	logx.Printf("found %d remote / %d mic speakers in %s in %.0f s: %v", s.Meta.Speakers, s.Meta.MeSpeakers, s.Meta.ID, time.Since(start).Seconds(), err)
 	return err
 }
 

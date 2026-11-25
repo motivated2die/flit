@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/motivated2die/flit/internal/audio/track"
 	"github.com/motivated2die/flit/internal/pipeline"
 	"github.com/motivated2die/flit/internal/transcript"
 )
+
+// minMicDiarizeSpeech is the minimum post-echo speech on the microphone
+// track before running diarization on it. Short utterances ("hi", "bye")
+// aren't worth diarizing and can't reliably separate multiple speakers.
+const minMicDiarizeSpeech = 10 * time.Second
 
 // Languages names the meeting languages for transcript headers.
 var Languages = map[string]string{"de": "German", "en": "English"}
@@ -50,7 +56,6 @@ func (s *Session) Transcribe(ctx context.Context, e pipeline.Engine, opt pipelin
 		track transcript.Track
 	}{{"me", transcript.Me}, {"them", transcript.Them}}
 	var results [2][]transcript.Segment
-	var themPCM []float32
 	diar, canDiarize := e.(pipeline.Diarizer)
 	speakers := opt.Speakers && canDiarize
 	// Each track gets half of the bar; with speakers, 40% each and the
@@ -89,29 +94,54 @@ func (s *Session) Transcribe(ctx context.Context, e pipeline.Engine, opt pipelin
 		}
 		results[i] = p.Segments
 	}
-	if themFile := s.TrackFile("them"); speakers && themFile != "" {
-		// Telling speakers apart needs the meeting's track in one piece.
-		pcm, err := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
-		if err != nil {
-			return fmt.Errorf("%s: %w", themFile, err)
-		}
-		themPCM = pcm
-	}
-	s.Meta.Speakers, s.Meta.SpeakersError = 0, ""
-	if speakers && len(results[1]) > 0 {
-		setProgress(2 * share)
-		results[1], err = s.assignSpeakers(ctx, diar, themPCM, results[1])
-		if err != nil {
-			if ctx.Err() != nil {
-				return err
-			}
-			// The transcript stands without speakers; say why.
-			s.Meta.SpeakersError = err.Error()
-			err = nil
-		}
-	}
+	// Remove remote loudspeaker bleed from the mic track before evaluating
+	// mic diarization, so echo never triggers multi-speaker mode on "Me".
 	me := transcript.SuppressEcho(results[0], results[1], transcript.DefaultEcho())
-	merged := transcript.Merge(me, results[1])
+	them := results[1]
+
+	s.Meta.Speakers, s.Meta.MeSpeakers, s.Meta.SpeakersError = 0, 0, ""
+	if speakers {
+		themFile := s.TrackFile("them")
+		meFile := s.TrackFile("me")
+		wantThem := len(them) > 0 && themFile != ""
+		wantMe := len(me) > 0 && meFile != "" && trackTalk(me) >= minMicDiarizeSpeech
+		if wantThem {
+			setProgress(2 * share)
+			pcm, rerr := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
+			if rerr != nil {
+				return fmt.Errorf("%s: %w", themFile, rerr)
+			}
+			them, err = s.assignSpeakers(ctx, diar, pcm, them)
+			if err != nil {
+				if ctx.Err() != nil {
+					return err
+				}
+				// The transcript stands without speakers; say why.
+				s.Meta.SpeakersError = err.Error()
+				err = nil
+			}
+		}
+		if wantMe && s.Meta.SpeakersError == "" {
+			if wantThem {
+				setProgress(2*share + (1-2*share)/2)
+			} else {
+				setProgress(2 * share)
+			}
+			pcm, rerr := track.ReadAllMono(s.Path(meFile), pipeline.Rate)
+			if rerr != nil {
+				return fmt.Errorf("%s: %w", meFile, rerr)
+			}
+			me, err = s.assignMicSpeakers(ctx, diar, pcm, me)
+			if err != nil {
+				if ctx.Err() != nil {
+					return err
+				}
+				s.Meta.SpeakersError = err.Error()
+				err = nil
+			}
+		}
+	}
+	merged := transcript.Merge(me, them)
 	if err := s.writeTranscript(merged, title); err != nil {
 		return err
 	}
@@ -126,13 +156,7 @@ func (s *Session) assignSpeakers(ctx context.Context, d pipeline.Diarizer, pcm [
 		return segs, fmt.Errorf("telling speakers apart: %w", err)
 	}
 	segs = transcript.AssignSpeakers(segs, pipeline.Turns(turns))
-	n := map[int]bool{}
-	for _, seg := range segs {
-		if seg.Speaker > 0 {
-			n[seg.Speaker] = true
-		}
-	}
-	s.Meta.Speakers = len(n)
+	s.Meta.Speakers = countDistinctSpeakers(segs)
 	// Numbers from an earlier run may now be other people.
 	names := s.Names()
 	if names.Speakers != nil {
@@ -144,21 +168,57 @@ func (s *Session) assignSpeakers(ctx context.Context, d pipeline.Diarizer, pcm [
 	return segs, nil
 }
 
+// assignMicSpeakers diarizes the microphone track and labels its segments
+// when non-dominant speakers cross transcript.MicDiarizeMinShare.
+func (s *Session) assignMicSpeakers(ctx context.Context, d pipeline.Diarizer, pcm []float32, segs []transcript.Segment) ([]transcript.Segment, error) {
+	turns, err := d.Diarize(ctx, pcm)
+	if err != nil {
+		return segs, fmt.Errorf("telling speakers apart: %w", err)
+	}
+	segs = transcript.AssignMicSpeakers(segs, pipeline.Turns(turns), transcript.MicDiarizeMinShare)
+	s.Meta.MeSpeakers = countDistinctSpeakers(segs)
+	names := s.Names()
+	if names.MeSpeakers != nil {
+		names.MeSpeakers = nil
+		if err := s.saveNames(names); err != nil {
+			return segs, err
+		}
+	}
+	return segs, nil
+}
+
+func countDistinctSpeakers(segs []transcript.Segment) int {
+	n := map[int]bool{}
+	for _, seg := range segs {
+		if seg.Speaker > 0 {
+			n[seg.Speaker] = true
+		}
+	}
+	return len(n)
+}
+
+func trackTalk(segs []transcript.Segment) time.Duration {
+	var total time.Duration
+	for _, seg := range segs {
+		if seg.End > seg.Start {
+			total += seg.End - seg.Start
+		}
+	}
+	return total
+}
+
 // FindSpeakers tells the speakers of an already transcribed session apart
-// (its meeting track must still be there) and rewrites the transcript. The
-// words stay as they are.
+// (at least one audio track must still be there) and rewrites the
+// transcript. The words stay as they are.
 func (s *Session) FindSpeakers(ctx context.Context, d pipeline.Diarizer) error {
 	themFile := s.TrackFile("them")
-	if themFile == "" {
-		return fmt.Errorf("the meeting's recording was not kept")
+	meFile := s.TrackFile("me")
+	if themFile == "" && meFile == "" {
+		return fmt.Errorf("the recording's audio was not kept")
 	}
 	segs, err := s.Segments()
 	if err != nil {
 		return err
-	}
-	pcm, err := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
-	if err != nil {
-		return fmt.Errorf("%s: %w", themFile, err)
 	}
 	var me, them []transcript.Segment
 	for _, seg := range segs {
@@ -168,11 +228,29 @@ func (s *Session) FindSpeakers(ctx context.Context, d pipeline.Diarizer) error {
 			them = append(them, seg)
 		}
 	}
-	them, err = s.assignSpeakers(ctx, d, pcm, them)
-	if err != nil {
-		s.Meta.SpeakersError = err.Error()
-		_ = s.Save()
-		return err
+	if themFile != "" && len(them) > 0 {
+		pcm, err := track.ReadAllMono(s.Path(themFile), pipeline.Rate)
+		if err != nil {
+			return fmt.Errorf("%s: %w", themFile, err)
+		}
+		them, err = s.assignSpeakers(ctx, d, pcm, them)
+		if err != nil {
+			s.Meta.SpeakersError = err.Error()
+			_ = s.Save()
+			return err
+		}
+	}
+	if meFile != "" && len(me) > 0 && trackTalk(me) >= minMicDiarizeSpeech {
+		pcm, err := track.ReadAllMono(s.Path(meFile), pipeline.Rate)
+		if err != nil {
+			return fmt.Errorf("%s: %w", meFile, err)
+		}
+		me, err = s.assignMicSpeakers(ctx, d, pcm, me)
+		if err != nil {
+			s.Meta.SpeakersError = err.Error()
+			_ = s.Save()
+			return err
+		}
 	}
 	s.Meta.SpeakersError = ""
 	if err := s.Save(); err != nil {
@@ -258,11 +336,13 @@ func (s *Session) SetNames(n transcript.Names) error {
 
 func (s *Session) saveNames(n transcript.Names) error {
 	n.Me, n.Them = strings.TrimSpace(n.Me), strings.TrimSpace(n.Them)
-	for k, v := range n.Speakers {
-		if v = strings.TrimSpace(v); v == "" {
-			delete(n.Speakers, k)
-		} else {
-			n.Speakers[k] = v
+	for _, m := range []map[int]string{n.MeSpeakers, n.Speakers} {
+		for k, v := range m {
+			if v = strings.TrimSpace(v); v == "" {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
 		}
 	}
 	b, err := json.MarshalIndent(n, "", "  ")
