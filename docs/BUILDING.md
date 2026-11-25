@@ -108,7 +108,19 @@ go test ./...
 .\scripts\build-release.ps1 -Version 0.1.0
 ```
 
-Fetches the engine, vets, tests, writes resources, builds `flit.exe` (GUI, stripped, version stamped, engine embedded, about 22 MB) and `SHA256SUMS.txt`, by default on the Desktop. The release workflow runs the same script. Versions, tags and publishing a release on GitHub: [RELEASING.md](RELEASING.md).
+This is the **primary and recommended** build path: it fetches the engine, vets, runs the full Windows test suite, regenerates the icon and resources, and builds `flit.exe` (GUI, stripped, version stamped, engine embedded, about 22 MB) plus `SHA256SUMS.txt`, by default on the Desktop. The GitHub release workflow runs this same script. Versions, tags and publishing a release on GitHub: [RELEASING.md](RELEASING.md).
+
+### Docker fallback (restricted machines only)
+
+If you are on a locked-down machine (such as a work PC without admin rights, a local Go/`go-winres` install, or permission to run unsigned `.ps1` scripts) that has Docker Desktop, you can cross-compile the same `flit.exe` inside a Linux Go container and copy it out:
+
+```powershell
+.\scripts\build-release-docker.cmd 0.1.0
+# or, where unsigned PowerShell scripts are allowed:
+.\scripts\build-release-docker.ps1 -Version 0.1.0
+```
+
+Treat this strictly as a **workaround** when `build-release.ps1` cannot be used directly: it is heavier than the direct script, reuses the existing `assets\flit.ico` rather than regenerating it via `flitdev icon`, and runs `go vet` for `windows/amd64` rather than the Windows runtime test suite. Add `-DebugBuild` (or `set FLIT_DEBUG_BUILD=1` for `.cmd`) for a console `flit-debug.exe`, or pass an output folder to change the destination. Named Docker volumes (`flit-go-mod`, `flit-go-build`) cache Go modules and build artifacts across runs.
 
 ## Trying an installed build
 
