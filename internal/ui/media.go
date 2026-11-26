@@ -380,11 +380,12 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 	c.Draw(func(cv Canvas) {
 		trackCol := col(ColControl)
 		if trimmed {
-			trackCol = RGBA(ColControl, 0.45)
+			// Dim excluded outer regions and highlight the active trimmed span.
+			trackCol = RGBA(ColControl, 0.35)
 		}
 		cv.RoundRect(bar, bar.H()/2, trackCol)
 		if trimmed && x1 > x0 {
-			cv.RoundRect(RectF{x0, bar.T, x1, bar.B}, bar.H()/2, col(ColControlHi))
+			cv.RoundRect(RectF{x0, bar.T, x1, bar.B}, bar.H()/2, RGBA(ColText, 0.24))
 		}
 		fill := bar
 		fill.R = bar.L + bar.W()*frac
@@ -398,19 +399,21 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 		cv.Circle(fill.R, (bar.T+bar.B)/2, knob, col(ColText))
 		if showHandles {
 			midY := (bar.T + bar.B) / 2
-			drawHandle := func(hx float32, active bool) {
-				hw := c.Px(4)
-				hh := c.Px(14)
-				hc := col(ColMuted)
+			// Thin vertical line markers indicate the trim bounds (no chunky
+			// handlebars); hover/drag subtly accentuates the active marker.
+			drawMarker := func(hx float32, active bool) {
+				mw := max(1.5, c.Px(1.5))
+				mh := c.Px(11)
+				mc := RGBA(ColText, 0.55)
 				if active {
-					hw = c.Px(5)
-					hh = c.Px(18)
-					hc = col(ColText)
+					mw = max(2, c.Px(2.5))
+					mh = c.Px(15)
+					mc = col(ColText)
 				}
-				cv.RoundRect(RectF{hx - hw/2, midY - hh/2, hx + hw/2, midY + hh/2}, hw/2, hc)
+				cv.RoundRect(RectF{hx - mw/2, midY - mh/2, hx + mw/2, midY + mh/2}, mw/2, mc)
 			}
-			drawHandle(x0, hoverStart)
-			drawHandle(x1, hoverEnd)
+			drawMarker(x0, hoverStart)
+			drawMarker(x1, hoverEnd)
 		}
 		f := tf
 		f.Right = true
@@ -426,6 +429,8 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 	}
 	if p.OnTrim != nil && p.Len > 0 {
 		reach := c.Px(8)
+		snapPx := c.Px(7)
+		playX := bar.L + bar.W()*frac
 		minGap := min(time.Second, p.Len/4)
 		curStart, curEnd := p.TrimStart, p.TrimEnd
 		c.Drag(startID, RectF{x0 - reach, y, x0 + reach, y + h}, func(px, _ float32, done bool) {
@@ -433,6 +438,8 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 			ns := time.Duration(float64(p.Len) * float64(f))
 			if f < 0.005 {
 				ns = 0
+			} else if p.Pos > 0 && absF32(px-playX) <= snapPx {
+				ns = p.Pos
 			}
 			limit := p.Len
 			if curEnd > 0 && curEnd < limit {
@@ -448,13 +455,23 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 			ne := time.Duration(float64(p.Len) * float64(f))
 			if f > 0.995 || ne >= p.Len {
 				ne = 0 // 0 = untrimmed end
-			} else if ne < curStart+minGap {
+			} else if p.Pos > 0 && p.Pos < p.Len && absF32(px-playX) <= snapPx {
+				ne = p.Pos
+			}
+			if ne > 0 && ne < curStart+minGap {
 				ne = min(p.Len, curStart+minGap)
 			}
 			p.OnTrim(curStart, ne, done)
 		})
 	}
 	return h
+}
+
+func absF32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // clockOf is m:ss or h:mm:ss.

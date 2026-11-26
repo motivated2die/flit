@@ -223,15 +223,29 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 			}
 			cv.Text(labels[s], RectF{lx, r.T, r.R, r.B}, c.F(fontSmall), lc)
 			if muted[s] {
-				iconR := areas[s]
-				if iconR.W() <= 0 {
-					iconR = RectF{r.R - padX - c.Px(14), r.T, r.R - padX, r.B}
-				}
-				xc := RGBA(ColLive, 0.85)
+				xc := RGBA(ColText, 0.88)
 				if hovered[s] {
-					xc = col(ColLive)
+					xc = col(ColText)
 				}
-				DrawIcon(cv, glyphClose, iconR, c.Px(12), xc)
+				area := areas[s]
+				if n > 0 && area.W() > 0 {
+					// Replace the leftmost 3 segments with a white X icon and
+					// keep the remaining right-side segments visible in muted rest state.
+					skip := min(3, n)
+					iconW := float32(skip)*bw + float32(max(0, skip-1))*gap
+					iconR := RectF{area.L, area.T, area.L + iconW, area.B}
+					DrawIcon(cv, glyphClose, iconR, c.Px(11), xc)
+					mid := (area.T + area.B) / 2
+					bar := c.Px(vmBarMin)
+					segCol := RGBA(ColMuted, 0.35)
+					for i := skip; i < n; i++ {
+						bx := area.L + float32(i)*(bw+gap)
+						cv.RoundRect(RectF{bx, mid - bar/2, bx + bw, mid + bar/2}, bw/2, segCol)
+					}
+				} else {
+					iconR := RectF{r.R - padX - c.Px(14), r.T, r.R - padX, r.B}
+					DrawIcon(cv, glyphClose, iconR, c.Px(11), xc)
+				}
 			}
 		}
 	})

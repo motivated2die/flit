@@ -311,7 +311,7 @@ func (f notchFrame) drawLevels(p *Painter, rc RectF, fade func(ColorF) ColorF) {
 			p.RoundRect(slot, 4*f.scale, fade(RGBA(ColText, 0.14)))
 		}
 		if f.view.Muted[i] {
-			DrawIcon(p, glyphClose, slot, 9*f.scale, fade(RGBA(ColLive, 0.9)))
+			DrawIcon(p, glyphClose, slot, 9*f.scale, fade(RGBA(ColText, 0.9)))
 			continue
 		}
 		h := max(2*f.scale, rc.H()*min(1, lv))

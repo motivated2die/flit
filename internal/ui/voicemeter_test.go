@@ -204,4 +204,17 @@ func TestPlayerBarTrimHandles(t *testing.T) {
 	if gotEnd != 0 {
 		t.Fatalf("end edge snap = %v, want 0", gotEnd)
 	}
+	// Dragging near the playhead snaps precisely to Pos.
+	bar.Pos = 42 * time.Second
+	c2 := ctx("", nil)
+	bar.Layout(c2, 0, 0, 400)
+	for _, h := range c2.Hits() {
+		if h.ID == "player:trim-start" {
+			playX := barL + 0.42*(barR-barL)
+			h.OnDrag(playX+3, 20, true) // within 7 px snap radius
+		}
+	}
+	if gotStart != 42*time.Second {
+		t.Fatalf("playhead snap start = %v, want 42s", gotStart)
+	}
 }
