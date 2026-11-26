@@ -20,7 +20,7 @@ func (a *App) speakers(s *session.Session) []transcript.SpeakerSummary {
 	if sp, ok := a.speakerCache[s.Meta.ID]; ok {
 		return sp
 	}
-	segs, err := s.Segments()
+	segs, err := s.TrimmedSegments()
 	if err != nil {
 		return nil
 	}

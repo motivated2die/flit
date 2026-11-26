@@ -98,6 +98,12 @@ type App struct {
 	// share of the recording).
 	scrubbing bool
 	scrubAt   float32
+	// trimming holds the live handle preview while a PlayerBar trim handle is
+	// dragged; the session's transcript and caches only update on release.
+	trimming   bool
+	trimSessID string
+	trimStart  time.Duration
+	trimEnd    time.Duration
 	// The Recordings page's search: the words, whether transcripts are
 	// searched too, and each transcript's text in lower case.
 	search     string

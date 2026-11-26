@@ -526,3 +526,44 @@ func TestTranscribeMicDiarizationSuppressesEchoFirst(t *testing.T) {
 		t.Fatalf("expected plain Me after echo removal:\n%s", text)
 	}
 }
+
+func TestSetTrimNonDestructiveAndReversible(t *testing.T) {
+	s, _ := Create(t.TempDir(), Meta{Language: "de", State: Ready})
+	segs := []transcript.Segment{
+		{Track: transcript.Me, Start: 0, End: 5 * time.Second, Text: "Anfang"},
+		{Track: transcript.Them, Speaker: 1, Start: 10 * time.Second, End: 20 * time.Second, Text: "Mitte"},
+		{Track: transcript.Me, Start: 30 * time.Second, End: 40 * time.Second, Text: "Ende"},
+	}
+	if err := s.writeTranscript(segs, "Trim test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTrim(8*time.Second, 25*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// TrimmedSegments & formatted transcripts only contain "Mitte".
+	trimmed, err := s.TrimmedSegments()
+	if err != nil || len(trimmed) != 1 || trimmed[0].Text != "Mitte" {
+		t.Fatalf("trimmed = %+v, err = %v", trimmed, err)
+	}
+	txt, _ := s.Transcript(false)
+	if !strings.Contains(txt, "Mitte") || strings.Contains(txt, "Anfang") || strings.Contains(txt, "Ende") {
+		t.Fatalf("formatted txt:\n%s", txt)
+	}
+	// Full transcript.json stays intact and Meta trim persists across Load.
+	all, _ := s.Segments()
+	if len(all) != 3 {
+		t.Fatalf("full segments len %d, want 3", len(all))
+	}
+	reloaded, err := Load(s.Dir)
+	if err != nil || reloaded.Meta.TrimStart != 8*time.Second || reloaded.Meta.TrimEnd != 25*time.Second {
+		t.Fatalf("reloaded trim = %v..%v (%v)", reloaded.Meta.TrimStart, reloaded.Meta.TrimEnd, err)
+	}
+	// Resetting trim restores full transcript.
+	if err := reloaded.SetTrim(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	txt, _ = reloaded.Transcript(false)
+	if !strings.Contains(txt, "Anfang") || !strings.Contains(txt, "Ende") {
+		t.Fatalf("untrimmed txt:\n%s", txt)
+	}
+}

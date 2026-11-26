@@ -801,7 +801,7 @@ func (a *App) paragraphs(s *session.Session) []transcript.Paragraph {
 	if p, ok := a.paraCache[s.Meta.ID]; ok {
 		return p
 	}
-	segs, err := s.Segments()
+	segs, err := s.TrimmedSegments()
 	if err != nil {
 		return nil
 	}

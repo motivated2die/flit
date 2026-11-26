@@ -259,7 +259,7 @@ func (s *Session) FindSpeakers(ctx context.Context, d pipeline.Diarizer) error {
 	return s.writeTranscript(transcript.Merge(me, them), "")
 }
 
-// Segments reads transcript.json.
+// Segments reads transcript.json (the full, untrimmed transcript).
 func (s *Session) Segments() ([]transcript.Segment, error) {
 	b, err := os.ReadFile(s.Path(TranscriptJSON))
 	if err != nil {
@@ -270,6 +270,28 @@ func (s *Session) Segments() ([]transcript.Segment, error) {
 		return nil, fmt.Errorf("%s: %w", TranscriptJSON, err)
 	}
 	return r.Segments, nil
+}
+
+// TrimmedSegments returns Segments filtered to [Meta.TrimStart, Meta.TrimEnd].
+func (s *Session) TrimmedSegments() ([]transcript.Segment, error) {
+	segs, err := s.Segments()
+	if err != nil {
+		return nil, err
+	}
+	return transcript.Trim(segs, s.Meta.TrimStart, s.Meta.TrimEnd), nil
+}
+
+// SetTrim sets the non-destructive transcript trim range (0 = untrimmed at
+// that end), persists meta.json, and rewrites transcript.txt and .md.
+func (s *Session) SetTrim(start, end time.Duration) error {
+	if start < 0 {
+		start = 0
+	}
+	if end < 0 || (end > 0 && end <= start) {
+		end = 0
+	}
+	s.Meta.TrimStart, s.Meta.TrimEnd = start, end
+	return s.saveAndReformat()
 }
 
 // SetTitle renames the session and rewrites its transcripts' header line.
@@ -363,13 +385,15 @@ func (s *Session) writeTranscript(segs []transcript.Segment, title string) error
 	return s.writeFormatted(segs, title)
 }
 
-// writeFormatted writes transcript.txt and .md with the speakers' names.
+// writeFormatted writes transcript.txt and .md with the speakers' names and
+// active trim range applied.
 func (s *Session) writeFormatted(segs []transcript.Segment, title string) error {
+	trimmed := transcript.Trim(segs, s.Meta.TrimStart, s.Meta.TrimEnd)
 	h, names := s.Header(title), s.Names()
-	if err := writeAtomic(s.Path(TranscriptText), []byte(transcript.Format(h, segs, names, transcript.Plain))); err != nil {
+	if err := writeAtomic(s.Path(TranscriptText), []byte(transcript.Format(h, trimmed, names, transcript.Plain))); err != nil {
 		return err
 	}
-	return writeAtomic(s.Path(TranscriptMD), []byte(transcript.Format(h, segs, names, transcript.Markdown)))
+	return writeAtomic(s.Path(TranscriptMD), []byte(transcript.Format(h, trimmed, names, transcript.Markdown)))
 }
 
 // writeAtomic replaces a file through a temporary one, so a reader never

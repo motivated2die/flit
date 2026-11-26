@@ -54,3 +54,70 @@ func Merge(tracks ...[]Segment) []Segment {
 	})
 	return out
 }
+
+// Trim returns the subset of segs falling within [start, end] (non-destructive;
+// end <= 0 means unbounded upper end). Segments completely inside the range
+// keep their exact text; boundary segments with word timestamps are trimmed at
+// word midpoints.
+func Trim(segs []Segment, start, end time.Duration) []Segment {
+	if start <= 0 && end <= 0 {
+		return segs
+	}
+	inRange := func(a, b time.Duration) bool {
+		mid := a + (b-a)/2
+		if start > 0 && mid < start {
+			return false
+		}
+		if end > 0 && mid > end {
+			return false
+		}
+		return true
+	}
+	out := make([]Segment, 0, len(segs))
+	for _, s := range segs {
+		if end > 0 && s.Start > end {
+			continue
+		}
+		if start > 0 && s.End < start {
+			continue
+		}
+		if (start <= 0 || s.Start >= start) && (end <= 0 || s.End <= end) {
+			out = append(out, s)
+			continue
+		}
+		if len(s.Words) == 0 {
+			if inRange(s.Start, s.End) {
+				out = append(out, s)
+			}
+			continue
+		}
+		var kept []Word
+		for _, w := range s.Words {
+			if inRange(w.Start, w.End) {
+				kept = append(kept, w)
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) == len(s.Words) {
+			out = append(out, s)
+			continue
+		}
+		part := Segment{
+			Track:   s.Track,
+			Speaker: s.Speaker,
+			Start:   kept[0].Start,
+			End:     kept[len(kept)-1].End,
+			Words:   kept,
+		}
+		for i, w := range kept {
+			if i > 0 {
+				part.Text += " "
+			}
+			part.Text += w.Text
+		}
+		out = append(out, part)
+	}
+	return out
+}

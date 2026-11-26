@@ -133,3 +133,75 @@ func TestVoiceMeterPicture(t *testing.T) {
 	png.Encode(fh, SurfaceImage(s))
 	fh.Close()
 }
+
+func TestVoiceMeterClickAndMute(t *testing.T) {
+	var sm MeterSmoother
+	var toggled []int
+	m := VoiceMeter{
+		ID:       "test:meter",
+		Labels:   [2]string{"You", "Meeting"},
+		Bands:    speaking,
+		Smooth:   &sm,
+		Muted:    [2]bool{true, false},
+		OnToggle: func(side int) { toggled = append(toggled, side) },
+	}
+	c := ctx("", nil)
+	m.Layout(c, 0, 0, 320)
+	if len(c.live) != 1 {
+		t.Fatalf("live regions = %d, want 1 (muted side must not register live bars)", len(c.live))
+	}
+	var clicked int
+	for _, h := range c.Hits() {
+		if h.ID == "test:meter:0" || h.ID == "test:meter:1" {
+			h.OnClick()
+			clicked++
+		}
+	}
+	if clicked != 2 || len(toggled) != 2 || toggled[0] != 0 || toggled[1] != 1 {
+		t.Fatalf("clicked=%d toggled=%v, want [0 1]", clicked, toggled)
+	}
+}
+
+func TestPlayerBarTrimHandles(t *testing.T) {
+	var gotStart, gotEnd time.Duration
+	var gotDone bool
+	bar := PlayerBar{
+		ID:  "player",
+		Len: 100 * time.Second,
+		OnTrim: func(start, end time.Duration, done bool) {
+			gotStart, gotEnd, gotDone = start, end, done
+		},
+	}
+	c := ctx("", nil)
+	bar.Layout(c, 0, 0, 400)
+	hits := c.Hits()
+	var startHit, endHit *Hit
+	for i := range hits {
+		switch hits[i].ID {
+		case "player:trim-start":
+			startHit = &hits[i]
+		case "player:trim-end":
+			endHit = &hits[i]
+		}
+	}
+	if startHit == nil || endHit == nil {
+		t.Fatalf("missing trim handle hits: start=%v end=%v", startHit, endHit)
+	}
+	barL := (startHit.R.L + startHit.R.R) / 2
+	barR := (endHit.R.L + endHit.R.R) / 2
+	// Drag start handle to 25%.
+	startHit.OnDrag(barL+0.25*(barR-barL), 20, true)
+	if !gotDone || gotStart < 24*time.Second || gotStart > 26*time.Second || gotEnd != 0 {
+		t.Fatalf("start drag: start=%v end=%v done=%v", gotStart, gotEnd, gotDone)
+	}
+	// Drag end handle to 75%.
+	endHit.OnDrag(barL+0.75*(barR-barL), 20, true)
+	if !gotDone || gotEnd < 74*time.Second || gotEnd > 76*time.Second {
+		t.Fatalf("end drag: start=%v end=%v done=%v", gotStart, gotEnd, gotDone)
+	}
+	// Drag end handle back to the far right edge snaps to 0 (untrimmed).
+	endHit.OnDrag(barR, 20, true)
+	if gotEnd != 0 {
+		t.Fatalf("end edge snap = %v, want 0", gotEnd)
+	}
+}

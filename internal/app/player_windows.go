@@ -144,7 +144,7 @@ func (a *App) toggleSpeaker(s *session.Session, track transcript.Track, speaker 
 		a.invalidate()
 		return
 	}
-	segs, err := s.Segments()
+	segs, err := s.TrimmedSegments()
 	if err != nil {
 		return
 	}
@@ -219,17 +219,41 @@ func (a *App) speakerPlaying(s *session.Session, track transcript.Track, speaker
 
 // playerBar is the recording's player, docked at the bottom of its page.
 // Dragging along the bar shows where it would play from; letting go jumps
-// there.
+// there. Dragging the end handles previews a non-destructive transcript trim
+// and applies it on release.
 func (a *App) playerBar(s *session.Session) ui.Node {
-	bar := ui.PlayerBar{ID: "player", OnToggle: func() { a.togglePlay(s) }, OnScrub: func(f float32, done bool) {
-		if done {
-			a.scrubbing = false
-			a.seek(s, f)
-			return
-		}
-		a.scrubbing, a.scrubAt = true, f
-		a.invalidate()
-	}}
+	trimStart, trimEnd := s.Meta.TrimStart, s.Meta.TrimEnd
+	if a.trimming && a.trimSessID == s.Meta.ID {
+		trimStart, trimEnd = a.trimStart, a.trimEnd
+	}
+	bar := ui.PlayerBar{
+		ID:        "player",
+		TrimStart: trimStart,
+		TrimEnd:   trimEnd,
+		OnToggle:  func() { a.togglePlay(s) },
+		OnScrub: func(f float32, done bool) {
+			if done {
+				a.scrubbing = false
+				a.seek(s, f)
+				return
+			}
+			a.scrubbing, a.scrubAt = true, f
+			a.invalidate()
+		},
+		OnTrim: func(start, end time.Duration, done bool) {
+			if !done {
+				a.trimming, a.trimSessID, a.trimStart, a.trimEnd = true, s.Meta.ID, start, end
+				a.invalidate()
+				return
+			}
+			a.trimming = false
+			if err := s.SetTrim(start, end); err != nil {
+				logx.Printf("trimming %s: %v", s.Meta.ID, err)
+			}
+			a.forget(s)
+			a.invalidate()
+		},
+	}
 	if p := a.playerOf(s); p != nil {
 		bar.Playing, bar.Pos, bar.Len = p.Playing(), toDuration(p.Position()), toDuration(p.Length())
 		if a.player.clip != "" && a.player.label != "" && bar.Playing {

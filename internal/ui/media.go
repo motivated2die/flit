@@ -305,7 +305,8 @@ func (b RoundButton) Layout(c *Ctx, x, y, w float32) float32 {
 }
 
 // PlayerBar is the audio player: play/pause, a bar showing where playback
-// is (click to jump there, or drag the knob along it), and the time.
+// is (click to jump there, or drag the knob along it), optional draggable trim
+// handles at both ends of the bar, and the time.
 type PlayerBar struct {
 	ID       string
 	Playing  bool
@@ -316,6 +317,12 @@ type PlayerBar struct {
 	// false), then says where it was let go (done true): the place to
 	// play from. Pos shows where the pointer is meanwhile.
 	OnScrub func(fraction float32, done bool)
+	// TrimStart and TrimEnd mark the active trimmed range (0 = untrimmed at
+	// that end). When OnTrim is set, small draggable handles appear at both
+	// ends on hover (and stay visible while trimmed or dragged), calling
+	// OnTrim while dragging (done false) and on release (done true).
+	TrimStart, TrimEnd time.Duration
+	OnTrim             func(start, end time.Duration, done bool)
 }
 
 func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
@@ -340,21 +347,71 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 	if p.Len > 0 {
 		frac = max(0, min(1, float32(p.Pos)/float32(p.Len)))
 	}
-	hover := c.Hover == p.ID+":bar" || c.Pressed == p.ID+":bar"
+	t0, t1 := float32(0), float32(1)
+	if p.Len > 0 {
+		if p.TrimStart > 0 {
+			t0 = max(0, min(1, float32(p.TrimStart)/float32(p.Len)))
+		}
+		if p.TrimEnd > 0 && p.TrimEnd < p.Len {
+			t1 = max(t0, min(1, float32(p.TrimEnd)/float32(p.Len)))
+		}
+	}
+	trimmed := t0 > 0 || t1 < 1
+	x0 := bar.L + bar.W()*t0
+	x1 := bar.L + bar.W()*t1
+
+	barID := p.ID + ":bar"
+	startID := p.ID + ":trim-start"
+	endID := p.ID + ":trim-end"
+	hoverBar := c.Hover == barID || c.Pressed == barID
+	hoverStart := c.Hover == startID || c.Pressed == startID
+	hoverEnd := c.Hover == endID || c.Pressed == endID
+	showHandles := p.OnTrim != nil && p.Len > 0 && (hoverBar || hoverStart || hoverEnd || trimmed)
+
 	hit := RectF{bar.L - c.Px(6), y, bar.R + c.Px(6), y + h} // the knob's reach at both ends
 	note := p.Note
+	if note == "" && (trimmed || hoverStart || hoverEnd) && p.Len > 0 {
+		endAt := p.TrimEnd
+		if endAt <= 0 || endAt > p.Len {
+			endAt = p.Len
+		}
+		note = "Trimmed " + clockOf(p.TrimStart) + "–" + clockOf(endAt)
+	}
 	c.Draw(func(cv Canvas) {
-		cv.RoundRect(bar, bar.H()/2, col(ColControl))
+		trackCol := col(ColControl)
+		if trimmed {
+			trackCol = RGBA(ColControl, 0.45)
+		}
+		cv.RoundRect(bar, bar.H()/2, trackCol)
+		if trimmed && x1 > x0 {
+			cv.RoundRect(RectF{x0, bar.T, x1, bar.B}, bar.H()/2, col(ColControlHi))
+		}
 		fill := bar
 		fill.R = bar.L + bar.W()*frac
 		if fill.W() > 0 {
 			cv.RoundRect(fill, bar.H()/2, col(ColText))
 		}
 		knob := c.Px(5)
-		if hover {
+		if hoverBar {
 			knob = c.Px(7)
 		}
 		cv.Circle(fill.R, (bar.T+bar.B)/2, knob, col(ColText))
+		if showHandles {
+			midY := (bar.T + bar.B) / 2
+			drawHandle := func(hx float32, active bool) {
+				hw := c.Px(4)
+				hh := c.Px(14)
+				hc := col(ColMuted)
+				if active {
+					hw = c.Px(5)
+					hh = c.Px(18)
+					hc = col(ColText)
+				}
+				cv.RoundRect(RectF{hx - hw/2, midY - hh/2, hx + hw/2, midY + hh/2}, hw/2, hc)
+			}
+			drawHandle(x0, hoverStart)
+			drawHandle(x1, hoverEnd)
+		}
 		f := tf
 		f.Right = true
 		cv.Text(timeText, timeR, f, col(ColMuted))
@@ -363,8 +420,38 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 		}
 	})
 	if p.OnScrub != nil {
-		c.Drag(p.ID+":bar", hit, func(px, _ float32, done bool) {
+		c.Drag(barID, hit, func(px, _ float32, done bool) {
 			p.OnScrub(max(0, min(1, (px-bar.L)/bar.W())), done)
+		})
+	}
+	if p.OnTrim != nil && p.Len > 0 {
+		reach := c.Px(8)
+		minGap := min(time.Second, p.Len/4)
+		curStart, curEnd := p.TrimStart, p.TrimEnd
+		c.Drag(startID, RectF{x0 - reach, y, x0 + reach, y + h}, func(px, _ float32, done bool) {
+			f := max(0, min(1, (px-bar.L)/bar.W()))
+			ns := time.Duration(float64(p.Len) * float64(f))
+			if f < 0.005 {
+				ns = 0
+			}
+			limit := p.Len
+			if curEnd > 0 && curEnd < limit {
+				limit = curEnd
+			}
+			if ns > limit-minGap {
+				ns = max(0, limit-minGap)
+			}
+			p.OnTrim(ns, curEnd, done)
+		})
+		c.Drag(endID, RectF{x1 - reach, y, x1 + reach, y + h}, func(px, _ float32, done bool) {
+			f := max(0, min(1, (px-bar.L)/bar.W()))
+			ne := time.Duration(float64(p.Len) * float64(f))
+			if f > 0.995 || ne >= p.Len {
+				ne = 0 // 0 = untrimmed end
+			} else if ne < curStart+minGap {
+				ne = min(p.Len, curStart+minGap)
+			}
+			p.OnTrim(curStart, ne, done)
 		})
 	}
 	return h

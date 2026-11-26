@@ -216,7 +216,7 @@ func (a *App) runSummary(ctx context.Context, s *session.Session, m models.Model
 	if err != nil {
 		return "", info, err
 	}
-	segs, err := s.Segments()
+	segs, err := s.TrimmedSegments()
 	if err != nil {
 		return "", info, err
 	}

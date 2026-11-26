@@ -73,6 +73,11 @@ type Meta struct {
 	Speakers      int    `json:"speakers,omitempty"`
 	MeSpeakers    int    `json:"meSpeakers,omitempty"`
 	SpeakersError string `json:"speakersError,omitempty"`
+	// TrimStart and TrimEnd non-destructively limit the active portion of the
+	// transcript shown in the UI, exported to .txt/.md, and passed to summaries
+	// (0 means untrimmed at that end).
+	TrimStart time.Duration `json:"trimStart,omitempty"`
+	TrimEnd   time.Duration `json:"trimEnd,omitempty"`
 	// TitleByUser: the user named the recording; the calendar leaves the
 	// title alone.
 	TitleByUser bool `json:"titleByUser,omitempty"`

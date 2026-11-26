@@ -116,3 +116,27 @@ func TestClock(t *testing.T) {
 		}
 	}
 }
+
+func TestTrim(t *testing.T) {
+	segs := []Segment{
+		words(seg(Me, 0, 0, 0, "eins zwei drei vier")),      // 0.0..1.2 s
+		words(seg(Them, 1, 5, 0, "fünf sechs sieben acht")), // 5.0..6.2 s
+		seg(Them, 2, 10, 12, "wordless segment at end"),     // 10..12 s
+	}
+	// Untrimmed returns input unchanged.
+	if got := Trim(segs, 0, 0); len(got) != 3 {
+		t.Fatalf("untrimmed len %d", len(got))
+	}
+	// Trim middle: cuts into first segment's last 2 words and drops the last segment.
+	got := Trim(segs, dur(0.6), dur(8))
+	if len(got) != 2 {
+		t.Fatalf("trimmed len %d: %+v", len(got), got)
+	}
+	if got[0].Text != "drei vier" || got[1].Text != "fünf sechs sieben acht" {
+		t.Fatalf("trimmed texts %q", texts(got))
+	}
+	// Original untouched.
+	if segs[0].Text != "eins zwei drei vier" {
+		t.Fatal("input mutated")
+	}
+}
