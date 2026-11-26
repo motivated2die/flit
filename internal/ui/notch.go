@@ -73,6 +73,9 @@ type NotchView struct {
 	// from CountFrom (a countdown, e.g. to recording automatically).
 	CountFrom time.Time
 	CountFor  time.Duration
+	// Muted marks [meMuted, themMuted] while recording; clicking either meter
+	// bar in the expanded recording notch reports "mute-me" or "mute-them".
+	Muted [2]bool
 }
 
 // CountdownAt is how far the countdown has come at now (0..1), or -1.
@@ -92,7 +95,7 @@ const (
 	notchButtonH        = 24
 	notchButtonPad      = 12
 	notchButtonGap      = 6
-	notchLevelW         = 16
+	notchLevelW         = 24
 	notchMaxW           = 560
 	notchShadow         = 14 // room for the shadow around the capsule
 	notchFlareMax       = 10 // max concave flare radius at the top edge
@@ -114,8 +117,9 @@ type NotchLayout struct {
 	Title      RectF
 	TitleText  string // fitted title text (truncated with "…" if needed)
 	Detail     RectF
-	DetailText string // fitted detail text (truncated with "…" if needed)
-	Levels     RectF  // recording level bars; empty if none
+	DetailText string   // fitted detail text (truncated with "…" if needed)
+	Levels     RectF    // recording level bars; empty if none
+	LevelHits  [2]RectF // clickable mute targets for [me, them] level bars
 	Buttons    []RectF
 	IDs        []string
 	Primary    []bool
@@ -251,7 +255,13 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 	}
 	if v.Mode == NotchRecording {
 		x += px(notchGap)
-		l.Levels = RectF{x, (h - px(12)) / 2, x + px(notchLevelW), (h + px(12)) / 2}
+		lw := px(notchLevelW)
+		l.Levels = RectF{x, (h - px(14)) / 2, x + lw, (h + px(14)) / 2}
+		mid := x + lw/2
+		l.LevelHits = [2]RectF{
+			{x - px(2), 0, mid, h},
+			{mid, 0, x + lw + px(2), h},
+		}
 		x = l.Levels.R
 	}
 	for i, b := range v.Buttons {
@@ -310,13 +320,19 @@ func fitNotchText(s string, f Font, maxW float32, measure Measurer) (string, flo
 	return best, bestW
 }
 
-// HitButton returns the ID of the button (or the title link) at (x, y),
-// "" if none.
+// HitButton returns the ID of the button (or the title link, or a recording
+// level bar mute toggle) at (x, y), "" if none.
 func (l NotchLayout) HitButton(x, y float32) string {
 	for i, r := range l.Buttons {
 		if r.Contains(x, y) {
 			return l.IDs[i]
 		}
+	}
+	if l.LevelHits[0].W() > 0 && l.LevelHits[0].Contains(x, y) {
+		return "mute-me"
+	}
+	if l.LevelHits[1].W() > 0 && l.LevelHits[1].Contains(x, y) {
+		return "mute-them"
 	}
 	if l.LinkID != "" && l.Link.Contains(x, y) {
 		return l.LinkID

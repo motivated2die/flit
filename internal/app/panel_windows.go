@@ -109,7 +109,7 @@ func (a *App) panelStatus() ui.Node {
 				ui.Button{ID: "panel:stop", MorphKey: "panel:primary", Label: "Transcribe", Glyph: ui.GlyphStop, Primary: true, OnClick: a.panelAct(a.stopRecording)},
 				a.confirmButtonAs("panel:cancel", "Cancel", "Click again", false, a.panelAct(a.cancelRecording)),
 			}},
-			ui.VoiceMeter{Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Flat: true},
+			ui.VoiceMeter{ID: "panel:meter", Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Muted: a.mutedSides(), OnToggle: a.toggleMute, Flat: true},
 		}}
 	case a.detected != nil:
 		c := *a.detected

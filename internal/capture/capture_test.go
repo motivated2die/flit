@@ -212,3 +212,52 @@ func TestLevelAndMaxPeak(t *testing.T) {
 	}
 	tr.Close()
 }
+
+func TestTrackMuteWritesSilenceAndPreservesLength(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "muted.wav")
+	tr, err := NewTrack(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loud := make([]float32, 1600) // 100 ms at 16 kHz
+	for i := range loud {
+		loud[i] = 0.5
+	}
+	tr.Write(16000, loud)
+	if p := tr.TakePeak(); p < 0.49 {
+		t.Fatalf("unmuted peak %v, want ~0.5", p)
+	}
+	tr.SetMuted(true)
+	if !tr.Muted() {
+		t.Fatal("expected Muted() == true")
+	}
+	tr.Write(16000, loud)
+	if p := tr.TakePeak(); p != 0 {
+		t.Fatalf("muted peak %v, want 0", p)
+	}
+	for _, b := range tr.Bands() {
+		if b != 0 {
+			t.Fatalf("muted band %v, want 0", b)
+		}
+	}
+	tr.SetMuted(false)
+	tr.Write(16000, loud)
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := wav.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Frames() != 4800 {
+		t.Fatalf("frames %d, want 4800", a.Frames())
+	}
+	for i := 1600; i < 3200; i++ {
+		if a.Samples[i] != 0 {
+			t.Fatalf("sample %d during mute = %v, want 0", i, a.Samples[i])
+		}
+	}
+	if a.Samples[100] < 0.4 || a.Samples[3300] < 0.4 {
+		t.Fatalf("unmuted audio not preserved: start=%v end=%v", a.Samples[100], a.Samples[3300])
+	}
+}

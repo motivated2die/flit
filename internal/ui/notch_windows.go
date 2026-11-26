@@ -155,6 +155,19 @@ func NewNotch() (*Notch, error) {
 // Visible reports whether the notch is on screen or coming in.
 func (n *Notch) Visible() bool { return n.phase == phShowing || n.phase == phShown }
 
+// SetMuted updates the recording notch's muted indicators in place without
+// resetting its collapsed/expanded state.
+func (n *Notch) SetMuted(muted [2]bool) {
+	if n.view.Muted == muted {
+		return
+	}
+	n.view.Muted = muted
+	n.dirty = true
+	if n.Visible() {
+		n.present(1)
+	}
+}
+
 // View returns what the notch shows.
 func (n *Notch) View() NotchView { return n.view }
 

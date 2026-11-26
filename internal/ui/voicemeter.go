@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"math"
 	"time"
 )
@@ -14,12 +15,19 @@ import (
 // (references/handy.md): thin rounded bars, centred, a few pixels tall at
 // rest.
 type VoiceMeter struct {
+	// ID scopes click targets for the two audio feeds when OnToggle is set.
+	ID     string
 	Labels [2]string
 	// Bands returns each side's latest bands (0..1); called on every
 	// frame of the bars, on the UI thread.
 	Bands func() [2][]float32
 	// Smooth keeps the shown bars between frames (owned by the caller).
 	Smooth *MeterSmoother
+	// Muted marks each side (0 = local mic, 1 = meeting audio) as muted,
+	// showing an X icon in place of its live bars.
+	Muted [2]bool
+	// OnToggle, when set, makes each audio feed clickable to mute/unmute it.
+	OnToggle func(side int)
 	// Stacked puts the two sides in two rows of a narrow box (its Width)
 	// instead of side by side across the width it is given.
 	Stacked bool
@@ -150,31 +158,29 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 		}
 		divider = RectF{x + half - line/2, top + divInset, x + half + line/2, y + h - divInset}
 	}
-	c.Draw(func(cv Canvas) {
-		if !v.Flat {
-			cv.RoundRect(box, c.Px(vmRadius), col(ColBase))
-		} else if topRule.H() > 0 {
-			cv.RoundRect(topRule, 0, col(ColDivider))
-		}
-		cv.RoundRect(divider, 0, col(ColDivider))
-		for s, r := range slots {
-			lx := r.L + padX
-			if v.Flat && s == 1 {
-				lx = r.L + c.Px(12)
-			}
-			cv.Text(labels[s], RectF{lx, r.T, r.R, r.B}, c.F(fontSmall), col(ColMuted))
-		}
-	})
-	n := v.bars()
-	if n == 0 {
-		return h
+	baseID := v.ID
+	if baseID == "" {
+		baseID = "voicemeter"
 	}
+	var slotIDs [2]string
+	var hovered [2]bool
+	if v.OnToggle != nil {
+		for s, r := range slots {
+			side := s
+			id := fmt.Sprintf("%s:%d", baseID, s)
+			slotIDs[s] = id
+			hovered[s] = c.Hover == id || c.Pressed == id
+			c.Click(id, r, func() { v.OnToggle(side) })
+		}
+	}
+
+	n := v.bars()
 	bw, gap := c.Px(vmBarW), c.Px(vmBarGap)
 	barsW, bh := v.barsW(c), c.Px(vmBarMax)
 	// The bars follow their label, at the same place in both slots (after
 	// the wider label), and never past the slot's end.
 	off := min(padX+v.labelW(c)+c.Px(vmLabelGap), slots[0].W()-padX-barsW)
-	bands, smooth := v.Bands, v.Smooth
+	var areas [2]RectF
 	for s, r := range slots {
 		l := r.L + off
 		if v.Flat {
@@ -186,12 +192,67 @@ func (v VoiceMeter) Layout(c *Ctx, x, y, w float32) float32 {
 			l = r.R - rightPad - barsW
 		}
 		mid := (r.T + r.B) / 2
-		area := RectF{l, mid - bh/2, l + barsW, mid + bh/2}
+		areas[s] = RectF{l, mid - bh/2, l + barsW, mid + bh/2}
+	}
+
+	muted := v.Muted
+	c.Draw(func(cv Canvas) {
+		if !v.Flat {
+			cv.RoundRect(box, c.Px(vmRadius), col(ColBase))
+		} else if topRule.H() > 0 {
+			cv.RoundRect(topRule, 0, col(ColDivider))
+		}
+		for s, r := range slots {
+			if hovered[s] {
+				inset := c.Px(2)
+				hr := RectF{r.L + inset, r.T + inset, r.R - inset, r.B - inset}
+				cv.RoundRect(hr, c.Px(6), RGBA(ColText, 0.06))
+			}
+		}
+		cv.RoundRect(divider, 0, col(ColDivider))
+		for s, r := range slots {
+			lx := r.L + padX
+			if v.Flat && s == 1 {
+				lx = r.L + c.Px(12)
+			}
+			lc := col(ColMuted)
+			if muted[s] {
+				lc = col(ColFaint)
+			} else if hovered[s] {
+				lc = col(ColText)
+			}
+			cv.Text(labels[s], RectF{lx, r.T, r.R, r.B}, c.F(fontSmall), lc)
+			if muted[s] {
+				iconR := areas[s]
+				if iconR.W() <= 0 {
+					iconR = RectF{r.R - padX - c.Px(14), r.T, r.R - padX, r.B}
+				}
+				xc := RGBA(ColLive, 0.85)
+				if hovered[s] {
+					xc = col(ColLive)
+				}
+				DrawIcon(cv, glyphClose, iconR, c.Px(12), xc)
+			}
+		}
+	})
+	if n == 0 {
+		return h
+	}
+	bands, smooth := v.Bands, v.Smooth
+	for s := range slots {
+		if muted[s] {
+			continue
+		}
+		area := areas[s]
 		side := s
+		bg := col(ColBase)
+		if hovered[s] {
+			bg = col(ColCardHover)
+		}
 		// Only shapes here: between full paints this region is redrawn
 		// from Go into the window's pixels (pixelCanvas).
 		c.DrawLive(area, func(cv Canvas, now time.Time) {
-			cv.RoundRect(RectF{area.L - 1, area.T - 1, area.R + 1, area.B + 1}, 0, col(ColBase)) // over the last frame
+			cv.RoundRect(RectF{area.L - 1, area.T - 1, area.R + 1, area.B + 1}, 0, bg) // over the last frame
 			mid := (area.T + area.B) / 2
 			for i, lv := range smooth.step(bands(), now)[side] {
 				lv = max(0, min(1, lv))

@@ -316,3 +316,25 @@ func TestNotchLayoutFitsLongTitleInsideMaxWidth(t *testing.T) {
 		})
 	}
 }
+
+func TestNotchRecordingLevelBarMuteHits(t *testing.T) {
+	now := time.Now()
+	v := NotchView{
+		Mode:    NotchRecording,
+		Title:   "Recording",
+		Since:   now.Add(-10 * time.Second),
+		Buttons: []NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}},
+	}
+	l := Layout(v, 1, now, fixedMeasure)
+	if l.LevelHits[0].W() <= 0 || l.LevelHits[1].W() <= 0 {
+		t.Fatalf("expected level mute hit rects, got %+v", l.LevelHits)
+	}
+	me := l.LevelHits[0]
+	them := l.LevelHits[1]
+	if hit := l.HitButton((me.L+me.R)/2, (me.T+me.B)/2); hit != "mute-me" {
+		t.Fatalf("left bar hit %q, want mute-me", hit)
+	}
+	if hit := l.HitButton((them.L+them.R)/2, (them.T+them.B)/2); hit != "mute-them" {
+		t.Fatalf("right bar hit %q, want mute-them", hit)
+	}
+}

@@ -81,6 +81,7 @@ type Track struct {
 	peak     atomic.Uint32 // float32 bits of the loudest sample since TakePeak
 	max      atomic.Uint32 // the loudest sample of the whole track
 	frames   atomic.Int64  // frames written at t.rate
+	muted    atomic.Bool   // when true, incoming samples are replaced with silence
 	spec     *spectrum     // the voice meter's bands (writer goroutine, 16 kHz mono)
 
 	// Tap, if set before the first Write, receives every 16 kHz mono block as
@@ -146,13 +147,30 @@ func (t *Track) Write(rate int, pcm []float32) {
 	t.WriteInterleaved(rate, pcm)
 }
 
+// SetMuted enables or disables muting on this track. While muted, incoming
+// audio is replaced with silence of the same length so QPC alignment, live
+// chunking, and device switching continue undisturbed.
+func (t *Track) SetMuted(muted bool) {
+	t.muted.Store(muted)
+	if muted {
+		t.peak.Store(0)
+	}
+}
+
+// Muted reports whether this track is currently muted.
+func (t *Track) Muted() bool { return t.muted.Load() }
+
 // WriteInterleaved queues interleaved samples (t.channels per frame) at rate.
 // It never blocks the caller for long: if the writer falls far behind, the
 // block is dropped (and counted as silence by the aligner's next packet).
 func (t *Track) WriteInterleaved(rate int, pcm []float32) {
-	p := peakOf(pcm)
-	raisePeak(&t.peak, p)
-	raisePeak(&t.max, p)
+	if t.muted.Load() {
+		pcm = make([]float32, len(pcm))
+	} else {
+		p := peakOf(pcm)
+		raisePeak(&t.peak, p)
+		raisePeak(&t.max, p)
+	}
 	select {
 	case t.in <- block{rate, pcm}:
 	default:
@@ -160,11 +178,22 @@ func (t *Track) WriteInterleaved(rate int, pcm []float32) {
 }
 
 // TakePeak returns the loudest sample since the last call (0..1).
-func (t *Track) TakePeak() float32 { return math.Float32frombits(t.peak.Swap(0)) }
+func (t *Track) TakePeak() float32 {
+	if t.muted.Load() {
+		t.peak.Swap(0)
+		return 0
+	}
+	return math.Float32frombits(t.peak.Swap(0))
+}
 
 // Bands returns the latest levels of the voice range in NBands bands
 // (0..1, updated about 31 times a second), for the live voice meter.
-func (t *Track) Bands() [NBands]float32 { return t.spec.bands() }
+func (t *Track) Bands() [NBands]float32 {
+	if t.muted.Load() {
+		return [NBands]float32{}
+	}
+	return t.spec.bands()
+}
 
 // MaxPeak is the loudest sample of the whole track so far (0..1): near
 // zero means the track is silent, which the log notes.

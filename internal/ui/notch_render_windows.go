@@ -258,10 +258,10 @@ func (f notchFrame) drawCollapsed(p *Painter, rc RectF, a float32) {
 		bw := bar.W()
 		p.RoundRect(bar, bh/2, fade(notchTrack()))
 		// Meeting audio (them) extends right-to-left underneath the personal mic bar.
-		if them := min(1, f.levels[1]); them > 0 {
+		if them := min(1, f.levels[1]); them > 0 && !f.view.Muted[1] {
 			p.RoundRect(RectF{bar.R - max(bh, bw*them), bar.T, bar.R, bar.B}, bh/2, fade(RGBA(ColMuted, 0.9)))
 		}
-		if me := min(1, f.levels[0]); me > 0 {
+		if me := min(1, f.levels[0]); me > 0 && !f.view.Muted[0] {
 			p.RoundRect(RectF{bar.L, bar.T, bar.L + max(bh, bw*me), bar.B}, bh/2, fade(RGBA(ColText, 0.85)))
 		}
 	case NotchWorking:
@@ -299,18 +299,29 @@ func drawGripDots(p *Painter, cx, cy, scale float32, c ColorF) {
 	}
 }
 
-// drawLevels draws two small bars: the mic (Me) and the meeting (Them).
+// drawLevels draws two small clickable bars: the mic (Me) and the meeting
+// (Them). Muted feeds show a small X icon instead of a moving level bar.
 func (f notchFrame) drawLevels(p *Painter, rc RectF, fade func(ColorF) ColorF) {
-	bw := rc.W() / 3
+	half := rc.W() / 2
+	bw := max(2*f.scale, half*0.36)
+	ids := [2]string{"mute-me", "mute-them"}
 	for i, lv := range f.levels {
-		x := rc.L + float32(i)*2*bw
+		slot := RectF{rc.L + float32(i)*half, rc.T - 3*f.scale, rc.L + float32(i+1)*half, rc.B + 3*f.scale}
+		if f.hoverBtn == ids[i] {
+			p.RoundRect(slot, 4*f.scale, fade(RGBA(ColText, 0.14)))
+		}
+		if f.view.Muted[i] {
+			DrawIcon(p, glyphClose, slot, 9*f.scale, fade(RGBA(ColLive, 0.9)))
+			continue
+		}
 		h := max(2*f.scale, rc.H()*min(1, lv))
 		col := RGBA(ColText, 0.9)
 		if i == 1 {
 			col = RGBA(ColMuted, 0.9)
 		}
-		p.RoundRect(RectF{x, rc.B - rc.H(), x + bw, rc.B}, bw/2, fade(notchTrack()))
-		p.RoundRect(RectF{x, rc.B - h, x + bw, rc.B}, bw/2, fade(col))
+		cx := (slot.L + slot.R) / 2
+		p.RoundRect(RectF{cx - bw/2, rc.B - rc.H(), cx + bw/2, rc.B}, bw/2, fade(notchTrack()))
+		p.RoundRect(RectF{cx - bw/2, rc.B - h, cx + bw/2, rc.B}, bw/2, fade(col))
 	}
 }
 

@@ -100,6 +100,29 @@ func (r *Recording) switchStream(s **Stream, t *Track, al *Aligner, cur *Source,
 	return nil
 }
 
+// SetMuteMe mutes or unmutes the local microphone track during recording.
+func (r *Recording) SetMuteMe(muted bool) {
+	if r != nil && r.Me != nil {
+		r.Me.SetMuted(muted)
+	}
+}
+
+// SetMuteThem mutes or unmutes the meeting audio track during recording.
+func (r *Recording) SetMuteThem(muted bool) {
+	if r != nil && r.Them != nil {
+		r.Them.SetMuted(muted)
+	}
+}
+
+// MuteMe reports whether the local microphone track is muted.
+func (r *Recording) MuteMe() bool { return r != nil && r.Me != nil && r.Me.Muted() }
+
+// MuteThem reports whether the meeting audio track is muted.
+func (r *Recording) MuteThem() bool { return r != nil && r.Them != nil && r.Them.Muted() }
+
+// Muted returns [meMuted, themMuted].
+func (r *Recording) Muted() [2]bool { return [2]bool{r.MuteMe(), r.MuteThem()} }
+
 // Stop ends both streams (padding both to the same end) and closes the
 // files.
 func (r *Recording) Stop() error {

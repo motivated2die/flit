@@ -268,7 +268,50 @@ func (a *App) sidebarStatus() string {
 // voiceMeter is the recording's two sides as one box of moving bars (Home's
 // recording card, stacked on its right; the tray panel, side by side).
 func (a *App) voiceMeter(stacked bool) ui.Node {
-	return ui.VoiceMeter{Labels: [2]string{"You", "Meeting"}, Bands: a.voiceBands, Smooth: &a.voiceSmooth, Stacked: stacked}
+	return ui.VoiceMeter{
+		ID:       "home:meter",
+		Labels:   [2]string{"You", "Meeting"},
+		Bands:    a.voiceBands,
+		Smooth:   &a.voiceSmooth,
+		Muted:    a.mutedSides(),
+		OnToggle: a.toggleMute,
+		Stacked:  stacked,
+	}
+}
+
+func (a *App) mutedSides() [2]bool {
+	if a.rec == nil || a.rec.r == nil {
+		return [2]bool{}
+	}
+	return a.rec.r.Muted()
+}
+
+func (a *App) toggleMute(side int) {
+	if a.rec == nil || a.rec.r == nil {
+		return
+	}
+	if side == 0 {
+		next := !a.rec.r.MuteMe()
+		a.rec.r.SetMuteMe(next)
+		if next {
+			logx.Printf("recording: mic muted")
+		} else {
+			logx.Printf("recording: mic unmuted")
+		}
+	} else {
+		next := !a.rec.r.MuteThem()
+		a.rec.r.SetMuteThem(next)
+		if next {
+			logx.Printf("recording: meeting audio muted")
+		} else {
+			logx.Printf("recording: meeting audio unmuted")
+		}
+	}
+	a.syncRecordingNotchMuted()
+	a.invalidate()
+	if a.panel != nil && a.panel.Visible() {
+		a.panel.Refresh()
+	}
 }
 
 // voiceBands are both tracks' latest bands (flat when nothing records).

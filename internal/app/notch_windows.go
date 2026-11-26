@@ -78,6 +78,10 @@ func (a *App) onNotchButton(id string) {
 			a.hideRecordingNotch = !a.hideRecordingNotch
 			a.showRecordingView(a.hideRecordingNotch)
 		}
+	case "mute-me":
+		a.toggleMute(0)
+	case "mute-them":
+		a.toggleMute(1)
 	case "copy":
 		a.copyTranscript(a.lastReady, false) // "Transcript copied" replaces it
 	case "open":
@@ -233,12 +237,19 @@ func (a *App) showRecordingView(startCollapsed bool) {
 		HideCollapsed:  a.hideRecordingNotch,
 		StashedNotes:   a.stashedNotes != "",
 		StartCollapsed: startCollapsed,
+		Muted:          a.mutedSides(),
 		Buttons: []ui.NotchButton{
 			{ID: "notes", Label: "Notes"},
 			{ID: "stop", Label: "Stop"},
 			{ID: "notch-hide", Glyph: toggleGlyph},
 		},
 	})
+}
+
+func (a *App) syncRecordingNotchMuted() {
+	if a.notch != nil && a.rec != nil {
+		a.notch.SetMuted(a.mutedSides())
+	}
 }
 
 // showWorking shows the transcription after a meeting (start) and keeps
