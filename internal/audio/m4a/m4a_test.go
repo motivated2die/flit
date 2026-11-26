@@ -266,3 +266,48 @@ func TestFFmpegValidatesM4A(t *testing.T) {
 		t.Fatalf("ffmpeg validation failed (err=%v): %s", err, string(out))
 	}
 }
+
+// TestMakeSampleStackGrowth exercises makeSample + readSampleBytes across
+// fresh goroutines at varying recursion depths to ensure stack growth cannot
+// invalidate stack-allocated COM out-parameters (regression test for missing
+// //go:uintptrescapes on call).
+func TestMakeSampleStackGrowth(t *testing.T) {
+	if !Available() {
+		t.Skip("Media Foundation AAC unavailable")
+	}
+	payload := make([]byte, 235)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	var recurse func(depth int) error
+	recurse = func(depth int) error {
+		var pad [64]byte
+		pad[0] = byte(depth)
+		if depth > 0 {
+			return recurse(depth - 1)
+		}
+		s, err := makeSample(payload, 1000, 213333)
+		if err != nil {
+			return err
+		}
+		got := readSampleBytes(s)
+		release(s)
+		if len(got) != len(payload) || got[len(got)-1] != payload[len(payload)-1] || pad[0] != 0 {
+			return errBadSample
+		}
+		return nil
+	}
+	errs := make(chan error, 64)
+	for depth := range 64 {
+		go func(d int) {
+			errs <- recurse(d)
+		}(depth)
+	}
+	for range 64 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+var errBadSample = os.ErrInvalid

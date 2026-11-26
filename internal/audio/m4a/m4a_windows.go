@@ -149,10 +149,20 @@ func vtbl(obj uintptr, slot int) uintptr {
 	return *(*uintptr)(cptr(vt + uintptr(slot)*unsafe.Sizeof(uintptr(0))))
 }
 
+// call invokes COM vtable method slot on obj. uintptrescapes keeps addresses
+// of Go values passed as uintptr arguments escaped and pinned for the call;
+// without it, stack growth before SyscallN can move stack-allocated out-params
+// while args still holds the stale address.
+//
+//go:uintptrescapes
 func call(obj uintptr, slot int, args ...uintptr) uint32 {
-	all := make([]uintptr, 1+len(args))
-	all[0] = obj
-	copy(all[1:], args)
+	var buf [8]uintptr
+	all := buf[:0]
+	if 1+len(args) > len(buf) {
+		all = make([]uintptr, 0, 1+len(args))
+	}
+	all = append(all, obj)
+	all = append(all, args...)
 	r, _, _ := syscall.SyscallN(vtbl(obj, slot), all...)
 	return uint32(r)
 }
@@ -212,7 +222,15 @@ func makeSample(data []byte, ts, dur int64) (uintptr, error) {
 		release(s)
 		return 0, fmt.Errorf("IMFMediaBuffer.Lock: %#x", h)
 	}
-	copy(unsafe.Slice((*byte)(cptr(p)), len(data)), data)
+	if len(data) > 0 {
+		if p == 0 {
+			call(buf, 4)
+			release(buf)
+			release(s)
+			return 0, errors.New("IMFMediaBuffer.Lock returned nil pointer")
+		}
+		copy(unsafe.Slice((*byte)(cptr(p)), len(data)), data)
+	}
 	call(buf, 4)
 	call(buf, 6, uintptr(len(data)))
 	call(s, 42, buf)
@@ -231,6 +249,10 @@ func readSampleBytes(s uintptr) []byte {
 	var p uintptr
 	var cur uint32
 	if call(buf, 3, uintptr(unsafe.Pointer(&p)), 0, uintptr(unsafe.Pointer(&cur))) != 0 {
+		return nil
+	}
+	if cur == 0 || p == 0 {
+		call(buf, 4)
 		return nil
 	}
 	out := make([]byte, cur)
