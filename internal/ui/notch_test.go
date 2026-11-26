@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -255,5 +256,63 @@ func TestRecordingChevronAndHideCollapsed(t *testing.T) {
 	stashed := CollapsedLayoutFor(v, 1, fixedMeasure)
 	if stashed.H != notchStashedH {
 		t.Fatalf("StashedNotes should keep grab handle height %v, got %v", notchStashedH, stashed.H)
+	}
+}
+
+func TestNotchLayoutFitsLongTitleInsideMaxWidth(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name string
+		view NotchView
+		last string
+	}{
+		{
+			name: "join-prompt",
+			view: NotchView{
+				Mode:    NotchPrompt,
+				Title:   "Quarterly Engineering Architecture Review & Roadmap Sync with Product",
+				Detail:  "starts in 1 min",
+				Buttons: []NotchButton{{ID: "join", Label: "Join", Primary: true}, {ID: "join-close", Label: "Close"}},
+			},
+			last: "join-close",
+		},
+		{
+			name: "countdown-prompt",
+			view: NotchView{
+				Mode:    NotchPrompt,
+				Title:   "Quarterly Engineering Architecture Review detected",
+				Detail:  "recording starts automatically",
+				Buttons: []NotchButton{{ID: "record", Label: "Record now", Primary: true}, {ID: "dismiss", Label: "Cancel"}},
+			},
+			last: "dismiss",
+		},
+		{
+			name: "recording-long-title",
+			view: NotchView{
+				Mode:    NotchRecording,
+				Title:   "Very Long Meeting Title That Should Never Push Buttons Out Of The Notch",
+				Since:   now.Add(-42 * time.Second),
+				Buttons: []NotchButton{{ID: "notes", Label: "Notes"}, {ID: "stop", Label: "Stop"}, {ID: "notch-hide", Glyph: GlyphUp}},
+			},
+			last: "notch-hide",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := Layout(tc.view, 1, now, fixedMeasure)
+			if l.W > notchMaxW {
+				t.Fatalf("width %.1f exceeds notchMaxW %d", l.W, notchMaxW)
+			}
+			lastBtn := l.Buttons[len(l.Buttons)-1]
+			if lastBtn.R > l.W {
+				t.Fatalf("last button %q right edge %.1f overflows capsule width %.1f", tc.last, lastBtn.R, l.W)
+			}
+			if hit := l.HitButton((lastBtn.L+lastBtn.R)/2, (lastBtn.T+lastBtn.B)/2); hit != tc.last {
+				t.Fatalf("hit %q, want %q", hit, tc.last)
+			}
+			if !strings.HasSuffix(l.TitleText, "…") {
+				t.Fatalf("expected truncated title with ellipsis, got %q", l.TitleText)
+			}
+		})
 	}
 }

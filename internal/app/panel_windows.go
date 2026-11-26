@@ -135,7 +135,7 @@ func (a *App) panelStatus() ui.Node {
 		}}
 	}
 	return ui.VStack{Gap: 10, Items: []ui.Node{
-		ui.Label{Text: "Ready and idle", Large: true},
+		ui.Label{Text: homeGreeting(time.Now(), a.cfg.GreetingName()), Large: true},
 		ui.HStack{Items: []ui.Node{ui.Button{ID: "panel:start", MorphKey: "panel:primary", Label: "Start recording", Glyph: ui.GlyphRecord, Primary: true, OnClick: a.panelAct(func() { a.startRecording(nil) })}}},
 	}}
 }

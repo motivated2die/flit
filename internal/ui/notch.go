@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -108,16 +109,18 @@ var (
 // NotchLayout is where everything goes, in device pixels, with the
 // capsule's top-left corner at (0, 0).
 type NotchLayout struct {
-	W, H    float32
-	Icon    RectF
-	Title   RectF
-	Detail  RectF
-	Levels  RectF // recording level bars; empty if none
-	Buttons []RectF
-	IDs     []string
-	Primary []bool
-	Labels  []string
-	Glyphs  []string
+	W, H       float32
+	Icon       RectF
+	Title      RectF
+	TitleText  string // fitted title text (truncated with "…" if needed)
+	Detail     RectF
+	DetailText string // fitted detail text (truncated with "…" if needed)
+	Levels     RectF  // recording level bars; empty if none
+	Buttons    []RectF
+	IDs        []string
+	Primary    []bool
+	Labels     []string
+	Glyphs     []string
 	// Link is the title and detail when they are a link (TitleID).
 	Link   RectF
 	LinkID string
@@ -156,18 +159,94 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 	l.Icon = RectF{x, (h - px(notchIcon)) / 2, x + px(notchIcon), (h + px(notchIcon)) / 2}
 	x = l.Icon.R + px(notchGap)
 
-	if v.Title != "" {
-		tw := measure(v.Title, scaled(notchTitleFont))
-		l.Title = RectF{x, 0, x + tw + 1, h}
-		x = l.Title.R + px(6)
+	titleFont := scaled(notchTitleFont)
+	detailFont := scaled(notchDetailFont)
+	btnFont := scaled(notchButtonFont)
+	bh := px(notchButtonH)
+
+	// Measure fixed-width right-side items (levels, buttons, trailing margin)
+	// first so title/detail can be fitted to the remaining budget inside
+	// notchMaxW and never push buttons off the right edge of the capsule.
+	var rightW float32
+	if v.Mode == NotchRecording {
+		rightW += px(notchGap) + px(notchLevelW)
 	}
-	if d := v.DetailText(now); d != "" {
-		// Room for the widest the clock gets, so it doesn't jiggle.
-		width := measure(d, scaled(notchDetailFont))
-		if v.Mode == NotchRecording {
-			width = max(width, measure("00:00", scaled(notchDetailFont)))
+	btnWidths := make([]float32, len(v.Buttons))
+	for i, b := range v.Buttons {
+		if i == 0 {
+			rightW += px(notchGap + 4)
+		} else {
+			rightW += px(notchButtonGap)
 		}
-		l.Detail = RectF{x, 0, x + width + 1, h}
+		w := bh
+		if b.Label != "" || b.Glyph == "" {
+			w = measure(b.Label, btnFont) + 2*px(notchButtonPad)
+		}
+		btnWidths[i] = w
+		rightW += w
+	}
+	if len(v.Buttons) > 0 {
+		rightW += (h - bh) / 2 // the same margin right of a button as above it
+	} else {
+		rightW += px(notchPadX+2) + growX
+	}
+
+	titleText := v.Title
+	detailText := v.DetailText(now)
+	var tw, dw float32
+	if titleText != "" {
+		tw = measure(titleText, titleFont) + 1
+	}
+	if detailText != "" {
+		dw = measure(detailText, detailFont)
+		if v.Mode == NotchRecording {
+			// Room for the widest the clock gets, so it doesn't jiggle.
+			dw = max(dw, measure("00:00", detailFont))
+		}
+		dw += 1
+	}
+	textGap := float32(0)
+	if titleText != "" && detailText != "" {
+		textGap = px(6)
+	}
+	textAvail := max(float32(0), px(notchMaxW)-x-rightW)
+	if tw+textGap+dw > textAvail {
+		if titleText != "" && detailText != "" {
+			// Preserve short status details ("starts in 1 min", "00:00") while
+			// guaranteeing the title keeps at least a readable slice.
+			minTitle := min(px(80), max(float32(0), (textAvail-textGap)/2))
+			maxDetail := max(float32(0), textAvail-textGap-minTitle)
+			if dw > maxDetail {
+				var fitW float32
+				detailText, fitW = fitNotchText(detailText, detailFont, max(0, maxDetail-1), measure)
+				dw = fitW + 1
+			}
+			maxTitle := max(float32(0), textAvail-textGap-dw)
+			var fitW float32
+			titleText, fitW = fitNotchText(titleText, titleFont, max(0, maxTitle-1), measure)
+			tw = fitW + 1
+		} else if titleText != "" {
+			var fitW float32
+			titleText, fitW = fitNotchText(titleText, titleFont, max(0, textAvail-1), measure)
+			tw = fitW + 1
+		} else if detailText != "" {
+			var fitW float32
+			detailText, fitW = fitNotchText(detailText, detailFont, max(0, textAvail-1), measure)
+			dw = fitW + 1
+		}
+	}
+
+	if titleText != "" {
+		l.Title = RectF{x, 0, x + tw, h}
+		l.TitleText = titleText
+		x = l.Title.R
+		if detailText != "" {
+			x += textGap
+		}
+	}
+	if detailText != "" {
+		l.Detail = RectF{x, 0, x + dw, h}
+		l.DetailText = detailText
 		x = l.Detail.R
 	}
 	if v.Mode == NotchRecording {
@@ -175,17 +254,13 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 		l.Levels = RectF{x, (h - px(12)) / 2, x + px(notchLevelW), (h + px(12)) / 2}
 		x = l.Levels.R
 	}
-	bh := px(notchButtonH)
 	for i, b := range v.Buttons {
 		if i == 0 {
 			x += px(notchGap + 4)
 		} else {
 			x += px(notchButtonGap)
 		}
-		w := bh
-		if b.Label != "" || b.Glyph == "" {
-			w = measure(b.Label, scaled(notchButtonFont)) + 2*px(notchButtonPad)
-		}
+		w := btnWidths[i]
 		l.Buttons = append(l.Buttons, RectF{x, (h - bh) / 2, x + w, (h + bh) / 2})
 		l.IDs = append(l.IDs, b.ID)
 		l.Primary = append(l.Primary, b.Primary)
@@ -193,7 +268,7 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 		l.Glyphs = append(l.Glyphs, b.Glyph)
 		x += w
 	}
-	if v.TitleID != "" && v.Title != "" {
+	if v.TitleID != "" && titleText != "" {
 		l.Link, l.LinkID = RectF{l.Title.L, 0, max(l.Title.R, l.Detail.R), h}, v.TitleID
 	}
 	if len(l.Buttons) > 0 {
@@ -203,6 +278,36 @@ func Layout(v NotchView, s float32, now time.Time, measure Measurer) NotchLayout
 	}
 	l.W = min(x, px(notchMaxW))
 	return l
+}
+
+// fitNotchText trims s with a trailing ellipsis so its measured width fits
+// within maxW pixels.
+func fitNotchText(s string, f Font, maxW float32, measure Measurer) (string, float32) {
+	if s == "" || maxW <= 0 {
+		return "", 0
+	}
+	if w := measure(s, f); w <= maxW {
+		return s, w
+	}
+	const ell = "…"
+	ew := measure(ell, f)
+	if ew > maxW {
+		return "", 0
+	}
+	r := []rune(s)
+	lo, hi := 0, len(r)
+	best, bestW := ell, ew
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		cand := strings.TrimRight(string(r[:mid]), " \t-–—·:,") + ell
+		if w := measure(cand, f); w <= maxW {
+			best, bestW = cand, w
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best, bestW
 }
 
 // HitButton returns the ID of the button (or the title link) at (x, y),

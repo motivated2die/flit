@@ -56,6 +56,25 @@ func TestNotchJoinPromptState(t *testing.T) {
 	}
 }
 
+func TestPanelIdleUsesHomeGreeting(t *testing.T) {
+	a := &App{dataDir: t.TempDir()}
+	a.cfg.FirstName = "Moritz"
+	st, ok := a.panelStatus().(ui.VStack)
+	if !ok || len(st.Items) == 0 {
+		t.Fatalf("unexpected panelStatus node %T", a.panelStatus())
+	}
+	lbl, ok := st.Items[0].(ui.Label)
+	if !ok {
+		t.Fatalf("first item %T, want ui.Label", st.Items[0])
+	}
+	if lbl.Text == "Ready and idle" {
+		t.Fatalf("idle panel still shows static %q", lbl.Text)
+	}
+	if !strings.HasSuffix(lbl.Text, ", Moritz") {
+		t.Fatalf("idle panel greeting %q does not include user name", lbl.Text)
+	}
+}
+
 func TestRecordingNotchHideToggle(t *testing.T) {
 	a := &App{dataDir: t.TempDir(), rec: &recording{started: time.Now()}}
 	if a.hideRecordingNotch {

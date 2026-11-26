@@ -129,15 +129,23 @@ func renderNotch(s *Surface, f notchFrame) error {
 
 	f.drawIcon(p, at(f.layout.Icon), fade)
 	link := f.layout.LinkID != "" && f.hoverBtn == f.layout.LinkID
-	if f.view.Title != "" {
-		p.Text(f.view.Title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle()))
+	title := f.layout.TitleText
+	if title == "" {
+		title = f.view.Title
 	}
-	if d := f.view.DetailText(f.now); d != "" {
+	if title != "" && f.layout.Title.W() > 0 {
+		p.Text(title, at(f.layout.Title), scaled(notchTitleFont), fade(notchTitle()))
+	}
+	detail := f.layout.DetailText
+	if detail == "" {
+		detail = f.view.DetailText(f.now)
+	}
+	if detail != "" && f.layout.Detail.W() > 0 {
 		dc := notchMuted()
 		if link {
 			dc = notchTitle()
 		}
-		p.Text(d, at(f.layout.Detail), scaled(notchDetailFont), fade(dc))
+		p.Text(detail, at(f.layout.Detail), scaled(notchDetailFont), fade(dc))
 	}
 	if link {
 		// The title is a link: underlined while the pointer is on it.
