@@ -366,17 +366,10 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 	hoverBar := c.Hover == barID || c.Pressed == barID
 	hoverStart := c.Hover == startID || c.Pressed == startID
 	hoverEnd := c.Hover == endID || c.Pressed == endID
-	showHandles := p.OnTrim != nil && p.Len > 0 && (hoverBar || hoverStart || hoverEnd || trimmed)
+	showHandles := p.OnTrim != nil && p.Len > 0 && (hoverBar || hoverStart || hoverEnd)
 
 	hit := RectF{bar.L - c.Px(6), y, bar.R + c.Px(6), y + h} // the knob's reach at both ends
 	note := p.Note
-	if note == "" && (trimmed || hoverStart || hoverEnd) && p.Len > 0 {
-		endAt := p.TrimEnd
-		if endAt <= 0 || endAt > p.Len {
-			endAt = p.Len
-		}
-		note = "Trimmed " + clockOf(p.TrimStart) + "–" + clockOf(endAt)
-	}
 	c.Draw(func(cv Canvas) {
 		trackCol := col(ColControl)
 		if trimmed {
@@ -399,8 +392,8 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 		cv.Circle(fill.R, (bar.T+bar.B)/2, knob, col(ColText))
 		if showHandles {
 			midY := (bar.T + bar.B) / 2
-			// Thin vertical line markers indicate the trim bounds (no chunky
-			// handlebars); hover/drag subtly accentuates the active marker.
+			// Thin vertical line markers appear only on hover/drag to indicate
+			// the trim bounds can be dragged.
 			drawMarker := func(hx float32, active bool) {
 				mw := max(1.5, c.Px(1.5))
 				mh := c.Px(11)
@@ -420,6 +413,34 @@ func (p PlayerBar) Layout(c *Ctx, x, y, w float32) float32 {
 		cv.Text(timeText, timeR, f, col(ColMuted))
 		if note != "" {
 			cv.Text(note, RectF{bar.L, y + h/2 + c.Px(6), bar.R, y + h}, c.F(fontSmall), col(ColFaint))
+		}
+		// Scrollbar-style timestamp popover above the active trim handle while
+		// hovering or dragging it.
+		if p.OnTrim != nil && p.Len > 0 && (hoverStart || hoverEnd) {
+			hx := x0
+			label := clockOf(p.TrimStart)
+			if hoverEnd {
+				hx = x1
+				endAt := p.TrimEnd
+				if endAt <= 0 || endAt > p.Len {
+					endAt = p.Len
+				}
+				label = clockOf(endAt)
+			}
+			padX := c.Px(8)
+			tipH := c.Px(24)
+			tipW := c.M.TextWidth(label, tf) + 2*padX
+			tipL := max(bar.L-c.Px(4), min(bar.R+c.Px(4)-tipW, hx-tipW/2))
+			tipB := y - c.Px(6)
+			tip := RectF{tipL, tipB - tipH, tipL + tipW, tipB}
+			rad := c.Px(6)
+			edge := max(1, c.Px(1))
+			cv.RoundRect(RectF{tip.L - c.Px(1), tip.T + c.Px(1), tip.R + c.Px(1), tip.B + c.Px(3)}, rad+c.Px(1), ColorF{0, 0, 0, 0.14})
+			cv.RoundRect(tip, rad, col(ColEdge))
+			cv.RoundRect(tip.Inset(edge), rad-edge, col(ColCard))
+			tfc := tf
+			tfc.Center = true
+			cv.Text(label, tip, tfc, col(ColText))
 		}
 	})
 	if p.OnScrub != nil {
